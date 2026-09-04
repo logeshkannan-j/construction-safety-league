@@ -448,7 +448,16 @@ function computeTeamScores(players, teams, mode) {
 /* ============================== APP =============================== */
 
 export default function App() {
-  const [role, setRole] = useState(null); // null | 'admin' | 'player' | 'tv'
+  // QR codes open the player view on the hosted site. The game code is
+  // still entered on that page and checked against the active game.
+  const [role, setRole] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("role") === "player") return "player";
+    } catch {}
+    return null;
+  });
+
   return (
     <div style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.ink, fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
       {!role && <RoleSelect onSelect={setRole} />}
@@ -1179,18 +1188,50 @@ function PlayerView({ onExit }) {
   const { game, questions, players, connected } = useGamePoll();
   const [me, setMe] = useState(null);
   const [form, setForm] = useState({ name: "", employeeId: "", company: "", team: "" });
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [codeVerified, setCodeVerified] = useState(false);
+  const [codeError, setCodeError] = useState("");
+
+  function handleScanDetected(text) {
+    if (!text) return;
+    let scannedValue = text.trim();
+    try {
+      const u = new URL(text);
+      scannedValue = u.searchParams.get("join") || "";
+    } catch {}
+    setCode(scannedValue.replace(/\D/g, "").slice(0, 6));
+    setCodeError("");
+    setScannerOpen(false);
+  }
+
+  function verifyCode() {
+    if (!game || code.length !== 6) return;
+    if (code === String(game.gameCode)) {
+      setCodeVerified(true);
+      setCodeError("");
+    } else {
+      setCodeError("That code does not match the active game.");
+    }
+  }
   const [joining, setJoining] = useState(false);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
+    if (!codeVerified || !game?.gameCode) return;
     (async () => {
       const savedId = await safeGet(MY_ID_KEY, false);
       if (savedId) {
         const raw = await safeGet(PLAYER_PREFIX + savedId, true);
-        if (raw) { try { setMe(JSON.parse(raw)); } catch {} }
+        if (raw) {
+          try {
+            const savedPlayer = JSON.parse(raw);
+            if (String(savedPlayer.gameCode) === String(game.gameCode)) setMe(savedPlayer);
+          } catch {}
+        }
       }
     })();
-  }, []);
+  }, [codeVerified, game?.gameCode]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 250);
@@ -1211,7 +1252,7 @@ function PlayerView({ onExit }) {
     const id = genId();
     const player = {
       id, name: form.name.trim(), employeeId: form.employeeId.trim(), company: form.company.trim(),
-      team: form.team || null, score: 0, joinedAt: Date.now(), answers: {},
+      team: form.team || null, gameCode: game.gameCode, score: 0, joinedAt: Date.now(), answers: {},
       lifelines: { fifty: false, audience: false, phone: false },
       lifelineData: {},
     };
@@ -1302,6 +1343,26 @@ function PlayerView({ onExit }) {
     return <Centered><p style={{ color: COLORS.muted }}>Waiting for the admin to create a game…</p><button style={linkBtnStyle} onClick={onExit}>← Back</button></Centered>;
   }
 
+  if (!me && !codeVerified) {
+    return (
+      <Centered>
+        <Panel title="Enter game code" icon={<LogIn size={20} color={COLORS.green} />}>
+          <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 14 }}>Enter the 6-digit code shown on the TV or scan the event QR.</p>
+          <input
+            style={inputStyle} value={code} inputMode="numeric" maxLength={6} placeholder="Game code"
+            onChange={(e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setCodeError(""); }}
+            onKeyDown={(e) => e.key === "Enter" && verifyCode()}
+          />
+          {codeError && <p style={{ color: COLORS.red, fontSize: 13, margin: "-4px 0 10px" }}>{codeError}</p>}
+          <button style={btnStyle(COLORS.green)} disabled={code.length !== 6} onClick={verifyCode}>ENTER GAME</button>
+          <button style={btnStyle(COLORS.surfaceRaised)} onClick={() => setScannerOpen(true)}><QrCode size={16} /> Scan QR</button>
+          <button style={linkBtnStyle} onClick={onExit}>← Back</button>
+        </Panel>
+        {scannerOpen && <QRScanner onDetected={handleScanDetected} onClose={() => setScannerOpen(false)} />}
+      </Centered>
+    );
+  }
+
   if (!me) {
     return (
       <Centered>
@@ -1319,6 +1380,7 @@ function PlayerView({ onExit }) {
           <button disabled={joining || !form.name.trim() || (game.teamModeEnabled && !form.team)} style={btnStyle(COLORS.green)} onClick={join}>{joining ? "Joining…" : "JOIN GAME"}</button>
           <button style={linkBtnStyle} onClick={onExit}>← Back</button>
         </Panel>
+        {scannerOpen && <QRScanner onDetected={handleScanDetected} onClose={() => setScannerOpen(false)} />}
       </Centered>
     );
   }
@@ -1712,6 +1774,16 @@ function LobbyDisplay({ game, players }) {
 
 function QRBlock({ value }) {
   const ref = useRef(null);
+  const joinUrl = useMemo(() => {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set("role", "player");
+      u.searchParams.delete("join");
+      return u.toString();
+    } catch {
+      return String(value);
+    }
+  }, [value]);
   useEffect(() => {
     let cancelled = false;
     const draw = () => {
@@ -1719,7 +1791,7 @@ function QRBlock({ value }) {
       ref.current.innerHTML = "";
       try {
         // eslint-disable-next-line no-new
-        new window.QRCode(ref.current, { text: String(value), width: 180, height: 180, colorDark: "#14171A", colorLight: "#FFC629" });
+        new window.QRCode(ref.current, { text: joinUrl, width: 180, height: 180, colorDark: "#14171A", colorLight: "#FFC629" });
       } catch {}
     };
     if (window.QRCode) { draw(); return; }
@@ -1729,7 +1801,93 @@ function QRBlock({ value }) {
     document.body.appendChild(script);
     return () => { cancelled = true; };
   }, [value]);
-  return <div ref={ref} style={{ width: 180, height: 180, background: COLORS.yellow, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }} />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+      <div ref={ref} style={{ width: 180, height: 180, background: COLORS.yellow, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <button style={{ padding: "6px 10px", borderRadius: 8, border: "none", background: COLORS.surfaceRaised, color: COLORS.ink, cursor: "pointer" }} onClick={() => { try { navigator.clipboard.writeText(joinUrl); } catch {} }}>
+          Copy join link
+        </button>
+        <a style={{ padding: "6px 10px", borderRadius: 8, textDecoration: "none", background: COLORS.green, color: "#08110a" }} href={joinUrl} target="_blank" rel="noreferrer">Open</a>
+      </div>
+    </div>
+  );
+}
+
+function QRScanner({ onDetected, onClose }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const detectorRef = useRef(null);
+
+  useEffect(() => {
+    let mounted = true;
+    let stream = null;
+    (async () => {
+      try {
+        if (!('BarcodeDetector' in window) && !window.jsQR) {
+          await new Promise((resolve) => {
+            const s = document.createElement('script');
+            s.src = 'https://unpkg.com/jsqr/dist/jsQR.js';
+            s.onload = resolve;
+            document.body.appendChild(s);
+          });
+        }
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (!mounted) return;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          try { await videoRef.current.play(); } catch {}
+        }
+        if ('BarcodeDetector' in window) {
+          try { detectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch {}
+        }
+
+        const tick = async () => {
+          if (!mounted) return;
+          try {
+            const v = videoRef.current;
+            if (!v || v.readyState < 2) { requestAnimationFrame(tick); return; }
+            const w = v.videoWidth, h = v.videoHeight;
+            const c = canvasRef.current;
+            if (!c) { requestAnimationFrame(tick); return; }
+            c.width = w; c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(v, 0, 0, w, h);
+            if (detectorRef.current) {
+              try {
+                const bitmap = await createImageBitmap(c);
+                const results = await detectorRef.current.detect(bitmap);
+                if (results && results.length) { onDetected(results[0].rawValue); return; }
+              } catch {}
+            } else if (window.jsQR) {
+              try {
+                const img = ctx.getImageData(0, 0, w, h);
+                const code = window.jsQR(img.data, img.width, img.height);
+                if (code && code.data) { onDetected(code.data); return; }
+              } catch {}
+            }
+          } catch {}
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      } catch (e) {
+        console.error('QRScanner error', e);
+        onClose();
+      }
+    })();
+    return () => { mounted = false; try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch {} };
+  }, [onDetected, onClose]);
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ width: '100%', maxWidth: 520, aspectRatio: '3/4', position: 'relative', borderRadius: 12, overflow: 'hidden', background: '#000' }}>
+        <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} playsInline muted />
+        <canvas ref={canvasRef} style={{ display: 'none' }} />
+        <button onClick={onClose} style={{ position: 'absolute', right: 12, top: 12, padding: '8px 10px', borderRadius: 8, border: 'none', background: COLORS.surfaceRaised, color: COLORS.ink, cursor: 'pointer' }}>Close</button>
+        <div style={{ position: 'absolute', left: 12, top: 12, color: COLORS.muted, fontSize: 13 }}>Point camera at the QR code</div>
+      </div>
+    </div>
+  );
 }
 
 function QuestionDisplay({ q, qIndex, total, startedAt, now, players }) {

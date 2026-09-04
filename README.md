@@ -64,7 +64,18 @@ git push -u origin main
 
 Every future `git push` to `main` redeploys automatically.
 
-## 5. Run it
+## 5. How players enter
+
+The Admin/TV QR code contains the deployed GitHub Pages website URL and opens
+the player screen. It does not contain or automatically approve the game
+code. Every player must enter the six-digit code shown on the TV, or use the
+in-app **Scan QR** button and then press **ENTER GAME**. The code is checked
+against the active game in Firebase before the name form is shown.
+
+This means the QR link can be shared safely during an event while the game
+code still controls access to the active session.
+
+## 6. Run it
 
 Open the deployed URL on:
 - **Your laptop** → pick **Admin control panel** (PIN `1234` — change this
