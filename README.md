@@ -99,6 +99,20 @@ so it's genuinely multi-device even in dev — open the printed URL on your
 phone too, as long as it's on the same network as... actually no network
 requirement at all, since Firebase is the shared backend, not your laptop).
 
+## Question videos
+
+In Admin, use **Add a custom question** and paste a video URL in **Video link**.
+YouTube links are embedded automatically; direct HTTPS `.mp4` or `.webm` links
+play in the built-in video player. The video appears on both the TV display and
+player phone for that question.
+
+## Leaderboard celebration media
+
+In Admin, use **Leaderboard fun media** to paste a public `.gif`, image, YouTube,
+MP4, or WebM URL. It appears above the live race leaderboard on the TV display.
+Use a short looping celebration GIF for the most playful result. The URL must
+be publicly reachable by every browser; private cloud-drive links will not play.
+
 ## Notes and limits
 
 - Scoring is client-trusted, same as the original artifact — fine for a fun

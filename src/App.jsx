@@ -41,6 +41,7 @@ const COLORS = {
 // shared, so sharing the game/join link never grants anyone else access.
 const ADMIN_UNLOCKED_KEY = "csl_admin_unlocked_v1";
 const ADMIN_PIN_KEY = "csl_admin_pin_v1";
+const GAME_QUESTION_SECONDS = 45;
 
 const SEED_QUESTIONS = [
   { round: "quiz", category: "Work at Height", difficulty: "Easy", question: "A worker is working at height. What is the most important fall protection equipment?", options: ["Gloves", "Full Body Harness", "Safety Goggles", "Face Mask"], correct: 1, timer: 15, points: 100, explanation: "A properly worn and anchored full body harness is the primary defense against a fall from height." },
@@ -403,6 +404,7 @@ function defaultGame() {
     teamModeEnabled: false,
     teams: ["Civil Team", "MEP Team", "Electrical Team", "Mechanical Team", "Safety Team"],
     teamScoringMode: "total", // 'total' | 'average'
+    leaderboardMediaUrl: "",
     createdAt: Date.now(),
   };
 }
@@ -899,6 +901,15 @@ function AdminView({ onExit }) {
             </div>
           </Panel>
 
+          <Panel title="Leaderboard fun media" icon={<Volume2 size={18} color={COLORS.purple} />}>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 10 }}>Add a public GIF, image, YouTube link, or direct MP4/WebM link. It appears above the live leaderboard.</p>
+            <input
+              style={{ ...inputStyle, marginBottom: 0 }} type="url" placeholder="https://.../celebration.gif or YouTube link"
+              defaultValue={game.leaderboardMediaUrl || ""}
+              onBlur={(e) => patchGame({ leaderboardMediaUrl: e.target.value.trim() })}
+            />
+          </Panel>
+
           <Panel title="Admin security" icon={<Lock size={18} color={COLORS.orange} />}>
             <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 10 }}>Change the PIN used to unlock this admin panel on this device.</p>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1156,6 +1167,7 @@ function AddQuestionForm({ onAdd, busy }) {
   const [timer, setTimer] = useState(15);
   const [points, setPoints] = useState(100);
   const [explanation, setExplanation] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
 
   const isTF = round === "truefalse";
   const effectiveOptions = isTF ? ["TRUE", "FALSE"] : options;
@@ -1173,9 +1185,10 @@ function AddQuestionForm({ onAdd, busy }) {
       timer: Number(timer) || 15,
       points: Number(points) || 100,
       explanation: explanation.trim(),
+      videoUrl: videoUrl.trim(),
     });
     setCategory(""); setQuestion(""); setOptions(["", "", "", ""]); setCorrect(0);
-    setTimer(15); setPoints(100); setExplanation("");
+    setTimer(15); setPoints(100); setExplanation(""); setVideoUrl("");
   }
 
   return (
@@ -1214,6 +1227,7 @@ function AddQuestionForm({ onAdd, busy }) {
         <input style={{ ...inputStyle, marginBottom: 0, width: 110 }} type="number" placeholder="Points" value={points} onChange={(e) => setPoints(e.target.value)} />
       </div>
       <input style={inputStyle} placeholder="Explanation (shown on reveal, optional)" value={explanation} onChange={(e) => setExplanation(e.target.value)} />
+      <input style={inputStyle} type="url" placeholder="Video link (YouTube or direct MP4, optional)" value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} />
 
       <button disabled={busy || !canSubmit} style={btnStyle(COLORS.green)} onClick={submit}>
         {busy ? "Adding…" : "Add Question"}
@@ -1305,21 +1319,18 @@ function PlayerView({ onExit }) {
   async function submitAnswer(qIndex, optionIndex, question) {
     if (!me || !game) return;
     if (me.answers && me.answers[qIndex] !== undefined) return; // no duplicates
-    const elapsed = (Date.now() - (game.questionStartedAt || Date.now())) / 1000;
-    if (elapsed > question.timer + 1) return; // late
+    const elapsed = Math.min(GAME_QUESTION_SECONDS, (Date.now() - (game.questionStartedAt || Date.now())) / 1000);
+    if (elapsed > GAME_QUESTION_SECONDS) return; // late
     const correct = optionIndex === question.correct;
     let points = 0;
+    const speedMark = correct ? Math.max(0, Math.round(((GAME_QUESTION_SECONDS - elapsed) / GAME_QUESTION_SECONDS) * 100)) : 0;
     if (correct) {
-      points = question.points;
-      if (elapsed <= question.timer * 0.2) points += 100;
-      else if (elapsed <= question.timer * 0.4) points += 75;
-      else if (elapsed <= question.timer * 0.66) points += 50;
-      else points += 25;
+      points = Math.round((question.points || 100) * (0.5 + speedMark / 200));
     }
     const updated = {
       ...me,
       score: (me.score || 0) + points,
-      answers: { ...(me.answers || {}), [qIndex]: { answer: optionIndex, correct, points, submittedAt: Date.now() } },
+      answers: { ...(me.answers || {}), [qIndex]: { answer: optionIndex, correct, points, speedMark, elapsed: Math.round(elapsed * 10) / 10, submittedAt: Date.now() } },
     };
     setMe(updated);
     await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
@@ -1330,7 +1341,7 @@ function PlayerView({ onExit }) {
     const prior = (me.answers && me.answers[qIndex]) || { type: "hazard", found: [], misses: 0, score: 0 };
     if (prior.found.length >= question.hazards.length) return; // already found all
     const elapsed = (Date.now() - (game.questionStartedAt || Date.now())) / 1000;
-    if (elapsed > question.timer + 1) return; // time's up
+    if (elapsed > GAME_QUESTION_SECONDS) return; // time's up
 
     const hit = question.hazards.find(
       (h) => !prior.found.includes(h.id) && hazardDistancePct(xPct, yPct, h.xPct, h.yPct) <= (h.radiusPct || 8)
@@ -1510,7 +1521,7 @@ function PlayerView({ onExit }) {
 }
 
 function QuestionCard({ question, startedAt, now, onAnswer }) {
-  const remaining = Math.max(0, question.timer - Math.floor((now - startedAt) / 1000));
+  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
   const isTF = question.round === "truefalse";
   const [picked, setPicked] = useState(null);
   const optionColors = [COLORS.orange, COLORS.green, COLORS.yellow, "#5B8DEF"];
@@ -1519,9 +1530,10 @@ function QuestionCard({ question, startedAt, now, onAnswer }) {
     <div style={{ width: "100%", maxWidth: 420 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <span style={{ fontSize: 12, color: COLORS.muted, fontWeight: 700 }}>{question.category}</span>
-        <TimerBadge remaining={remaining} total={question.timer} />
+        <TimerBadge remaining={remaining} total={GAME_QUESTION_SECONDS} />
       </div>
       <p style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.35, marginBottom: 18 }}>{question.question}</p>
+      {question.videoUrl && <VideoEmbed url={question.videoUrl} />}
       <div style={{ display: "grid", gridTemplateColumns: isTF ? "1fr 1fr" : "1fr 1fr", gap: 10 }}>
         {question.options.map((opt, i) => (
           <button
@@ -1545,8 +1557,21 @@ function QuestionCard({ question, startedAt, now, onAnswer }) {
   );
 }
 
+function VideoEmbed({ url }) {
+  let parsed;
+  try { parsed = new URL(url); } catch { return null; }
+  if (!/^https?:$/.test(parsed.protocol)) return null;
+  const youtubeId = parsed.hostname.includes("youtu.be")
+    ? parsed.pathname.slice(1)
+    : parsed.hostname.includes("youtube.com") ? parsed.searchParams.get("v") : null;
+  if (youtubeId) {
+    return <iframe title="Question video" src={`https://www.youtube.com/embed/${encodeURIComponent(youtubeId)}`} style={{ width: "100%", aspectRatio: "16 / 9", border: 0, borderRadius: 8, marginBottom: 16 }} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />;
+  }
+  return <video controls preload="metadata" src={url} style={{ width: "100%", maxHeight: 280, borderRadius: 8, marginBottom: 16, background: "#000" }}>Your browser cannot play this video.</video>;
+}
+
 function MillionaireQuestion({ question, startedAt, now, me, players, qIndex, onAnswer, onLifeline }) {
-  const remaining = Math.max(0, question.timer - Math.floor((now - startedAt) / 1000));
+  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
   const [picked, setPicked] = useState(null);
   const [showAudience, setShowAudience] = useState(false);
   const [showHint, setShowHint] = useState(false);
@@ -1565,9 +1590,10 @@ function MillionaireQuestion({ question, startedAt, now, me, players, qIndex, on
         <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: COLORS.purple }}>
           <Gem size={14} /> {question.tier?.toUpperCase()}
         </span>
-        <TimerBadge remaining={remaining} total={question.timer} />
+        <TimerBadge remaining={remaining} total={GAME_QUESTION_SECONDS} />
       </div>
       <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 12 }}>Worth {question.points} points</div>
+      {question.videoUrl && <VideoEmbed url={question.videoUrl} />}
       <p style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.35, marginBottom: 16 }}>{question.question}</p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -1641,7 +1667,7 @@ const LifelineButton = React.memo(function LifelineButton({ icon, label, used, o
 });
 
 function HazardQuestion({ question, startedAt, now, myAnswer, onTap }) {
-  const remaining = Math.max(0, question.timer - Math.floor((now - startedAt) / 1000));
+  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
   const found = myAnswer?.found || [];
   const [flash, setFlash] = useState(null); // {x,y,hit}
   const allFound = found.length >= question.hazards.length;
@@ -1663,7 +1689,7 @@ function HazardQuestion({ question, startedAt, now, myAnswer, onTap }) {
     <div style={{ width: "100%", maxWidth: 460 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, color: COLORS.orange }}><Target size={14} /> FIND THE HAZARDS!</span>
-        <TimerBadge remaining={remaining} total={question.timer} />
+        <TimerBadge remaining={remaining} total={GAME_QUESTION_SECONDS} />
       </div>
       <p style={{ fontSize: 13, color: COLORS.muted, marginBottom: 10 }}>Tap the screen wherever you spot a safety hazard. Found {found.length} / {question.hazards.length}.</p>
       <HazardImage question={question} markers={markers} onTap={remaining > 0 && !allFound ? handleTap : undefined} />
@@ -1723,6 +1749,7 @@ function ResultCard({ question, myAnswer, score, rank }) {
       </p>
       <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 18 }}>
         <StatCell label="Points earned" value={"+" + (answered ? myAnswer.points : 0)} />
+        {answered && <StatCell label="Speed mark" value={`${myAnswer.speedMark || 0}/100`} />}
         <StatCell label="Total score" value={score} />
         <StatCell label="Rank" value={"#" + rank} />
       </div>
@@ -1787,7 +1814,7 @@ function TVView({ onExit }) {
       {game.status === "question" && curQ && curQ.round === "millionaire" && <MillionaireDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} ladder={millionaireQs} />}
       {game.status === "question" && curQ && curQ.round !== "millionaire" && <QuestionDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} />}
       {game.status === "reveal" && curQ && <RevealDisplay q={curQ} qIndex={game.qIndex} total={questions.length} players={players} />}
-      {game.status === "leaderboard" && <LeaderboardDisplay players={sorted} teamScores={teamScores} />}
+      {game.status === "leaderboard" && <LeaderboardDisplay players={sorted} teamScores={teamScores} mediaUrl={game.leaderboardMediaUrl} />}
       {game.status === "ended" && <WinnerDisplay players={sorted} teamScores={teamScores} />}
     </div>
   );
@@ -1931,7 +1958,7 @@ function QRScanner({ onDetected, onClose }) {
 }
 
 function QuestionDisplay({ q, qIndex, total, startedAt, now, players }) {
-  const remaining = Math.max(0, q.timer - Math.floor((now - startedAt) / 1000));
+  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
   const pct = total ? Math.round(((qIndex + 1) / total) * 100) : 0;
 
   if (q.round === "hazard") {
@@ -1968,6 +1995,7 @@ function QuestionDisplay({ q, qIndex, total, startedAt, now, players }) {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 26 }}>
         <div style={{ fontSize: remaining <= 3 ? 96 : 72, fontWeight: 900, color: remaining <= 3 ? COLORS.red : COLORS.yellow, transition: "font-size .2s" }}>{remaining}</div>
         <p style={{ fontSize: 32, fontWeight: 800, textAlign: "center", maxWidth: 900, lineHeight: 1.3 }}>{q.question}</p>
+        {q.videoUrl && <div style={{ width: "100%", maxWidth: 560 }}><VideoEmbed url={q.videoUrl} /></div>}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, width: "100%", maxWidth: 800 }}>
           {q.options.map((opt, i) => (
             <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "18px 22px", fontSize: 20, fontWeight: 700 }}>
@@ -1981,7 +2009,7 @@ function QuestionDisplay({ q, qIndex, total, startedAt, now, players }) {
 }
 
 function MillionaireDisplay({ q, qIndex, total, startedAt, now, players, ladder }) {
-  const remaining = Math.max(0, q.timer - Math.floor((now - startedAt) / 1000));
+  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
   const answered = players.filter((p) => p.answers && p.answers[qIndex] !== undefined).length;
   return (
     <div style={{ flex: 1, display: "flex", gap: 30 }}>
@@ -1993,6 +2021,7 @@ function MillionaireDisplay({ q, qIndex, total, startedAt, now, players, ladder 
           <div style={{ fontSize: remaining <= 3 ? 96 : 72, fontWeight: 900, color: remaining <= 3 ? COLORS.red : COLORS.purple }}>{remaining}</div>
           <div style={{ fontSize: 14, fontWeight: 800, color: COLORS.muted }}>{q.tier} · {q.points} POINTS</div>
           <p style={{ fontSize: 30, fontWeight: 800, textAlign: "center", maxWidth: 800, lineHeight: 1.3 }}>{q.question}</p>
+          {q.videoUrl && <div style={{ width: "100%", maxWidth: 560 }}><VideoEmbed url={q.videoUrl} /></div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, width: "100%", maxWidth: 760 }}>
             {q.options.map((opt, i) => (
               <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "16px 20px", fontSize: 18, fontWeight: 700 }}>
@@ -2071,20 +2100,56 @@ function RevealDisplay({ q, qIndex, total, players }) {
   );
 }
 
-function LeaderboardDisplay({ players, teamScores = [] }) {
+function LeaderboardMedia({ url }) {
+  let parsed;
+  try { parsed = new URL(url); } catch { return null; }
+  if (!/^https?:$/.test(parsed.protocol)) return null;
+  const isImage = /\.(gif|png|jpe?g|webp)(?:$|[?#])/i.test(parsed.pathname);
+  if (isImage) {
+    return <img src={parsed.toString()} alt="Leaderboard celebration" style={{ display: "block", width: "min(100%, 420px)", maxHeight: 180, objectFit: "cover", borderRadius: 10, margin: "0 auto 18px", border: `1px solid ${COLORS.yellow}66` }} />;
+  }
+  return <div style={{ width: "min(100%, 560px)", margin: "0 auto 18px" }}><VideoEmbed url={parsed.toString()} /></div>;
+}
+
+function LeaderboardDisplay({ players, teamScores = [], mediaUrl }) {
   const [tab, setTab] = useState("individual");
+  const previousRanksRef = useRef(new Map());
+  const [rankMoves, setRankMoves] = useState({});
   const showTabs = teamScores.length > 0;
   const raceEntries = tab === "team" ? teamScores : players;
   const maxScore = Math.max(1, ...raceEntries.map((entry) => entry.score || 0));
+  const leaderScore = raceEntries[0]?.score || 0;
   const laneColors = ["#FFC629", "#C7CCD1", "#D98B54", "#33C481", "#59B7FF", "#F477B8", "#A98BFF", "#FF7A1F", "#79D36B", "#F0A35B", "#5ED6C5", "#EC6B6B"];
+
+  useEffect(() => {
+    const nextMoves = {};
+    raceEntries.forEach((entry, index) => {
+      const key = entry.id || entry.name;
+      const previousRank = previousRanksRef.current.get(key);
+      if (previousRank && previousRank !== index + 1) nextMoves[key] = previousRank - (index + 1);
+      previousRanksRef.current.set(key, index + 1);
+    });
+    if (Object.keys(nextMoves).length) {
+      setRankMoves(nextMoves);
+      const timeout = setTimeout(() => setRankMoves({}), 2400);
+      return () => clearTimeout(timeout);
+    }
+  }, [raceEntries]);
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "4vh 0" }}>
-      <style>{`@keyframes cslRacePulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } } @keyframes cslRaceShimmer { from { background-position: 0 0; } to { background-position: 32px 0; } } @keyframes cslRaceGlow { 0%,100% { box-shadow: 0 0 0 0 #FFC62900; } 50% { box-shadow: 0 0 18px 3px #FFC62955; } } @keyframes cslLaneBob { 0%,100% { transform: translateX(0); } 50% { transform: translateX(5px); } }`}</style>
+      <style>{`@keyframes cslRacePulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } } @keyframes cslRaceShimmer { from { background-position: 0 0; } to { background-position: 32px 0; } } @keyframes cslRaceGlow { 0%,100% { box-shadow: 0 0 0 0 #FFC62900; } 50% { box-shadow: 0 0 18px 3px #FFC62955; } } @keyframes cslLaneBob { 0%,100% { transform: translateX(0); } 50% { transform: translateX(5px); } } @keyframes cslRankUp { 0% { transform: translateY(10px); opacity: .2; } 100% { transform: translateY(0); opacity: 1; } }`}</style>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
         <Trophy size={30} color={COLORS.yellow} style={{ animation: "cslRacePulse 1.8s ease-in-out infinite" }} />
         <span style={{ fontSize: 30, fontWeight: 900 }}>{tab === "team" ? "TEAM RACE" : "LIVE RACE"}</span>
       </div>
       <div style={{ color: COLORS.muted, fontSize: 13, marginBottom: showTabs ? 14 : 24 }}>Every point moves you closer to the finish line</div>
+      {mediaUrl && <LeaderboardMedia url={mediaUrl} />}
+      <div style={{ display: "flex", gap: 10, width: "100%", maxWidth: 900, marginBottom: 18 }}>
+        <StatCell label="Racers" value={raceEntries.length} />
+        <StatCell label="Leader score" value={leaderScore} />
+        <StatCell label="Finish target" value={maxScore} />
+      </div>
       {showTabs && (
         <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
           {["individual", "team"].map((t) => (
@@ -2102,13 +2167,15 @@ function LeaderboardDisplay({ players, teamScores = [] }) {
           const laneColor = laneColors[i % laneColors.length];
           const isWinner = tab === "individual" && i === 0;
           const isPodium = tab === "individual" && i < 3;
+          const rankMove = rankMoves[entry.id || entry.name] || 0;
+          const gap = Math.max(0, leaderScore - score);
           const label = tab === "team" ? entry.name : entry.name;
           const sub = tab === "team" ? `${entry.count} player${entry.count === 1 ? "" : "s"}` : (entry.team || entry.company || "Racing");
           return (
             <div key={entry.id || entry.name} style={{ display: "grid", gridTemplateColumns: "36px minmax(90px, 180px) 1fr 64px", alignItems: "center", gap: 8, padding: "10px 10px", background: isWinner ? COLORS.yellow + "1f" : COLORS.surface, border: `1px solid ${isPodium ? laneColor : COLORS.line}`, borderRadius: 10, marginBottom: 8, animation: isWinner ? "cslRaceGlow 1.8s ease-in-out infinite" : "none" }}>
-              <div style={{ textAlign: "center", fontWeight: 900, fontSize: 18, color: laneColor }}>{isPodium ? ["🏆", "🥈", "🥉"][i] : i + 1}</div>
+              <div style={{ textAlign: "center", fontWeight: 900, fontSize: 18, color: laneColor }}>{isPodium ? ["🏆", "🥈", "🥉"][i] : i + 1}{rankMove > 0 && <span style={{ display: "block", color: COLORS.green, fontSize: 10, animation: "cslRankUp .4s ease-out" }}>▲{rankMove}</span>}{rankMove < 0 && <span style={{ display: "block", color: COLORS.red, fontSize: 10, animation: "cslRankUp .4s ease-out" }}>▼{Math.abs(rankMove)}</span>}</div>
               <div style={{ minWidth: 0 }}><div style={{ fontWeight: 800, fontSize: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isPodium ? laneColor : COLORS.ink }}>{label}</div><div style={{ fontSize: 11, color: COLORS.muted }}>{sub}</div></div>
-              <div style={{ height: 24, background: "#00000055", borderRadius: 5, overflow: "hidden", position: "relative" }}><div style={{ width: `${Math.max(4, (score / maxScore) * 100)}%`, height: "100%", background: isWinner ? `repeating-linear-gradient(135deg, ${laneColor} 0 10px, #FFE37A 10px 20px)` : `linear-gradient(90deg, ${laneColor}, ${laneColors[(i + 3) % laneColors.length]})`, backgroundSize: isWinner ? "28px 28px" : "auto", animation: isWinner ? "cslRaceShimmer .8s linear infinite" : `cslLaneBob ${1.1 + (i % 4) * .25}s ease-in-out infinite`, transition: "width .7s ease-out" }} /></div>
+              <div style={{ height: 24, background: "#00000055", borderRadius: 5, overflow: "visible", position: "relative", borderRight: "4px dashed #FFFFFF55" }}><div style={{ width: `${Math.max(4, (score / maxScore) * 100)}%`, height: "100%", background: isWinner ? `repeating-linear-gradient(135deg, ${laneColor} 0 10px, #FFE37A 10px 20px)` : `linear-gradient(90deg, ${laneColor}, ${laneColors[(i + 3) % laneColors.length]})`, backgroundSize: isWinner ? "28px 28px" : "auto", animation: isWinner ? "cslRaceShimmer .8s linear infinite" : `cslLaneBob ${1.1 + (i % 4) * .25}s ease-in-out infinite`, transition: "width .7s ease-out", position: "relative" }}><Zap size={16} fill={laneColor} color="#14171A" style={{ position: "absolute", right: -8, top: 4, filter: `drop-shadow(0 0 4px ${laneColor})` }} /></div><span style={{ position: "absolute", right: 4, top: 29, fontSize: 9, color: COLORS.muted }}>{gap === 0 ? "AT THE FINISH" : `${gap} behind`}</span></div>
               <div style={{ textAlign: "right", fontWeight: 900, fontSize: 19, color: laneColor }}>{score}<span style={{ display: "block", fontSize: 10, color: COLORS.muted, fontWeight: 600 }}>PTS</span></div>
             </div>
           );
