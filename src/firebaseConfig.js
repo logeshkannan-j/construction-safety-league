@@ -6,7 +6,7 @@ import { getAnalytics } from "firebase/analytics";
 
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyA1q41hB7QL8gatydAgNyhhDdLilC9mzA0",
   authDomain: "safety-league.firebaseapp.com",
   databaseURL: "https://safety-league-default-rtdb.firebaseio.com",
