@@ -618,6 +618,7 @@ function AdminView({ onExit }) {
   const [pin, setPin] = useState("");
   const [adminPin, setAdminPin] = useState("1234");
   const [newPin, setNewPin] = useState("");
+  const [pinError, setPinError] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [checkingUnlock, setCheckingUnlock] = useState(true);
   const { game, questions, players, connected, refresh } = useGamePoll();
@@ -654,7 +655,11 @@ function AdminView({ onExit }) {
   }, []);
 
   async function unlockAdmin() {
-    if (pin !== adminPin) return;
+    if (pin !== adminPin) {
+      setPinError("Incorrect PIN. Try again or use Forgot PIN to recover access.");
+      return;
+    }
+    setPinError("");
     setUnlocked(true);
     try { await safeSet(ADMIN_UNLOCKED_KEY, "1", false); } catch {}
   }
@@ -669,6 +674,14 @@ function AdminView({ onExit }) {
     await safeSet(ADMIN_PIN_KEY, newPin, false);
     setAdminPin(newPin);
     setNewPin("");
+  }
+
+  async function recoverAdminPin() {
+    await safeSet(ADMIN_PIN_KEY, "1234", false);
+    await safeDelete(ADMIN_UNLOCKED_KEY, false);
+    setAdminPin("1234");
+    setPin("");
+    setPinError("PIN recovered. Use the default PIN 1234, then change it in Admin security.");
   }
 
   const sorted = useMemo(() => [...players].sort((a, b) => (b.score || 0) - (a.score || 0)), [players]);
@@ -687,11 +700,13 @@ function AdminView({ onExit }) {
         <Panel title="Admin access" icon={<Shield size={20} color={COLORS.orange} />}>
           <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 14 }}>Enter your admin PIN to manage the event.</p>
           <input
-            value={pin} onChange={(e) => setPin(e.target.value)} type="password" placeholder="Enter PIN" maxLength={4}
+            value={pin} onChange={(e) => { setPin(e.target.value.replace(/\D/g, "").slice(0, 8)); setPinError(""); }} type="password" placeholder="Enter PIN" maxLength={8}
             style={inputStyle}
             onKeyDown={(e) => e.key === "Enter" && unlockAdmin()}
           />
+          {pinError && <p style={{ color: pinError.startsWith("PIN recovered") ? COLORS.green : COLORS.red, fontSize: 13, margin: "-4px 0 10px", lineHeight: 1.4 }}>{pinError}</p>}
           <button style={btnStyle(COLORS.orange)} onClick={unlockAdmin}>Unlock</button>
+          <button style={{ ...linkBtnStyle, color: COLORS.yellow }} onClick={recoverAdminPin}>Forgot PIN? Recover with default PIN</button>
           <button style={linkBtnStyle} onClick={onExit}>← Back</button>
         </Panel>
       </Centered>
