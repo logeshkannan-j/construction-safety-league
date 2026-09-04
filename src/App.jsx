@@ -408,7 +408,8 @@ function defaultGame() {
     leaderboardTop1MediaUrl: "",
     leaderboardTop2MediaUrl: "",
     leaderboardTop3MediaUrl: "",
-    leaderboardLastMediaUrl: "",
+    leaderboardBottom1MediaUrl: "",
+    leaderboardBottom2MediaUrl: "",
     createdAt: Date.now(),
   };
 }
@@ -913,7 +914,8 @@ function AdminView({ onExit }) {
                 ["1st place celebration", "leaderboardTop1MediaUrl"],
                 ["2nd place celebration", "leaderboardTop2MediaUrl"],
                 ["3rd place celebration", "leaderboardTop3MediaUrl"],
-                ["Last place encouragement", "leaderboardLastMediaUrl"],
+                ["Bottom 1 celebration", "leaderboardBottom1MediaUrl"],
+                ["Bottom 2 celebration", "leaderboardBottom2MediaUrl"],
               ].map(([label, key]) => (
                 <input key={key} style={{ ...inputStyle, marginBottom: 0 }} type="url" aria-label={label} placeholder={`${label} URL (optional)`} defaultValue={game[key] || ""} onBlur={(e) => patchGame({ [key]: e.target.value.trim() })} />
               ))}
@@ -2134,13 +2136,30 @@ function LeaderboardDisplay({ players, teamScores = [], mediaUrl, mediaSettings 
   const [tab, setTab] = useState("individual");
   const previousRanksRef = useRef(new Map());
   const [rankMoves, setRankMoves] = useState({});
+  const [spotlightIndex, setSpotlightIndex] = useState(0);
   const showTabs = teamScores.length > 0;
   const raceEntries = tab === "team" ? teamScores : players;
   const maxScore = Math.max(1, ...raceEntries.map((entry) => entry.score || 0));
   const leaderScore = raceEntries[0]?.score || 0;
   const laneColors = ["#FFC629", "#C7CCD1", "#D98B54", "#33C481", "#59B7FF", "#F477B8", "#A98BFF", "#FF7A1F", "#79D36B", "#F0A35B", "#5ED6C5", "#EC6B6B"];
-  const topMedia = tab === "individual" ? [mediaSettings.leaderboardTop1MediaUrl, mediaSettings.leaderboardTop2MediaUrl, mediaSettings.leaderboardTop3MediaUrl] : [];
-  const lastMedia = tab === "individual" && raceEntries.length > 1 ? mediaSettings.leaderboardLastMediaUrl : "";
+  const getEntryMedia = (index) => {
+    if (tab !== "individual") return "";
+    if (index === 0) return mediaSettings.leaderboardTop1MediaUrl || "";
+    if (index === 1) return mediaSettings.leaderboardTop2MediaUrl || "";
+    if (index === 2) return mediaSettings.leaderboardTop3MediaUrl || "";
+    if (index === raceEntries.length - 1) return mediaSettings.leaderboardBottom1MediaUrl || "";
+    if (index === raceEntries.length - 2) return mediaSettings.leaderboardBottom2MediaUrl || "";
+    return "";
+  };
+  const mediaIndexes = raceEntries.map((_, index) => index).filter((index) => getEntryMedia(index));
+
+  useEffect(() => {
+    setSpotlightIndex(0);
+    if (mediaIndexes.length < 2) return undefined;
+    const timer = setInterval(() => setSpotlightIndex((current) => (current + 1) % mediaIndexes.length), 10000);
+    return () => clearInterval(timer);
+  }, [raceEntries.length, tab, mediaSettings.leaderboardTop1MediaUrl, mediaSettings.leaderboardTop2MediaUrl, mediaSettings.leaderboardTop3MediaUrl, mediaSettings.leaderboardBottom1MediaUrl, mediaSettings.leaderboardBottom2MediaUrl]);
+  const activeMediaIndex = mediaIndexes[spotlightIndex];
 
   useEffect(() => {
     const nextMoves = {};
@@ -2159,12 +2178,13 @@ function LeaderboardDisplay({ players, teamScores = [], mediaUrl, mediaSettings 
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "4vh 0" }}>
-      <style>{`@keyframes cslRacePulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } } @keyframes cslRaceShimmer { from { background-position: 0 0; } to { background-position: 32px 0; } } @keyframes cslRaceGlow { 0%,100% { box-shadow: 0 0 0 0 #FFC62900; } 50% { box-shadow: 0 0 18px 3px #FFC62955; } } @keyframes cslLaneBob { 0%,100% { transform: translateX(0); } 50% { transform: translateX(5px); } } @keyframes cslRankUp { 0% { transform: translateY(10px); opacity: .2; } 100% { transform: translateY(0); opacity: 1; } }`}</style>
+      <style>{`@keyframes cslRacePulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } } @keyframes cslRaceShimmer { from { background-position: 0 0; } to { background-position: 32px 0; } } @keyframes cslRaceGlow { 0%,100% { box-shadow: 0 0 0 0 #FFC62900; } 50% { box-shadow: 0 0 18px 3px #FFC62955; } } @keyframes cslLaneBob { 0%,100% { transform: translateX(0); } 50% { transform: translateX(5px); } } @keyframes cslRankUp { 0% { transform: translateY(10px); opacity: .2; } 100% { transform: translateY(0); opacity: 1; } } @media (max-width: 700px) { .csl-race-layout { display: block !important; } .csl-race-row { grid-template-columns: 32px minmax(80px, 1fr) 64px !important; } .csl-race-track { grid-column: 2 / 4; } .csl-race-media { grid-column: 2 / 4; width: 100%; } .csl-race-layout aside { margin-top: 14px; width: auto !important; } }`}</style>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
         <Trophy size={30} color={COLORS.yellow} style={{ animation: "cslRacePulse 1.8s ease-in-out infinite" }} />
         <span style={{ fontSize: 30, fontWeight: 900 }}>{tab === "team" ? "TEAM RACE" : "LIVE RACE"}</span>
       </div>
       <div style={{ color: COLORS.muted, fontSize: 13, marginBottom: showTabs ? 14 : 24 }}>Every point moves you closer to the finish line</div>
+      {mediaUrl && <div style={{ width: "100%", maxWidth: 420, marginBottom: 16 }}><MediaSlot label="Group celebration" url={mediaUrl} /></div>}
       <div style={{ display: "flex", gap: 10, width: "100%", maxWidth: 900, marginBottom: 18 }}>
         <StatCell label="Racers" value={raceEntries.length} />
         <StatCell label="Leader score" value={leaderScore} />
@@ -2181,7 +2201,7 @@ function LeaderboardDisplay({ players, teamScores = [], mediaUrl, mediaSettings 
           ))}
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 20, width: "100%", maxWidth: 1180 }}>
+      <div className="csl-race-layout" style={{ display: "flex", alignItems: "flex-start", gap: 20, width: "100%", maxWidth: 1180 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         {raceEntries.map((entry, i) => {
           const score = entry.score || 0;
@@ -2190,25 +2210,22 @@ function LeaderboardDisplay({ players, teamScores = [], mediaUrl, mediaSettings 
           const isPodium = tab === "individual" && i < 3;
           const rankMove = rankMoves[entry.id || entry.name] || 0;
           const gap = Math.max(0, leaderScore - score);
+          const rowMedia = getEntryMedia(i);
+          const isSpotlight = activeMediaIndex === i;
           const label = tab === "team" ? entry.name : entry.name;
           const sub = tab === "team" ? `${entry.count} player${entry.count === 1 ? "" : "s"}` : (entry.team || entry.company || "Racing");
           return (
-            <div key={entry.id || entry.name} style={{ display: "grid", gridTemplateColumns: "36px minmax(90px, 180px) 1fr 64px", alignItems: "center", gap: 8, padding: "10px 10px", background: isWinner ? COLORS.yellow + "1f" : COLORS.surface, border: `1px solid ${isPodium ? laneColor : COLORS.line}`, borderRadius: 10, marginBottom: 8, animation: isWinner ? "cslRaceGlow 1.8s ease-in-out infinite" : "none" }}>
+            <div className={`csl-race-row${rowMedia && isSpotlight ? " csl-race-row-with-media" : ""}`} key={entry.id || entry.name} style={{ display: "grid", gridTemplateColumns: rowMedia && isSpotlight ? "36px minmax(90px, 180px) 1fr 150px 64px" : "36px minmax(90px, 180px) 1fr 64px", alignItems: "center", gap: 8, padding: "10px 10px", background: isWinner ? COLORS.yellow + "1f" : COLORS.surface, border: `1px solid ${isSpotlight ? laneColor : isPodium ? laneColor : COLORS.line}`, borderRadius: 10, marginBottom: rowMedia && isSpotlight ? 18 : 8, animation: isWinner ? "cslRaceGlow 1.8s ease-in-out infinite" : "none" }}>
               <div style={{ textAlign: "center", fontWeight: 900, fontSize: 18, color: laneColor }}>{isPodium ? ["🏆", "🥈", "🥉"][i] : i + 1}{rankMove > 0 && <span style={{ display: "block", color: COLORS.green, fontSize: 10, animation: "cslRankUp .4s ease-out" }}>▲{rankMove}</span>}{rankMove < 0 && <span style={{ display: "block", color: COLORS.red, fontSize: 10, animation: "cslRankUp .4s ease-out" }}>▼{Math.abs(rankMove)}</span>}</div>
               <div style={{ minWidth: 0 }}><div style={{ fontWeight: 800, fontSize: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isPodium ? laneColor : COLORS.ink }}>{label}</div><div style={{ fontSize: 11, color: COLORS.muted }}>{sub}</div></div>
-              <div style={{ height: 24, background: "#00000055", borderRadius: 5, overflow: "visible", position: "relative", borderRight: "4px dashed #FFFFFF55" }}><div style={{ width: `${Math.max(4, (score / maxScore) * 100)}%`, height: "100%", background: isWinner ? `repeating-linear-gradient(135deg, ${laneColor} 0 10px, #FFE37A 10px 20px)` : `linear-gradient(90deg, ${laneColor}, ${laneColors[(i + 3) % laneColors.length]})`, backgroundSize: isWinner ? "28px 28px" : "auto", animation: isWinner ? "cslRaceShimmer .8s linear infinite" : `cslLaneBob ${1.1 + (i % 4) * .25}s ease-in-out infinite`, transition: "width .7s ease-out", position: "relative" }}><Zap size={16} fill={laneColor} color="#14171A" style={{ position: "absolute", right: -8, top: 4, filter: `drop-shadow(0 0 4px ${laneColor})` }} /></div><span style={{ position: "absolute", right: 4, top: 29, fontSize: 9, color: COLORS.muted }}>{gap === 0 ? "AT THE FINISH" : `${gap} behind`}</span></div>
+              <div className="csl-race-track" style={{ height: 24, background: "#00000055", borderRadius: 5, overflow: "visible", position: "relative", borderRight: "4px dashed #FFFFFF55" }}><div style={{ width: `${Math.max(4, (score / maxScore) * 100)}%`, height: "100%", background: isWinner ? `repeating-linear-gradient(135deg, ${laneColor} 0 10px, #FFE37A 10px 20px)` : `linear-gradient(90deg, ${laneColor}, ${laneColors[(i + 3) % laneColors.length]})`, backgroundSize: isWinner ? "28px 28px" : "auto", animation: isWinner ? "cslRaceShimmer .8s linear infinite" : `cslLaneBob ${1.1 + (i % 4) * .25}s ease-in-out infinite`, transition: "width .7s ease-out", position: "relative" }}><Zap size={16} fill={laneColor} color="#14171A" style={{ position: "absolute", right: -8, top: 4, filter: `drop-shadow(0 0 4px ${laneColor})` }} /></div><span style={{ position: "absolute", right: 4, top: 29, fontSize: 9, color: COLORS.muted }}>{gap === 0 ? "AT THE FINISH" : `${gap} behind`}</span></div>
+              {rowMedia && isSpotlight && <div className="csl-race-media"><MediaSlot label="Now celebrating" url={rowMedia} /></div>}
               <div style={{ textAlign: "right", fontWeight: 900, fontSize: 19, color: laneColor }}>{score}<span style={{ display: "block", fontSize: 10, color: COLORS.muted, fontWeight: 600 }}>PTS</span></div>
             </div>
           );
         })}
         {tab === "individual" && players.length === 0 && <p style={{ color: COLORS.muted, textAlign: "center" }}>No scores yet.</p>}
       </div>
-      {(mediaUrl || topMedia.some(Boolean) || lastMedia) && <aside style={{ width: 230, flexShrink: 0, background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: 12 }}>
-        <div style={{ color: COLORS.purple, fontSize: 11, fontWeight: 900, letterSpacing: 1, marginBottom: 10 }}>CELEBRATION ZONE</div>
-        {mediaUrl && <MediaSlot label="Everyone" url={mediaUrl} />}
-        {topMedia.map((url, index) => url && <MediaSlot key={url + index} label={["1st place", "2nd place", "3rd place"][index]} url={url} />)}
-        {lastMedia && <MediaSlot label="Last place" url={lastMedia} />}
-      </aside>}
       </div>
     </div>
   );

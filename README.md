@@ -114,8 +114,9 @@ Use a short looping celebration GIF for the most playful result. The URL must
 be publicly reachable by every browser; private cloud-drive links will not play.
 
 The same panel also has separate slots for **1st place**, **2nd place**,
-**3rd place**, and **Last place**. These appear in the right-side Celebration
-Zone during the individual leaderboard.
+**3rd place**, **Bottom 1**, and **Bottom 2**. The assigned media appears in
+the matching player's row and rotates to the next assigned player every 10
+seconds. The layout stacks cleanly on mobile screens.
 
 ## Notes and limits
 
