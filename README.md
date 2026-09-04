@@ -108,5 +108,7 @@ requirement at all, since Firebase is the shared backend, not your laptop).
 - Hazard-round photos are stored as base64 strings directly in the database.
   Fine for a handful of reasonably sized images; don't upload dozens of
   large, high-resolution photos.
-- The admin PIN (`1234`) is hardcoded in `src/App.jsx` — change it before a
-  real event since anyone with the URL can reach `/` and pick Admin.
+- The admin PIN starts as `1234` for the first unlock. After entering Admin,
+   use **Admin security → Reset PIN** to set a 4–8 digit PIN. The replacement
+   PIN is stored in that browser's local storage, so reset it on the admin
+   device that will run the event.

@@ -40,6 +40,7 @@ const COLORS = {
 // link on the SAME device skips the PIN. Nothing is written anywhere
 // shared, so sharing the game/join link never grants anyone else access.
 const ADMIN_UNLOCKED_KEY = "csl_admin_unlocked_v1";
+const ADMIN_PIN_KEY = "csl_admin_pin_v1";
 
 const SEED_QUESTIONS = [
   { round: "quiz", category: "Work at Height", difficulty: "Easy", question: "A worker is working at height. What is the most important fall protection equipment?", options: ["Gloves", "Full Body Harness", "Safety Goggles", "Face Mask"], correct: 1, timer: 15, points: 100, explanation: "A properly worn and anchored full body harness is the primary defense against a fall from height." },
@@ -472,7 +473,7 @@ export default function App() {
 
 function RoleSelect({ onSelect }) {
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, position: "relative", overflow: "hidden" }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 24px", position: "relative", overflow: "hidden", background: `radial-gradient(circle at 15% 15%, ${COLORS.orange}18, transparent 32%), radial-gradient(circle at 85% 80%, ${COLORS.green}14, transparent 34%)` }}>
       <div style={{ position: "absolute", inset: 0, backgroundImage: `repeating-linear-gradient(135deg, ${COLORS.yellow}0d 0 18px, transparent 18px 36px)` }} />
       <div style={{ position: "relative", textAlign: "center", marginBottom: 44 }}>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 10, background: COLORS.yellow, color: "#1A1200", padding: "6px 14px", borderRadius: 4, fontWeight: 800, fontSize: 12, letterSpacing: 1 }}>
@@ -481,16 +482,17 @@ function RoleSelect({ onSelect }) {
         <h1 style={{ fontSize: 44, fontWeight: 900, margin: "18px 0 6px", letterSpacing: -1, lineHeight: 1.05 }}>
           Construction<br />Safety League
         </h1>
-        <p style={{ color: COLORS.muted, fontSize: 15, maxWidth: 360, margin: "0 auto" }}>
-          A live safety quiz for the whole crew. Pick how you're joining this session.
+        <p style={{ color: COLORS.muted, fontSize: 15, maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>
+          One room. One live score. Choose your station to get started.
         </p>
       </div>
 
-      <div style={{ position: "relative", display: "grid", gap: 14, width: "100%", maxWidth: 380 }}>
-        <RoleCard icon={<Users size={22} />} title="I'm a player" sub="Join with your name on your phone" color={COLORS.green} onClick={() => onSelect("player")} />
-        <RoleCard icon={<Trophy size={22} />} title="TV / projector display" sub="Full-screen scoreboard for the room" color={COLORS.yellow} onClick={() => onSelect("tv")} />
-        <RoleCard icon={<Shield size={22} />} title="Admin control panel" sub="Run the game" color={COLORS.orange} onClick={() => onSelect("admin")} />
+      <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, width: "100%", maxWidth: 900 }}>
+        <RoleCard icon={<Users size={22} />} title="Join as player" sub="Enter the game code, then play on your phone" color={COLORS.green} onClick={() => onSelect("player")} />
+        <RoleCard icon={<Trophy size={22} />} title="Show the arena" sub="Project the live questions and racing leaderboard" color={COLORS.yellow} onClick={() => onSelect("tv")} />
+        <RoleCard icon={<Shield size={22} />} title="Run the event" sub="Create games, control rounds, and manage players" color={COLORS.orange} onClick={() => onSelect("admin")} />
       </div>
+      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 8, marginTop: 28, color: COLORS.muted, fontSize: 12 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.green, boxShadow: `0 0 0 5px ${COLORS.green}22` }} /> LIVE EVENT MODE · Firebase sync enabled</div>
     </div>
   );
 }
@@ -610,6 +612,8 @@ function hazardDistancePct(ax, ay, bx, by) {
 
 function AdminView({ onExit }) {
   const [pin, setPin] = useState("");
+  const [adminPin, setAdminPin] = useState("1234");
+  const [newPin, setNewPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [checkingUnlock, setCheckingUnlock] = useState(true);
   const { game, questions, players, connected, refresh } = useGamePoll();
@@ -636,6 +640,8 @@ function AdminView({ onExit }) {
   useEffect(() => {
     (async () => {
       try {
+        const savedPin = await safeGet(ADMIN_PIN_KEY, false);
+        if (savedPin && /^\d{4,8}$/.test(savedPin)) setAdminPin(savedPin);
         const saved = await safeGet(ADMIN_UNLOCKED_KEY, false);
         if (saved === "1") setUnlocked(true);
       } catch {}
@@ -644,7 +650,7 @@ function AdminView({ onExit }) {
   }, []);
 
   async function unlockAdmin() {
-    if (pin !== "1234") return;
+    if (pin !== adminPin) return;
     setUnlocked(true);
     try { await safeSet(ADMIN_UNLOCKED_KEY, "1", false); } catch {}
   }
@@ -652,6 +658,13 @@ function AdminView({ onExit }) {
     try { await safeDelete(ADMIN_UNLOCKED_KEY, false); } catch {}
     setUnlocked(false);
     setPin("");
+  }
+
+  async function resetAdminPin() {
+    if (!/^\d{4,8}$/.test(newPin)) return;
+    await safeSet(ADMIN_PIN_KEY, newPin, false);
+    setAdminPin(newPin);
+    setNewPin("");
   }
 
   const sorted = useMemo(() => [...players].sort((a, b) => (b.score || 0) - (a.score || 0)), [players]);
@@ -668,7 +681,7 @@ function AdminView({ onExit }) {
     return (
       <Centered>
         <Panel title="Admin access" icon={<Shield size={20} color={COLORS.orange} />}>
-          <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 14 }}>Demo lock for this session. PIN: <b style={{ color: COLORS.ink }}>1234</b></p>
+          <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 14 }}>Enter your admin PIN to manage the event.</p>
           <input
             value={pin} onChange={(e) => setPin(e.target.value)} type="password" placeholder="Enter PIN" maxLength={4}
             style={inputStyle}
@@ -864,6 +877,14 @@ function AdminView({ onExit }) {
               {game.status !== "lobby" && game.status !== "ended" && <ActionBtn icon={<Trophy size={15} />} label="Show Leaderboard" color={COLORS.surfaceRaised} onClick={showLeaderboard} />}
               {game.status !== "lobby" && <ActionBtn icon={<RotateCcw size={15} />} label="Back to Lobby" color={COLORS.surfaceRaised} onClick={backToLobby} />}
               <ActionBtn icon={<RotateCcw size={15} />} label="Reset Game" color={COLORS.red} onClick={resetGame} />
+            </div>
+          </Panel>
+
+          <Panel title="Admin security" icon={<Lock size={18} color={COLORS.orange} />}>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 10 }}>Change the PIN used to unlock this admin panel on this device.</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input style={{ ...inputStyle, width: 180, marginBottom: 0 }} inputMode="numeric" maxLength={8} type="password" placeholder="New PIN (4–8 digits)" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 8))} />
+              <button disabled={newPin.length < 4} style={{ ...btnStyle(COLORS.orange), width: "auto", padding: "10px 16px" }} onClick={resetAdminPin}>Reset PIN</button>
             </div>
           </Panel>
 
@@ -2034,12 +2055,17 @@ function RevealDisplay({ q, qIndex, total, players }) {
 function LeaderboardDisplay({ players, teamScores = [] }) {
   const [tab, setTab] = useState("individual");
   const showTabs = teamScores.length > 0;
+  const raceEntries = tab === "team" ? teamScores : players;
+  const maxScore = Math.max(1, ...raceEntries.map((entry) => entry.score || 0));
+  const laneColors = ["#FFC629", "#C7CCD1", "#D98B54", "#33C481", "#59B7FF", "#F477B8", "#A98BFF", "#FF7A1F", "#79D36B", "#F0A35B", "#5ED6C5", "#EC6B6B"];
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: showTabs ? 12 : 22 }}>
-        <Trophy size={26} color={COLORS.yellow} />
-        <span style={{ fontSize: 26, fontWeight: 900 }}>{tab === "team" ? "TEAM LEADERBOARD" : "LEADERBOARD"}</span>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "4vh 0" }}>
+      <style>{`@keyframes cslRacePulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } } @keyframes cslRaceShimmer { from { background-position: 0 0; } to { background-position: 32px 0; } } @keyframes cslRaceGlow { 0%,100% { box-shadow: 0 0 0 0 #FFC62900; } 50% { box-shadow: 0 0 18px 3px #FFC62955; } } @keyframes cslLaneBob { 0%,100% { transform: translateX(0); } 50% { transform: translateX(5px); } }`}</style>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+        <Trophy size={30} color={COLORS.yellow} style={{ animation: "cslRacePulse 1.8s ease-in-out infinite" }} />
+        <span style={{ fontSize: 30, fontWeight: 900 }}>{tab === "team" ? "TEAM RACE" : "LIVE RACE"}</span>
       </div>
+      <div style={{ color: COLORS.muted, fontSize: 13, marginBottom: showTabs ? 14 : 24 }}>Every point moves you closer to the finish line</div>
       {showTabs && (
         <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
           {["individual", "team"].map((t) => (
@@ -2051,28 +2077,24 @@ function LeaderboardDisplay({ players, teamScores = [] }) {
           ))}
         </div>
       )}
-      <div style={{ width: "100%", maxWidth: 640 }}>
-        {tab === "individual" && players.slice(0, 10).map((p, i) => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", background: i === 0 ? COLORS.yellow + "1f" : COLORS.surface, border: `1px solid ${i === 0 ? COLORS.yellow : COLORS.line}`, borderRadius: 10, marginBottom: 8 }}>
-            <div style={{ width: 30, textAlign: "center", fontWeight: 900, fontSize: 18, color: i === 0 ? COLORS.yellow : COLORS.muted }}>{i + 1}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 17 }}>{p.name}</div>
-              {(p.team || p.company) && <div style={{ fontSize: 12, color: COLORS.muted }}>{p.team || p.company}</div>}
+      <div style={{ width: "100%", maxWidth: 900 }}>
+        {raceEntries.map((entry, i) => {
+          const score = entry.score || 0;
+          const laneColor = laneColors[i % laneColors.length];
+          const isWinner = tab === "individual" && i === 0;
+          const isPodium = tab === "individual" && i < 3;
+          const label = tab === "team" ? entry.name : entry.name;
+          const sub = tab === "team" ? `${entry.count} player${entry.count === 1 ? "" : "s"}` : (entry.team || entry.company || "Racing");
+          return (
+            <div key={entry.id || entry.name} style={{ display: "grid", gridTemplateColumns: "36px minmax(90px, 180px) 1fr 64px", alignItems: "center", gap: 8, padding: "10px 10px", background: isWinner ? COLORS.yellow + "1f" : COLORS.surface, border: `1px solid ${isPodium ? laneColor : COLORS.line}`, borderRadius: 10, marginBottom: 8, animation: isWinner ? "cslRaceGlow 1.8s ease-in-out infinite" : "none" }}>
+              <div style={{ textAlign: "center", fontWeight: 900, fontSize: 18, color: laneColor }}>{isPodium ? ["🏆", "🥈", "🥉"][i] : i + 1}</div>
+              <div style={{ minWidth: 0 }}><div style={{ fontWeight: 800, fontSize: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isPodium ? laneColor : COLORS.ink }}>{label}</div><div style={{ fontSize: 11, color: COLORS.muted }}>{sub}</div></div>
+              <div style={{ height: 24, background: "#00000055", borderRadius: 5, overflow: "hidden", position: "relative" }}><div style={{ width: `${Math.max(4, (score / maxScore) * 100)}%`, height: "100%", background: isWinner ? `repeating-linear-gradient(135deg, ${laneColor} 0 10px, #FFE37A 10px 20px)` : `linear-gradient(90deg, ${laneColor}, ${laneColors[(i + 3) % laneColors.length]})`, backgroundSize: isWinner ? "28px 28px" : "auto", animation: isWinner ? "cslRaceShimmer .8s linear infinite" : `cslLaneBob ${1.1 + (i % 4) * .25}s ease-in-out infinite`, transition: "width .7s ease-out" }} /></div>
+              <div style={{ textAlign: "right", fontWeight: 900, fontSize: 19, color: laneColor }}>{score}<span style={{ display: "block", fontSize: 10, color: COLORS.muted, fontWeight: 600 }}>PTS</span></div>
             </div>
-            <div style={{ fontWeight: 900, fontSize: 20, color: COLORS.yellow }}>{p.score || 0}</div>
-          </div>
-        ))}
+          );
+        })}
         {tab === "individual" && players.length === 0 && <p style={{ color: COLORS.muted, textAlign: "center" }}>No scores yet.</p>}
-        {tab === "team" && teamScores.map((t, i) => (
-          <div key={t.name} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", background: i === 0 ? COLORS.yellow + "1f" : COLORS.surface, border: `1px solid ${i === 0 ? COLORS.yellow : COLORS.line}`, borderRadius: 10, marginBottom: 8 }}>
-            <div style={{ width: 30, textAlign: "center", fontWeight: 900, fontSize: 18, color: i === 0 ? COLORS.yellow : COLORS.muted }}>{i + 1}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 17 }}>{t.name}</div>
-              <div style={{ fontSize: 12, color: COLORS.muted }}>{t.count} player{t.count === 1 ? "" : "s"}</div>
-            </div>
-            <div style={{ fontWeight: 900, fontSize: 20, color: COLORS.yellow }}>{t.score}</div>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -2083,9 +2105,10 @@ function WinnerDisplay({ players, teamScores = [] }) {
   const bestTeam = teamScores.find((t) => t.count > 0);
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
+      <style>{`@keyframes cslWinnerPulse { 0%,100% { transform: scale(1); filter: drop-shadow(0 0 0 #FFC62900); } 50% { transform: scale(1.08); filter: drop-shadow(0 0 18px #FFC62999); } }`}</style>
       <Crown size={54} color={COLORS.yellow} />
       <div style={{ fontSize: 16, letterSpacing: 2, color: COLORS.muted }}>SAFETY CHAMPION</div>
-      {gold && <div style={{ fontSize: 44, fontWeight: 900, color: COLORS.yellow }}>{gold.name}</div>}
+      {gold && <div style={{ fontSize: 44, fontWeight: 900, color: COLORS.yellow, animation: "cslWinnerPulse 1.7s ease-in-out infinite" }}>{gold.name}</div>}
       {gold && <div style={{ fontSize: 20, color: COLORS.muted }}>{gold.score || 0} points</div>}
       <div style={{ display: "flex", gap: 20, marginTop: 24 }}>
         {silver && <PodiumCard label="2nd" p={silver} color="#C7CCD1" />}
@@ -2103,7 +2126,7 @@ function WinnerDisplay({ players, teamScores = [] }) {
 }
 function PodiumCard({ label, p, color }) {
   return (
-    <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "16px 22px", textAlign: "center" }}>
+    <div style={{ background: `${color}18`, border: `1px solid ${color}`, borderRadius: 10, padding: "16px 22px", textAlign: "center", minWidth: 120 }}>
       <div style={{ fontSize: 12, color, fontWeight: 800, marginBottom: 4 }}>{label}</div>
       <div style={{ fontWeight: 700 }}>{p.name}</div>
       <div style={{ fontSize: 13, color: COLORS.muted }}>{p.score || 0} pts</div>
