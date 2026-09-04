@@ -42,6 +42,7 @@ const COLORS = {
 const ADMIN_UNLOCKED_KEY = "csl_admin_unlocked_v1";
 const ADMIN_PIN_KEY = "csl_admin_pin_v1";
 const GAME_QUESTION_SECONDS = 45;
+const HOSTED_APP_URL = "https://logeshkannan-j.github.io/construction-safety-league/";
 
 const SEED_QUESTIONS = [
   { round: "quiz", category: "Work at Height", difficulty: "Easy", question: "A worker is working at height. What is the most important fall protection equipment?", options: ["Gloves", "Full Body Harness", "Safety Goggles", "Face Mask"], correct: 1, timer: 15, points: 100, explanation: "A properly worn and anchored full body harness is the primary defense against a fall from height." },
@@ -1854,14 +1855,9 @@ function LobbyDisplay({ game, players }) {
 function QRBlock({ value }) {
   const ref = useRef(null);
   const joinUrl = useMemo(() => {
-    try {
-      const u = new URL(window.location.href);
-      u.searchParams.set("role", "player");
-      u.searchParams.delete("join");
-      return u.toString();
-    } catch {
-      return String(value);
-    }
+    const u = new URL(HOSTED_APP_URL);
+    u.searchParams.set("role", "player");
+    return u.toString();
   }, [value]);
   useEffect(() => {
     let cancelled = false;
