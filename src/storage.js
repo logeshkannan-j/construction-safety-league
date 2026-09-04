@@ -88,3 +88,16 @@ export async function safeList(prefix, shared) {
   }
   return [];
 }
+
+// Firebase publishes the difference between its server clock and this
+// browser's clock at .info/serverTimeOffset. Use it for synchronized game
+// timing so phones with incorrect device clocks still see the same countdown.
+export async function getServerTimeOffset() {
+  try {
+    const snap = await get(ref(db, ".info/serverTimeOffset"));
+    return Number(snap.val()) || 0;
+  } catch (e) {
+    console.error("getServerTimeOffset failed", e);
+    return 0;
+  }
+}

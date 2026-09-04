@@ -19,7 +19,7 @@ import {
  * ------------------------------------------------------------------ */
 
 import { GAME_KEY, Q_KEY, PLAYER_PREFIX, MY_ID_KEY, POLL_MS } from "./constants";
-import { safeGet, safeSet, safeDelete, safeList } from "./storage";
+import { safeGet, safeSet, safeDelete, safeList, getServerTimeOffset } from "./storage";
 
 const COLORS = {
   bg: "#14171A",
@@ -743,7 +743,8 @@ function AdminView({ onExit }) {
   }
 
   async function startGame() {
-    await patchGame({ status: "question", qIndex: 0, questionStartedAt: Date.now(), revealed: false });
+    const offset = await getServerTimeOffset();
+    await patchGame({ status: "question", qIndex: 0, questionStartedAt: Date.now() + offset, revealed: false });
   }
   async function revealAnswer() {
     await patchGame({ status: "reveal", revealed: true });
@@ -753,7 +754,8 @@ function AdminView({ onExit }) {
     if (nextIdx >= questions.length) {
       await patchGame({ status: "ended" });
     } else {
-      await patchGame({ status: "question", qIndex: nextIdx, questionStartedAt: Date.now(), revealed: false });
+      const offset = await getServerTimeOffset();
+      await patchGame({ status: "question", qIndex: nextIdx, questionStartedAt: Date.now() + offset, revealed: false });
     }
   }
   async function showLeaderboard() { await patchGame({ status: "leaderboard" }); }
@@ -1259,6 +1261,7 @@ function PlayerView({ onExit }) {
   const [code, setCode] = useState("");
   const [codeVerified, setCodeVerified] = useState(false);
   const [codeError, setCodeError] = useState("");
+  const [serverOffset, setServerOffset] = useState(0);
 
   function handleScanDetected(text) {
     if (!text) return;
@@ -1285,6 +1288,17 @@ function PlayerView({ onExit }) {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
+    let mounted = true;
+    const syncClock = async () => {
+      const offset = await getServerTimeOffset();
+      if (mounted) setServerOffset(offset);
+    };
+    syncClock();
+    const syncId = setInterval(syncClock, 30000);
+    return () => { mounted = false; clearInterval(syncId); };
+  }, []);
+
+  useEffect(() => {
     if (!codeVerified || !game?.gameCode) return;
     (async () => {
       const savedId = await safeGet(MY_ID_KEY, false);
@@ -1301,9 +1315,9 @@ function PlayerView({ onExit }) {
   }, [codeVerified, game?.gameCode]);
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 250);
+    const id = setInterval(() => setNow(Date.now() + serverOffset), 250);
     return () => clearInterval(id);
-  }, []);
+  }, [serverOffset]);
 
   // keep `me` fresh from the shared players list
   useEffect(() => {
@@ -1332,7 +1346,8 @@ function PlayerView({ onExit }) {
   async function submitAnswer(qIndex, optionIndex, question) {
     if (!me || !game) return;
     if (me.answers && me.answers[qIndex] !== undefined) return; // no duplicates
-    const elapsed = (Date.now() - (game.questionStartedAt || Date.now())) / 1000;
+    const currentServerTime = Date.now() + serverOffset;
+    const elapsed = (currentServerTime - (game.questionStartedAt || currentServerTime)) / 1000;
     if (elapsed > GAME_QUESTION_SECONDS) return; // late
     const correct = optionIndex === question.correct;
     let points = 0;
@@ -1343,7 +1358,7 @@ function PlayerView({ onExit }) {
     const updated = {
       ...me,
       score: (me.score || 0) + points,
-      answers: { ...(me.answers || {}), [qIndex]: { answer: optionIndex, correct, points, speedMark, elapsed: Math.round(elapsed * 10) / 10, submittedAt: Date.now() } },
+      answers: { ...(me.answers || {}), [qIndex]: { answer: optionIndex, correct, points, speedMark, elapsed: Math.round(elapsed * 10) / 10, submittedAt: currentServerTime } },
     };
     setMe(updated);
     await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
@@ -1353,7 +1368,8 @@ function PlayerView({ onExit }) {
     if (!me || !game) return;
     const prior = (me.answers && me.answers[qIndex]) || { type: "hazard", found: [], misses: 0, score: 0 };
     if (prior.found.length >= question.hazards.length) return; // already found all
-    const elapsed = (Date.now() - (game.questionStartedAt || Date.now())) / 1000;
+    const currentServerTime = Date.now() + serverOffset;
+    const elapsed = (currentServerTime - (game.questionStartedAt || currentServerTime)) / 1000;
     if (elapsed > GAME_QUESTION_SECONDS) return; // time's up
 
     const hit = question.hazards.find(
@@ -1793,7 +1809,18 @@ function WinnerBlock({ players, me, rank, teamScores = [] }) {
 function TVView({ onExit }) {
   const { game, questions, players, connected } = useGamePoll();
   const [now, setNow] = useState(Date.now());
-  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(id); }, []);
+  const [serverOffset, setServerOffset] = useState(0);
+  useEffect(() => {
+    let mounted = true;
+    const syncClock = async () => {
+      const offset = await getServerTimeOffset();
+      if (mounted) setServerOffset(offset);
+    };
+    syncClock();
+    const syncId = setInterval(syncClock, 30000);
+    const tickId = setInterval(() => setNow(Date.now() + serverOffset), 250);
+    return () => { mounted = false; clearInterval(syncId); clearInterval(tickId); };
+  }, [serverOffset]);
 
   const sorted = useMemo(() => [...players].sort((a, b) => (b.score || 0) - (a.score || 0)), [players]);
   const teamScores = useMemo(
