@@ -113,6 +113,10 @@ MP4, or WebM URL. It appears above the live race leaderboard on the TV display.
 Use a short looping celebration GIF for the most playful result. The URL must
 be publicly reachable by every browser; private cloud-drive links will not play.
 
+The same panel also has separate slots for **1st place**, **2nd place**,
+**3rd place**, and **Last place**. These appear in the right-side Celebration
+Zone during the individual leaderboard.
+
 ## Notes and limits
 
 - Scoring is client-trusted, same as the original artifact — fine for a fun

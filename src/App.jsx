@@ -405,6 +405,10 @@ function defaultGame() {
     teams: ["Civil Team", "MEP Team", "Electrical Team", "Mechanical Team", "Safety Team"],
     teamScoringMode: "total", // 'total' | 'average'
     leaderboardMediaUrl: "",
+    leaderboardTop1MediaUrl: "",
+    leaderboardTop2MediaUrl: "",
+    leaderboardTop3MediaUrl: "",
+    leaderboardLastMediaUrl: "",
     createdAt: Date.now(),
   };
 }
@@ -902,12 +906,18 @@ function AdminView({ onExit }) {
           </Panel>
 
           <Panel title="Leaderboard fun media" icon={<Volume2 size={18} color={COLORS.purple} />}>
-            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 10 }}>Add a public GIF, image, YouTube link, or direct MP4/WebM link. It appears above the live leaderboard.</p>
-            <input
-              style={{ ...inputStyle, marginBottom: 0 }} type="url" placeholder="https://.../celebration.gif or YouTube link"
-              defaultValue={game.leaderboardMediaUrl || ""}
-              onBlur={(e) => patchGame({ leaderboardMediaUrl: e.target.value.trim() })}
-            />
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 10 }}>Paste public GIF, image, YouTube, MP4, or WebM links. The group animation appears on the right, and rank-specific media changes with the race.</p>
+            <div style={{ display: "grid", gap: 8 }}>
+              {[
+                ["Group celebration", "leaderboardMediaUrl"],
+                ["1st place celebration", "leaderboardTop1MediaUrl"],
+                ["2nd place celebration", "leaderboardTop2MediaUrl"],
+                ["3rd place celebration", "leaderboardTop3MediaUrl"],
+                ["Last place encouragement", "leaderboardLastMediaUrl"],
+              ].map(([label, key]) => (
+                <input key={key} style={{ ...inputStyle, marginBottom: 0 }} type="url" aria-label={label} placeholder={`${label} URL (optional)`} defaultValue={game[key] || ""} onBlur={(e) => patchGame({ [key]: e.target.value.trim() })} />
+              ))}
+            </div>
           </Panel>
 
           <Panel title="Admin security" icon={<Lock size={18} color={COLORS.orange} />}>
@@ -1319,7 +1329,7 @@ function PlayerView({ onExit }) {
   async function submitAnswer(qIndex, optionIndex, question) {
     if (!me || !game) return;
     if (me.answers && me.answers[qIndex] !== undefined) return; // no duplicates
-    const elapsed = Math.min(GAME_QUESTION_SECONDS, (Date.now() - (game.questionStartedAt || Date.now())) / 1000);
+    const elapsed = (Date.now() - (game.questionStartedAt || Date.now())) / 1000;
     if (elapsed > GAME_QUESTION_SECONDS) return; // late
     const correct = optionIndex === question.correct;
     let points = 0;
@@ -1814,7 +1824,7 @@ function TVView({ onExit }) {
       {game.status === "question" && curQ && curQ.round === "millionaire" && <MillionaireDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} ladder={millionaireQs} />}
       {game.status === "question" && curQ && curQ.round !== "millionaire" && <QuestionDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} />}
       {game.status === "reveal" && curQ && <RevealDisplay q={curQ} qIndex={game.qIndex} total={questions.length} players={players} />}
-      {game.status === "leaderboard" && <LeaderboardDisplay players={sorted} teamScores={teamScores} mediaUrl={game.leaderboardMediaUrl} />}
+      {game.status === "leaderboard" && <LeaderboardDisplay players={sorted} teamScores={teamScores} mediaUrl={game.leaderboardMediaUrl} mediaSettings={game} />}
       {game.status === "ended" && <WinnerDisplay players={sorted} teamScores={teamScores} />}
     </div>
   );
@@ -2111,7 +2121,16 @@ function LeaderboardMedia({ url }) {
   return <div style={{ width: "min(100%, 560px)", margin: "0 auto 18px" }}><VideoEmbed url={parsed.toString()} /></div>;
 }
 
-function LeaderboardDisplay({ players, teamScores = [], mediaUrl }) {
+function MediaSlot({ label, url }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ color: COLORS.muted, fontSize: 10, fontWeight: 800, marginBottom: 5 }}>{label}</div>
+      <LeaderboardMedia url={url} />
+    </div>
+  );
+}
+
+function LeaderboardDisplay({ players, teamScores = [], mediaUrl, mediaSettings = {} }) {
   const [tab, setTab] = useState("individual");
   const previousRanksRef = useRef(new Map());
   const [rankMoves, setRankMoves] = useState({});
@@ -2120,6 +2139,8 @@ function LeaderboardDisplay({ players, teamScores = [], mediaUrl }) {
   const maxScore = Math.max(1, ...raceEntries.map((entry) => entry.score || 0));
   const leaderScore = raceEntries[0]?.score || 0;
   const laneColors = ["#FFC629", "#C7CCD1", "#D98B54", "#33C481", "#59B7FF", "#F477B8", "#A98BFF", "#FF7A1F", "#79D36B", "#F0A35B", "#5ED6C5", "#EC6B6B"];
+  const topMedia = tab === "individual" ? [mediaSettings.leaderboardTop1MediaUrl, mediaSettings.leaderboardTop2MediaUrl, mediaSettings.leaderboardTop3MediaUrl] : [];
+  const lastMedia = tab === "individual" && raceEntries.length > 1 ? mediaSettings.leaderboardLastMediaUrl : "";
 
   useEffect(() => {
     const nextMoves = {};
@@ -2144,7 +2165,6 @@ function LeaderboardDisplay({ players, teamScores = [], mediaUrl }) {
         <span style={{ fontSize: 30, fontWeight: 900 }}>{tab === "team" ? "TEAM RACE" : "LIVE RACE"}</span>
       </div>
       <div style={{ color: COLORS.muted, fontSize: 13, marginBottom: showTabs ? 14 : 24 }}>Every point moves you closer to the finish line</div>
-      {mediaUrl && <LeaderboardMedia url={mediaUrl} />}
       <div style={{ display: "flex", gap: 10, width: "100%", maxWidth: 900, marginBottom: 18 }}>
         <StatCell label="Racers" value={raceEntries.length} />
         <StatCell label="Leader score" value={leaderScore} />
@@ -2161,7 +2181,8 @@ function LeaderboardDisplay({ players, teamScores = [], mediaUrl }) {
           ))}
         </div>
       )}
-      <div style={{ width: "100%", maxWidth: 900 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 20, width: "100%", maxWidth: 1180 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
         {raceEntries.map((entry, i) => {
           const score = entry.score || 0;
           const laneColor = laneColors[i % laneColors.length];
@@ -2181,6 +2202,13 @@ function LeaderboardDisplay({ players, teamScores = [], mediaUrl }) {
           );
         })}
         {tab === "individual" && players.length === 0 && <p style={{ color: COLORS.muted, textAlign: "center" }}>No scores yet.</p>}
+      </div>
+      {(mediaUrl || topMedia.some(Boolean) || lastMedia) && <aside style={{ width: 230, flexShrink: 0, background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: 12 }}>
+        <div style={{ color: COLORS.purple, fontSize: 11, fontWeight: 900, letterSpacing: 1, marginBottom: 10 }}>CELEBRATION ZONE</div>
+        {mediaUrl && <MediaSlot label="Everyone" url={mediaUrl} />}
+        {topMedia.map((url, index) => url && <MediaSlot key={url + index} label={["1st place", "2nd place", "3rd place"][index]} url={url} />)}
+        {lastMedia && <MediaSlot label="Last place" url={lastMedia} />}
+      </aside>}
       </div>
     </div>
   );
