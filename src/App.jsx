@@ -505,18 +505,22 @@ const RoleCard = React.memo(function RoleCard({ icon, title, sub, color, onClick
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        display: "flex", alignItems: "center", gap: 14, textAlign: "left",
-        background: COLORS.surface, border: `1px solid ${hover ? color : COLORS.line}`,
-        borderRadius: 10, padding: "16px 18px", cursor: "pointer",
-        transform: hover ? "translateY(-2px)" : "none", transition: "all .15s",
+        position: "relative", display: "flex", alignItems: "center", gap: 14, textAlign: "left",
+        background: hover ? `linear-gradient(135deg, ${color}18, ${COLORS.surface} 55%)` : COLORS.surface,
+        color: COLORS.ink, border: `1px solid ${hover ? color : COLORS.line}`,
+        borderRadius: 12, padding: "18px 18px", cursor: "pointer", overflow: "hidden",
+        boxShadow: hover ? `0 12px 28px ${color}22` : "0 8px 20px #00000022",
+        transform: hover ? "translateY(-4px)" : "translateY(0)", transition: "all .18s ease",
       }}
     >
-      <div style={{ width: 42, height: 42, borderRadius: 8, background: color + "22", color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{icon}</div>
-      <div>
-        <div style={{ fontWeight: 700, fontSize: 16 }}>{title}</div>
-        <div style={{ color: COLORS.muted, fontSize: 13 }}>{sub}</div>
+      <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 3, background: color }} />
+      <div style={{ width: 48, height: 48, borderRadius: 10, background: color + "20", border: `1px solid ${color}66`, color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{icon}</div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ color, fontSize: 11, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 3 }}>{title === "Join as player" ? "Participant" : title === "Show the arena" ? "Display" : "Host"}</div>
+        <div style={{ color: COLORS.ink, fontWeight: 800, fontSize: 16 }}>{title}</div>
+        <div style={{ color: COLORS.muted, fontSize: 13, lineHeight: 1.35, marginTop: 3 }}>{sub}</div>
       </div>
-      <ChevronRight size={18} style={{ marginLeft: "auto", color: COLORS.muted }} />
+      <ChevronRight size={19} style={{ marginLeft: "auto", color, flexShrink: 0 }} />
     </button>
   );
 });
