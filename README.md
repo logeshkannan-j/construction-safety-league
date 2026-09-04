@@ -1,0 +1,101 @@
+# Construction Safety League — standalone build
+
+This is the same game as the Claude artifact, packaged as a normal React
+app you host yourself on **GitHub Pages**. Because GitHub Pages only serves
+static files (no server), the multi-device sync that used to run on Claude's
+`window.storage` now runs on **Firebase Realtime Database** (free tier),
+which any static site can talk to directly from the browser.
+
+- **Shared data** (game state, questions, the player list) → Firebase.
+- **"Which player am I on this phone"** → this browser's `localStorage`,
+  same as before.
+
+## 1. Create a free Firebase project (~5 minutes)
+
+1. Go to https://console.firebase.google.com and click **Add project**.
+   Name it anything (e.g. `safety-league`). You can skip Google Analytics.
+2. Once inside the project, in the left sidebar go to **Build → Realtime
+   Database → Create Database**. Pick any region. Start it in **test mode**
+   (we'll set proper rules in step 4).
+3. Still in the left sidebar, click the **gear icon → Project settings**.
+   Under "Your apps", click the **</> (web)** icon to register a web app
+   (any nickname). It will show you a `firebaseConfig` object.
+4. Copy that object into `src/firebaseConfig.js` in this project, replacing
+   the placeholder values.
+
+## 2. Set database rules
+
+In the Firebase console, go to **Realtime Database → Rules**, paste in the
+contents of `rules.json` from this repo, and click **Publish**.
+
+> ⚠️ Those rules make the database fully public (anyone with your Firebase
+> URL can read/write it) — fine for a single internal event where the only
+> "secret" is your game's join code, but don't reuse this project for
+> anything sensitive. If you want it locked down after the event, just set
+> `.write` back to `false` in the console.
+
+## 3. Push this project to GitHub
+
+```bash
+cd csl-webapp
+git init
+git add .
+git commit -m "Construction Safety League"
+gh repo create your-username/construction-safety-league --public --source=. --push
+```
+
+(No `gh` CLI? Create an empty repo on github.com instead, then:)
+
+```bash
+git remote add origin https://github.com/your-username/construction-safety-league.git
+git branch -M main
+git push -u origin main
+```
+
+## 4. Turn on GitHub Pages
+
+1. On GitHub, open your repo → **Settings → Pages**.
+2. Under "Build and deployment", set **Source** to **GitHub Actions**.
+3. Push to `main` (or re-run the workflow from the **Actions** tab). The
+   included workflow (`.github/workflows/deploy.yml`) builds the app with
+   Vite and publishes it automatically.
+4. After it finishes, your site is live at
+   `https://your-username.github.io/construction-safety-league/`.
+
+Every future `git push` to `main` redeploys automatically.
+
+## 5. Run it
+
+Open the deployed URL on:
+- **Your laptop** → pick **Admin control panel** (PIN `1234` — change this
+  in `src/App.jsx` before a real event) → **Create Game**.
+- **The TV/projector** → same URL → **TV / projector display**.
+- **Each player's phone** → same URL → **I'm a player** → scan the QR code
+  or type the 6-digit code shown on the TV.
+
+Everyone must open the *same deployed URL* — that's what makes them share
+one Firebase database and therefore one game.
+
+## Local development
+
+```bash
+npm install
+npm run dev
+```
+
+This runs the game locally (still talking to your real Firebase project,
+so it's genuinely multi-device even in dev — open the printed URL on your
+phone too, as long as it's on the same network as... actually no network
+requirement at all, since Firebase is the shared backend, not your laptop).
+
+## Notes and limits
+
+- Scoring is client-trusted, same as the original artifact — fine for a fun
+  team event, not for anything with real stakes riding on it.
+- Firebase's free "Spark" plan comfortably covers a single live event; you'd
+  only need to upgrade for very heavy, sustained traffic.
+- Hazard-round photos are stored as base64 strings directly in the database.
+  Fine for a handful of reasonably sized images; don't upload dozens of
+  large, high-resolution photos.
+- The admin PIN (`1234`) is hardcoded in `src/App.jsx` — change it before a
+  real event since anyone with the URL can reach `/` and pick Admin.
