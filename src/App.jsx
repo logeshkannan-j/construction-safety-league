@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   HardHat, Users, Trophy, Clock, CheckCircle2, XCircle, Play, Pause,
   SkipForward, RotateCcw, Eye, EyeOff, Award, Wifi, WifiOff, Flag,
   ChevronRight, Shield, Zap, Crown, QrCode, LogIn, Volume2, VolumeX,
   Target, Upload, Trash2, MapPin, ImagePlus, X, Percent, Phone, Gem, Ban,
-  Pencil, UserMinus, Save, AlertTriangle
+  Pencil, UserMinus, Save, AlertTriangle, ListChecks, Lock
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ *
@@ -35,6 +35,12 @@ const COLORS = {
   purple: "#9B7CF2",
 };
 
+// Local (per-browser, NOT synced to Firebase) flag that remembers this
+// device already unlocked the Admin panel once, so re-opening the admin
+// link on the SAME device skips the PIN. Nothing is written anywhere
+// shared, so sharing the game/join link never grants anyone else access.
+const ADMIN_UNLOCKED_KEY = "csl_admin_unlocked_v1";
+
 const SEED_QUESTIONS = [
   { round: "quiz", category: "Work at Height", difficulty: "Easy", question: "A worker is working at height. What is the most important fall protection equipment?", options: ["Gloves", "Full Body Harness", "Safety Goggles", "Face Mask"], correct: 1, timer: 15, points: 100, explanation: "A properly worn and anchored full body harness is the primary defense against a fall from height." },
   { round: "truefalse", category: "Electrical Safety", difficulty: "Easy", question: "A damaged electrical cable can be temporarily repaired using normal tape and used for construction work.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Damaged cables must be taken out of service and repaired or replaced by a qualified person — never patched with ordinary tape." },
@@ -48,6 +54,20 @@ const SEED_QUESTIONS = [
   { round: "truefalse", category: "Permit to Work", difficulty: "Medium", question: "Hot work (welding/cutting) can be started without a permit if it will only take a few minutes.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Hot work always requires a permit, regardless of how long the task will take." },
   { round: "quiz", category: "Manual Handling", difficulty: "Easy", question: "When lifting a heavy object from the ground, you should:", options: ["Bend your back and lift", "Bend your knees and keep your back straight", "Twist while lifting", "Lift as fast as possible"], correct: 1, timer: 15, points: 100, explanation: "Bending the knees and keeping the back straight lets your legs take the load, protecting your spine." },
   { round: "quiz", category: "Barricading", difficulty: "Medium", question: "An open floor edge on site should be protected with:", options: ["A warning sign only", "Barricades or guardrails", "Nothing, workers will notice", "Tape on the floor"], correct: 1, timer: 15, points: 150, explanation: "Physical barricades or guardrails are required at open edges — signage alone does not stop a fall." },
+];
+
+// 10 additional questions covering more categories.
+const EXTRA_QUESTIONS = [
+  { round: "quiz", category: "Chemical Safety", difficulty: "Medium", question: "What should you check before using a chemical product on site?", options: ["The colour of the container", "The Safety Data Sheet (SDS)", "How full the container is", "Nothing, just use it"], correct: 1, timer: 15, points: 150, explanation: "The SDS tells you the hazards, required PPE, and safe handling steps before you use any chemical." },
+  { round: "truefalse", category: "PPE", difficulty: "Easy", question: "Eye protection is only required when using power tools.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Eye protection is also needed around dust, chemical splashes, grinding sparks, and other hazards, not just power tools." },
+  { round: "quiz", category: "Confined Space", difficulty: "Hard", question: "Before entering a confined space, what must first be arranged?", options: ["A quick peek inside", "A permit and atmospheric testing", "Just a torch", "Nothing if it's a small space"], correct: 1, timer: 20, points: 200, explanation: "A permit and air testing confirm the space is safe to breathe in and that an entry plan is in place." },
+  { round: "quiz", category: "Traffic Management", difficulty: "Medium", question: "Reversing a vehicle on a busy site should always be guided by:", options: ["No one, the driver can see fine", "A trained banksman / spotter", "Another driver in a different vehicle", "Nobody, just use mirrors"], correct: 1, timer: 15, points: 150, explanation: "A trained banksman covers blind spots the driver cannot see and helps prevent struck-by incidents." },
+  { round: "truefalse", category: "Noise", difficulty: "Easy", question: "Hearing protection is only needed if the noise is painful to hear.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Hearing damage can build up from prolonged exposure to noise well below the level that feels painful." },
+  { round: "quiz", category: "First Aid", difficulty: "Easy", question: "What is the first thing you should do when someone is injured on site?", options: ["Move them immediately", "Check the scene is safe, then get help", "Take a photo first", "Keep working nearby"], correct: 1, timer: 15, points: 100, explanation: "Checking the scene is safe protects you from becoming a second casualty before you assist or call for help." },
+  { round: "quiz", category: "Lifting Operations", difficulty: "Hard", question: "What must be checked before every crane lift?", options: ["Next week's weather forecast", "The load weight against the crane's rated capacity", "The operator's lunch break", "Nothing, cranes are always safe"], correct: 1, timer: 20, points: 200, explanation: "Exceeding a crane's rated capacity for the load and radius can cause a tip-over or structural failure." },
+  { round: "truefalse", category: "Signage", difficulty: "Easy", question: "Warning signs can be ignored if you've worked on the site before.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Site conditions change daily — signage must always be followed, regardless of experience." },
+  { round: "quiz", category: "Environmental", difficulty: "Medium", question: "A spill of oil on site should be:", options: ["Left to evaporate", "Contained and reported immediately", "Washed into the nearest drain", "Covered with soil only"], correct: 1, timer: 15, points: 150, explanation: "Containing the spill and reporting it quickly limits environmental damage and keeps it out of drains." },
+  { round: "quiz", category: "Working Alone", difficulty: "Medium", question: "A lone worker on site should always:", options: ["Turn off their phone to focus", "Have a check-in procedure with a supervisor", "Avoid telling anyone their location", "Skip PPE to move faster"], correct: 1, timer: 15, points: 150, explanation: "A regular check-in procedure means someone will notice quickly if a lone worker doesn't respond." },
 ];
 
 // A simple, self-drawn construction-site scene (no external image dependency)
@@ -100,6 +120,240 @@ const SEED_HAZARD_QUESTION = {
 };
 SEED_QUESTIONS.splice(4, 0, SEED_HAZARD_QUESTION);
 
+// A second self-drawn "Spot the Hazard" scene — an excavation / trench site.
+const SEED_HAZARD_SVG_2 = `
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">
+  <rect x="0" y="0" width="100" height="40" fill="#A9D4E8"/>
+  <rect x="0" y="40" width="100" height="60" fill="#C2A878"/>
+  <rect x="30" y="55" width="40" height="30" fill="#5B4630"/>
+  <rect x="30" y="55" width="40" height="4" fill="#8B7355"/>
+  <rect x="20" y="50" width="14" height="8" fill="#9C8B6E"/>
+  <rect x="66" y="50" width="14" height="8" fill="#9C8B6E"/>
+  <circle cx="18" cy="46" r="4" fill="#E8B48A"/>
+  <rect x="15" y="49" width="6" height="10" fill="#3B4A5A"/>
+  <line x1="15" y1="52" x2="10" y2="58" stroke="#E8B48A" stroke-width="2" stroke-linecap="round"/>
+  <line x1="21" y1="52" x2="25" y2="58" stroke="#E8B48A" stroke-width="2" stroke-linecap="round"/>
+  <line x1="16.5" y1="59" x2="14" y2="70" stroke="#2A3038" stroke-width="2.2" stroke-linecap="round"/>
+  <line x1="19.5" y1="59" x2="22" y2="70" stroke="#2A3038" stroke-width="2.2" stroke-linecap="round"/>
+  <rect x="76" y="60" width="10" height="16" fill="#D0432A"/>
+  <rect x="70" y="58" width="18" height="20" fill="none" stroke="#5B4630" stroke-width="1.5" opacity="0.6"/>
+  <rect x="68" y="72" width="20" height="8" fill="#8B6F47"/>
+  <path d="M40 60 L44 63 L41 65 L48 70 L43 70 L49 76" fill="none" stroke="#D6362C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
+
+const SEED_HAZARD_QUESTION_2 = {
+  round: "hazard",
+  category: "Spot the Hazard — Excavation Site",
+  difficulty: "Hard",
+  question: "FIND THE HAZARDS!",
+  imageType: "svg",
+  imageSvg: SEED_HAZARD_SVG_2,
+  timer: 45,
+  wrongPenalty: 0,
+  bonusAll: 100,
+  explanation: "Look for unguarded trenches, missing hi-vis, blocked emergency equipment, and damaged cables.",
+  hazards: [
+    { id: "h2a", xPct: 18, yPct: 52, radiusPct: 9, name: "Worker without high-visibility vest", description: "The worker near the trench is not wearing hi-vis clothing.", points: 60 },
+    { id: "h2b", xPct: 50, yPct: 58, radiusPct: 10, name: "Unguarded trench edge", description: "The excavation has no barrier or edge protection.", points: 60 },
+    { id: "h2c", xPct: 80, yPct: 70, radiusPct: 9, name: "Blocked fire extinguisher", description: "Boxes are stacked in front of the fire extinguisher, blocking access.", points: 60 },
+    { id: "h2d", xPct: 44, yPct: 68, radiusPct: 9, name: "Damaged cable near the trench", description: "A frayed cable is lying close to the excavation edge.", points: 60 },
+  ],
+};
+
+// ---- Small reusable SVG "glyphs" so more Spot the Hazard scenes can be
+// composed quickly without hand-drawing a full illustration each time. ----
+function svgWorker(cx, cy, { helmet = true, vest = true } = {}) {
+  const skin = "#E8B48A";
+  const vestColor = vest ? "#FF7A1F" : "#3B4A5A";
+  return `
+    <circle cx="${cx}" cy="${cy - 6}" r="3.2" fill="${skin}"/>
+    ${helmet ? `<path d="M ${cx - 3.4} ${cy - 7.2} a 3.4 3.4 0 0 1 6.8 0 Z" fill="#FFC629"/>` : ""}
+    <rect x="${cx - 3}" y="${cy - 3}" width="6" height="9" rx="1.5" fill="${vestColor}"/>
+    <line x1="${cx - 3}" y1="${cy - 1}" x2="${cx - 6}" y2="${cy + 4}" stroke="${skin}" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="${cx + 3}" y1="${cy - 1}" x2="${cx + 6}" y2="${cy + 4}" stroke="${skin}" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="${cx - 1.5}" y1="${cy + 6}" x2="${cx - 3}" y2="${cy + 15}" stroke="#2A3038" stroke-width="2" stroke-linecap="round"/>
+    <line x1="${cx + 1.5}" y1="${cy + 6}" x2="${cx + 3}" y2="${cy + 15}" stroke="#2A3038" stroke-width="2" stroke-linecap="round"/>
+  `;
+}
+function svgLadder(cx, cy, steep = true) {
+  const dx = steep ? 4 : 10;
+  return `
+    <line x1="${cx - dx}" y1="${cy - 16}" x2="${cx - dx + 2}" y2="${cy + 16}" stroke="#6B5433" stroke-width="1.6"/>
+    <line x1="${cx + dx}" y1="${cy - 16}" x2="${cx + dx + 2}" y2="${cy + 16}" stroke="#6B5433" stroke-width="1.6"/>
+    <line x1="${cx - dx + 0.5}" y1="${cy - 10}" x2="${cx + dx + 0.5}" y2="${cy - 10}" stroke="#6B5433" stroke-width="1.4"/>
+    <line x1="${cx - dx + 1}" y1="${cy - 2}" x2="${cx + dx + 1}" y2="${cy - 2}" stroke="#6B5433" stroke-width="1.4"/>
+    <line x1="${cx - dx + 1.5}" y1="${cy + 6}" x2="${cx + dx + 1.5}" y2="${cy + 6}" stroke="#6B5433" stroke-width="1.4"/>
+  `;
+}
+function svgCable(cx, cy) {
+  return `<path d="M ${cx - 6} ${cy} L ${cx - 2} ${cy + 3} L ${cx - 4} ${cy + 5} L ${cx + 2} ${cy + 9} L ${cx - 1} ${cy + 9} L ${cx + 5} ${cy + 14}" fill="none" stroke="#D6362C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
+}
+function svgTrench(cx, cy, w = 24, h = 14) {
+  return `<rect x="${cx - w / 2}" y="${cy - h / 2}" width="${w}" height="${h}" fill="#5B4630"/><rect x="${cx - w / 2}" y="${cy - h / 2}" width="${w}" height="3" fill="#8B7355"/>`;
+}
+function svgOpenEdge(cx, cy, w = 26) {
+  return `<rect x="${cx - w / 2}" y="${cy}" width="${w}" height="4" fill="#9AA3AB"/><rect x="${cx - w / 2}" y="${cy}" width="${w}" height="1.5" fill="#7A828A"/>`;
+}
+function svgBlockedExtinguisher(cx, cy) {
+  return `<rect x="${cx - 2}" y="${cy - 8}" width="4" height="8" fill="#D0432A"/><rect x="${cx - 6}" y="${cy - 2}" width="12" height="6" fill="#8B6F47"/>`;
+}
+function svgRebar(cx, cy) {
+  return `<line x1="${cx - 3}" y1="${cy + 6}" x2="${cx - 3}" y2="${cy - 6}" stroke="#8A8F94" stroke-width="1.4"/><line x1="${cx}" y1="${cy + 6}" x2="${cx}" y2="${cy - 8}" stroke="#8A8F94" stroke-width="1.4"/><line x1="${cx + 3}" y1="${cy + 6}" x2="${cx + 3}" y2="${cy - 5}" stroke="#8A8F94" stroke-width="1.4"/>`;
+}
+function svgSpill(cx, cy) {
+  return `<ellipse cx="${cx}" cy="${cy}" rx="9" ry="4" fill="#3A5A6E" opacity="0.75"/>`;
+}
+function svgOverheadLine(cx, cy) {
+  return `<line x1="${cx - 30}" y1="${cy}" x2="${cx + 30}" y2="${cy - 4}" stroke="#333" stroke-width="1"/><circle cx="${cx - 30}" cy="${cy + 10}" r="1.6" fill="#333"/><circle cx="${cx + 30}" cy="${cy + 6}" r="1.6" fill="#333"/>`;
+}
+function svgBlockedExit(cx, cy) {
+  return `<rect x="${cx - 6}" y="${cy - 14}" width="12" height="18" fill="#4A5560"/><rect x="${cx - 8}" y="${cy}" width="16" height="8" fill="#8B6F47"/>`;
+}
+function svgUnsafeStack(cx, cy) {
+  return `<rect x="${cx - 6}" y="${cy}" width="12" height="6" fill="#8B6F47"/><rect x="${cx - 4}" y="${cy - 6}" width="10" height="6" fill="#A9835A" transform="rotate(6 ${cx} ${cy - 3})"/><rect x="${cx - 2}" y="${cy - 12}" width="8" height="6" fill="#8B6F47" transform="rotate(-8 ${cx} ${cy - 9})"/>`;
+}
+function sceneBase(sky, ground, extras) {
+  return `
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">
+  <rect x="0" y="0" width="100" height="42" fill="${sky}"/>
+  <rect x="0" y="42" width="100" height="58" fill="${ground}"/>
+  ${extras}
+</svg>`;
+}
+
+// Scene 3 — Warehouse Yard
+const SEED_HAZARD_QUESTION_3 = {
+  round: "hazard", category: "Spot the Hazard — Warehouse Yard", difficulty: "Medium", question: "FIND THE HAZARDS!",
+  imageType: "svg",
+  imageSvg: sceneBase("#9FD1E0", "#B7A87E", svgWorker(22, 58, { helmet: false, vest: true }) + svgUnsafeStack(55, 74) + svgBlockedExit(82, 62) + svgRebar(40, 80)),
+  timer: 45, wrongPenalty: 0, bonusAll: 100,
+  explanation: "Look for missing head protection, unstable stacking, a blocked exit, and exposed rebar.",
+  hazards: [
+    { id: "h3a", xPct: 22, yPct: 55, radiusPct: 9, name: "Worker without a hard hat", description: "No head protection worn near stacked materials.", points: 60 },
+    { id: "h3b", xPct: 55, yPct: 70, radiusPct: 9, name: "Unstable material stacking", description: "Crates are stacked unevenly and could topple.", points: 60 },
+    { id: "h3c", xPct: 82, yPct: 60, radiusPct: 9, name: "Blocked fire exit", description: "Storage boxes are blocking the emergency exit door.", points: 60 },
+    { id: "h3d", xPct: 40, yPct: 76, radiusPct: 9, name: "Exposed rebar without caps", description: "Uncapped rebar sticking up is an impalement hazard.", points: 60 },
+  ],
+};
+
+// Scene 4 — Rooftop Work
+const SEED_HAZARD_QUESTION_4 = {
+  round: "hazard", category: "Spot the Hazard — Rooftop Work", difficulty: "Hard", question: "FIND THE HAZARDS!",
+  imageType: "svg",
+  imageSvg: sceneBase("#8FC7DE", "#C9C2B0", svgOpenEdge(70, 50) + svgLadder(18, 72, true) + svgWorker(45, 66, { helmet: false, vest: true }) + svgOverheadLine(60, 12)),
+  timer: 45, wrongPenalty: 0, bonusAll: 100,
+  explanation: "Look for the unguarded roof edge, an unsafe ladder angle, missing head protection, and nearby overhead lines.",
+  hazards: [
+    { id: "h4a", xPct: 70, yPct: 52, radiusPct: 10, name: "Unguarded roof edge", description: "No guardrail along the open edge of the roof.", points: 60 },
+    { id: "h4b", xPct: 18, yPct: 70, radiusPct: 9, name: "Unsafe ladder angle", description: "The ladder is too steep and not tied off.", points: 60 },
+    { id: "h4c", xPct: 45, yPct: 62, radiusPct: 9, name: "Worker without a hard hat", description: "No head protection on the roof.", points: 60 },
+    { id: "h4d", xPct: 60, yPct: 14, radiusPct: 10, name: "Work too close to overhead power lines", description: "Work is happening near live overhead lines without clearance.", points: 60 },
+  ],
+};
+
+// Scene 5 — Loading Dock
+const SEED_HAZARD_QUESTION_5 = {
+  round: "hazard", category: "Spot the Hazard — Loading Dock", difficulty: "Medium", question: "FIND THE HAZARDS!",
+  imageType: "svg",
+  imageSvg: sceneBase("#A9D4E8", "#B0A98F", svgBlockedExtinguisher(20, 66) + svgUnsafeStack(52, 72) + svgSpill(75, 78) + svgWorker(38, 60, { helmet: true, vest: false })),
+  timer: 45, wrongPenalty: 0, bonusAll: 100,
+  explanation: "Look for blocked emergency equipment, unstable stacking, a slip hazard, and missing hi-vis.",
+  hazards: [
+    { id: "h5a", xPct: 20, yPct: 62, radiusPct: 9, name: "Blocked fire extinguisher", description: "Boxes are stacked in front of the extinguisher.", points: 60 },
+    { id: "h5b", xPct: 52, yPct: 68, radiusPct: 9, name: "Unstable material stacking", description: "Crates are stacked unevenly at the dock.", points: 60 },
+    { id: "h5c", xPct: 75, yPct: 78, radiusPct: 9, name: "Spilled liquid — slip hazard", description: "A puddle on the dock floor has not been cleaned up or signed.", points: 60 },
+    { id: "h5d", xPct: 38, yPct: 56, radiusPct: 9, name: "Worker without a hi-vis vest", description: "The worker near moving loads has no high-visibility clothing.", points: 60 },
+  ],
+};
+
+// Scene 6 — Demolition Site
+const SEED_HAZARD_QUESTION_6 = {
+  round: "hazard", category: "Spot the Hazard — Demolition Site", difficulty: "Hard", question: "FIND THE HAZARDS!",
+  imageType: "svg",
+  imageSvg: sceneBase("#B7C6CC", "#A99B84", svgRebar(24, 70) + svgTrench(55, 76) + svgCable(78, 62) + svgWorker(42, 58, { helmet: false, vest: true })),
+  timer: 45, wrongPenalty: 0, bonusAll: 100,
+  explanation: "Look for exposed rebar, an unguarded excavation, damaged cabling, and missing head protection.",
+  hazards: [
+    { id: "h6a", xPct: 24, yPct: 66, radiusPct: 9, name: "Exposed rebar without caps", description: "Uncapped rebar left standing on the demolition site.", points: 60 },
+    { id: "h6b", xPct: 55, yPct: 74, radiusPct: 10, name: "Unguarded excavation", description: "An open pit with no barrier around it.", points: 60 },
+    { id: "h6c", xPct: 78, yPct: 66, radiusPct: 9, name: "Damaged electrical cable", description: "A frayed cable is exposed near debris.", points: 60 },
+    { id: "h6d", xPct: 42, yPct: 54, radiusPct: 9, name: "Worker without a hard hat", description: "No head protection amid falling-debris risk.", points: 60 },
+  ],
+};
+
+// Scene 7 — Road Works
+const SEED_HAZARD_QUESTION_7 = {
+  round: "hazard", category: "Spot the Hazard — Road Works", difficulty: "Medium", question: "FIND THE HAZARDS!",
+  imageType: "svg",
+  imageSvg: sceneBase("#8FC7DE", "#8C8C8C", svgTrench(35, 68, 22, 12) + svgOpenEdge(65, 60) + svgOverheadLine(50, 12) + svgWorker(20, 58, { helmet: true, vest: false })),
+  timer: 45, wrongPenalty: 0, bonusAll: 100,
+  explanation: "Look for an unguarded road excavation, missing barriers, overhead line clearance, and missing hi-vis.",
+  hazards: [
+    { id: "h7a", xPct: 35, yPct: 68, radiusPct: 10, name: "Unguarded road excavation", description: "A trench in the roadway with no barrier or cones.", points: 60 },
+    { id: "h7b", xPct: 65, yPct: 62, radiusPct: 9, name: "Missing edge protection", description: "The excavated edge has no barricade to warn traffic and pedestrians.", points: 60 },
+    { id: "h7c", xPct: 50, yPct: 14, radiusPct: 10, name: "Work too close to overhead power lines", description: "Equipment is operating without safe clearance from the line.", points: 60 },
+    { id: "h7d", xPct: 20, yPct: 56, radiusPct: 9, name: "Worker without a hi-vis vest", description: "No high-visibility clothing worn near live traffic.", points: 60 },
+  ],
+};
+
+// Scene 8 — Electrical Room
+const SEED_HAZARD_QUESTION_8 = {
+  round: "hazard", category: "Spot the Hazard — Electrical Room", difficulty: "Hard", question: "FIND THE HAZARDS!",
+  imageType: "svg",
+  imageSvg: sceneBase("#CFCFCF", "#B8B3A4", svgCable(24, 62) + svgSpill(55, 80) + svgBlockedExtinguisher(80, 64) + svgWorker(42, 58, { helmet: false, vest: true })),
+  timer: 45, wrongPenalty: 0, bonusAll: 100,
+  explanation: "Look for damaged wiring, liquid near electrical equipment, blocked emergency gear, and missing PPE.",
+  hazards: [
+    { id: "h8a", xPct: 24, yPct: 58, radiusPct: 9, name: "Damaged electrical cable", description: "A frayed cable is exposed inside the electrical room.", points: 60 },
+    { id: "h8b", xPct: 55, yPct: 80, radiusPct: 9, name: "Liquid spill near electrical equipment", description: "A puddle sits close to live electrical equipment — a shock hazard.", points: 60 },
+    { id: "h8c", xPct: 80, yPct: 60, radiusPct: 9, name: "Blocked fire extinguisher", description: "Access to the extinguisher is blocked by stored items.", points: 60 },
+    { id: "h8d", xPct: 42, yPct: 54, radiusPct: 9, name: "Worker without a hard hat", description: "No head protection while working around overhead risks.", points: 60 },
+  ],
+};
+
+// Scene 9 — Scaffold Access
+const SEED_HAZARD_QUESTION_9 = {
+  round: "hazard", category: "Spot the Hazard — Scaffold Access", difficulty: "Medium", question: "FIND THE HAZARDS!",
+  imageType: "svg",
+  imageSvg: sceneBase("#8FC7DE", "#B79B6E", svgLadder(20, 70, true) + svgOpenEdge(60, 48) + svgWorker(60, 62, { helmet: false, vest: true }) + svgUnsafeStack(82, 76)),
+  timer: 45, wrongPenalty: 0, bonusAll: 100,
+  explanation: "Look for an unsafe ladder angle, an unguarded platform edge, missing head protection, and unstable storage.",
+  hazards: [
+    { id: "h9a", xPct: 20, yPct: 68, radiusPct: 9, name: "Unsafe ladder angle", description: "The access ladder is too steep and not secured.", points: 60 },
+    { id: "h9b", xPct: 60, yPct: 50, radiusPct: 10, name: "Unguarded scaffold platform edge", description: "The scaffold platform has no guardrail at the open edge.", points: 60 },
+    { id: "h9c", xPct: 60, yPct: 58, radiusPct: 9, name: "Worker without a hard hat", description: "No head protection on the scaffold platform.", points: 60 },
+    { id: "h9d", xPct: 82, yPct: 74, radiusPct: 9, name: "Unstable material stacking", description: "Materials stacked unevenly at the base of the scaffold.", points: 60 },
+  ],
+};
+
+// Scene 10 — Site Storage Yard
+const SEED_HAZARD_QUESTION_10 = {
+  round: "hazard", category: "Spot the Hazard — Site Storage Yard", difficulty: "Medium", question: "FIND THE HAZARDS!",
+  imageType: "svg",
+  imageSvg: sceneBase("#A9D4E8", "#B7A87E", svgUnsafeStack(24, 70) + svgRebar(52, 78) + svgBlockedExit(80, 60) + svgSpill(40, 60)),
+  timer: 45, wrongPenalty: 0, bonusAll: 100,
+  explanation: "Look for unstable stacking, exposed rebar, a blocked exit route, and an unmarked spill.",
+  hazards: [
+    { id: "h10a", xPct: 24, yPct: 66, radiusPct: 9, name: "Unstable material stacking", description: "Stored materials are stacked unevenly and could topple.", points: 60 },
+    { id: "h10b", xPct: 52, yPct: 74, radiusPct: 9, name: "Exposed rebar without caps", description: "Uncapped rebar left standing in the storage yard.", points: 60 },
+    { id: "h10c", xPct: 80, yPct: 58, radiusPct: 9, name: "Blocked emergency exit route", description: "Stored crates are blocking a walkway used as an exit route.", points: 60 },
+    { id: "h10d", xPct: 40, yPct: 56, radiusPct: 9, name: "Unmarked spill", description: "A liquid spill on the ground has no warning sign or cleanup.", points: 60 },
+  ],
+};
+
+SEED_QUESTIONS.push(...EXTRA_QUESTIONS);
+SEED_QUESTIONS.push(
+  SEED_HAZARD_QUESTION_2,
+  SEED_HAZARD_QUESTION_3,
+  SEED_HAZARD_QUESTION_4,
+  SEED_HAZARD_QUESTION_5,
+  SEED_HAZARD_QUESTION_6,
+  SEED_HAZARD_QUESTION_7,
+  SEED_HAZARD_QUESTION_8,
+  SEED_HAZARD_QUESTION_9,
+  SEED_HAZARD_QUESTION_10
+);
+
 // ------------------------- Safety Millionaire finale -------------------------
 // A tiered, escalating-stakes final round. Each player gets three lifelines
 // (usable once each, across the whole ladder, classic-Millionaire style):
@@ -150,6 +404,28 @@ function defaultGame() {
     teamScoringMode: "total", // 'total' | 'average'
     createdAt: Date.now(),
   };
+}
+
+// Fisher-Yates shuffle — used to randomize answer-option order so the
+// correct answer isn't always sitting in the same slot.
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Shuffles a question's options and remaps `correct` to the new position.
+// Hazard rounds have no `options` array (they use tap targets) and are
+// left untouched.
+function shuffleQuestionOptions(q) {
+  if (!q || !q.options || q.round === "hazard") return q;
+  const order = shuffleArray(q.options.map((_, i) => i));
+  const options = order.map((i) => q.options[i]);
+  const correct = order.indexOf(q.correct);
+  return { ...q, options, correct };
 }
 
 function computeTeamScores(players, teams, mode) {
@@ -210,7 +486,7 @@ function RoleSelect({ onSelect }) {
   );
 }
 
-function RoleCard({ icon, title, sub, color, onClick }) {
+const RoleCard = React.memo(function RoleCard({ icon, title, sub, color, onClick }) {
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -232,7 +508,7 @@ function RoleCard({ icon, title, sub, color, onClick }) {
       <ChevronRight size={18} style={{ marginLeft: "auto", color: COLORS.muted }} />
     </button>
   );
-}
+});
 
 /* ------------------------------ SHARED HOOK ------------------------------ */
 
@@ -326,6 +602,7 @@ function hazardDistancePct(ax, ay, bx, by) {
 function AdminView({ onExit }) {
   const [pin, setPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
+  const [checkingUnlock, setCheckingUnlock] = useState(true);
   const { game, questions, players, connected, refresh } = useGamePoll();
   const [busy, setBusy] = useState(false);
 
@@ -336,11 +613,47 @@ function AdminView({ onExit }) {
   const [hzBusy, setHzBusy] = useState(false);
   const [questionsRef, setQuestionsRef] = useState(questions);
   useEffect(() => { setQuestionsRef(questions); }, [questions]);
+  const [aqBusy, setAqBusy] = useState(false);
 
   // ---- player management: edit / kick ----
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ name: "", team: "", score: 0 });
   const [kickConfirmId, setKickConfirmId] = useState(null);
+
+  // ---- persistent, per-device admin unlock ----
+  // Stored in localStorage only (safeSet(..., false)), never synced through
+  // Firebase, so re-opening the admin link on THIS device skips the PIN,
+  // while sharing the link never unlocks admin for anyone else.
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await safeGet(ADMIN_UNLOCKED_KEY, false);
+        if (saved === "1") setUnlocked(true);
+      } catch {}
+      setCheckingUnlock(false);
+    })();
+  }, []);
+
+  async function unlockAdmin() {
+    if (pin !== "1234") return;
+    setUnlocked(true);
+    try { await safeSet(ADMIN_UNLOCKED_KEY, "1", false); } catch {}
+  }
+  async function lockAdmin() {
+    try { await safeDelete(ADMIN_UNLOCKED_KEY, false); } catch {}
+    setUnlocked(false);
+    setPin("");
+  }
+
+  const sorted = useMemo(() => [...players].sort((a, b) => (b.score || 0) - (a.score || 0)), [players]);
+  const teamScores = useMemo(
+    () => (game?.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : []),
+    [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
+  );
+
+  if (checkingUnlock) {
+    return <Centered><p style={{ color: COLORS.muted }}>Loading…</p></Centered>;
+  }
 
   if (!unlocked) {
     return (
@@ -350,9 +663,9 @@ function AdminView({ onExit }) {
           <input
             value={pin} onChange={(e) => setPin(e.target.value)} type="password" placeholder="Enter PIN" maxLength={4}
             style={inputStyle}
-            onKeyDown={(e) => e.key === "Enter" && pin === "1234" && setUnlocked(true)}
+            onKeyDown={(e) => e.key === "Enter" && unlockAdmin()}
           />
-          <button style={btnStyle(COLORS.orange)} onClick={() => pin === "1234" && setUnlocked(true)}>Unlock</button>
+          <button style={btnStyle(COLORS.orange)} onClick={unlockAdmin}>Unlock</button>
           <button style={linkBtnStyle} onClick={onExit}>← Back</button>
         </Panel>
       </Centered>
@@ -366,7 +679,9 @@ function AdminView({ onExit }) {
     await Promise.all((keys || []).map((k) => safeDelete(k, true)));
     const g = defaultGame();
     await safeSet(GAME_KEY, JSON.stringify(g), true);
-    await safeSet(Q_KEY, JSON.stringify(SEED_QUESTIONS), true);
+    // Shuffle each question's answer order so the correct option isn't
+    // always sitting in the same slot every time the game is created.
+    await safeSet(Q_KEY, JSON.stringify(SEED_QUESTIONS.map(shuffleQuestionOptions)), true);
     await refresh();
     setBusy(false);
   }
@@ -487,18 +802,38 @@ function AdminView({ onExit }) {
     setHzBusy(false);
   }
 
-  const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
-  const teamScores = game?.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : [];
+  // ---- Custom question builder (quiz / true-false) ----
+  async function addCustomQuestion(q) {
+    setAqBusy(true);
+    const shuffled = shuffleQuestionOptions(q);
+    const current = questionsRef || [];
+    // Insert before the Safety Millionaire finale (if present) so the
+    // finale always stays the last round played.
+    const millionaireIdx = current.findIndex((x) => x.round === "millionaire");
+    const insertAt = millionaireIdx === -1 ? current.length : millionaireIdx;
+    const next = [...current.slice(0, insertAt), shuffled, ...current.slice(insertAt)];
+    await safeSet(Q_KEY, JSON.stringify(next), true);
+    await refresh();
+    setAqBusy(false);
+  }
+
+  // ---- Remove a question (any round type, including hazard rounds) ----
+  async function removeQuestionAt(idx) {
+    const next = (questionsRef || []).filter((_, i) => i !== idx);
+    await safeSet(Q_KEY, JSON.stringify(next), true);
+    await refresh();
+  }
+
   const curQ = questions[game?.qIndex ?? 0];
   const answeredCount = curQ ? players.filter((p) => p.answers && p.answers[game.qIndex] !== undefined).length : 0;
 
   return (
     <div style={{ padding: "20px 20px 60px", maxWidth: 880, margin: "0 auto" }}>
-      <TopBar title="Admin Control Panel" onExit={onExit} connected={connected} />
+      <TopBar title="Admin Control Panel" onExit={onExit} connected={connected} onLock={lockAdmin} />
 
       {!game && (
         <Panel title="No active game" icon={<Play size={18} color={COLORS.yellow} />}>
-          <p style={{ color: COLORS.muted, fontSize: 14, marginBottom: 14 }}>Create a game to generate a join code and load the question set ({SEED_QUESTIONS.length} questions across quiz, true/false, hazard, and the Safety Millionaire finale).</p>
+          <p style={{ color: COLORS.muted, fontSize: 14, marginBottom: 14 }}>Create a game to generate a join code and load the question set ({SEED_QUESTIONS.length} questions across quiz, true/false, hazard, and the Safety Millionaire finale — answer order is shuffled automatically).</p>
           <button disabled={busy} style={btnStyle(COLORS.yellow, "#1A1200")} onClick={createGame}>{busy ? "Creating…" : "Create Game"}</button>
         </Panel>
       )}
@@ -531,6 +866,10 @@ function AdminView({ onExit }) {
             </Panel>
           )}
 
+          {(game.status === "question" || game.status === "reveal") && curQ && (
+            <PlayerAnswersPanel curQ={curQ} qIndex={game.qIndex} players={players} />
+          )}
+
           <Panel title="Team competition" icon={<Users size={18} color={COLORS.green} />} right={
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
               <input type="checkbox" checked={!!game.teamModeEnabled} onChange={(e) => patchGame({ teamModeEnabled: e.target.checked })} />
@@ -560,8 +899,15 @@ function AdminView({ onExit }) {
             )}
           </Panel>
 
+          <Panel title="Add a custom question" icon={<Pencil size={18} color={COLORS.green} />}>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12 }}>
+              Build your own quiz or true/false question. It's inserted right before the Safety Millionaire finale so the finale always stays last, and its answer order gets shuffled automatically just like the seeded questions.
+            </p>
+            <AddQuestionForm busy={aqBusy} onAdd={addCustomQuestion} />
+          </Panel>
+
           <Panel title="Add a Spot the Hazard round" icon={<Target size={18} color={COLORS.orange} />}>
-            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12 }}>Upload a site photo, then click on it to mark each hazard. The round is appended to the end of the question list — a default example round is already loaded, and the Safety Millionaire finale sits at the very end.</p>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12 }}>Upload a site photo, then click on it to mark each hazard. The round is appended to the end of the question list — 10 default example scenes are already loaded, and the Safety Millionaire finale sits at the very end.</p>
 
             <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
               <input style={{ ...inputStyle, width: 200, marginBottom: 0 }} placeholder="Round category" value={hz.category} onChange={(e) => setHz({ ...hz, category: e.target.value })} />
@@ -616,6 +962,8 @@ function AdminView({ onExit }) {
             )}
           </Panel>
 
+          <ManageQuestionsPanel questions={questionsRef} onRemove={removeQuestionAt} />
+
           <Panel title="Participants" icon={<Trophy size={18} color={COLORS.yellow} />}>
             {sorted.length === 0 && <p style={{ color: COLORS.muted, fontSize: 14 }}>No participants have joined yet.</p>}
             <p style={{ color: COLORS.muted, fontSize: 12, marginBottom: 10 }}>Fix a wrong join, correct a score, or remove someone who dropped off. Kick needs a second tap to confirm.</p>
@@ -646,6 +994,181 @@ function AdminView({ onExit }) {
           </Panel>
         </>
       )}
+    </div>
+  );
+}
+
+// Lets the admin delete any question — MCQ, True/False, custom, or a
+// hazard round (default or admin-uploaded). Delete needs a second tap
+// on the same row to confirm.
+function ManageQuestionsPanel({ questions, onRemove }) {
+  const [confirmIdx, setConfirmIdx] = useState(null);
+  const badge = {
+    quiz: [COLORS.green, "MCQ"],
+    truefalse: [COLORS.yellow, "T/F"],
+    hazard: [COLORS.orange, "HAZARD"],
+    millionaire: [COLORS.purple, "FINALE"],
+  };
+
+  return (
+    <Panel title={`Manage Questions (${questions.length})`} icon={<ListChecks size={18} color={COLORS.orange} />}>
+      <p style={{ color: COLORS.muted, fontSize: 12, marginBottom: 10 }}>Remove any question from the game — quiz, true/false, or Spot the Hazard. Tap the trash icon twice to confirm.</p>
+      {questions.length === 0 && <p style={{ color: COLORS.muted, fontSize: 13 }}>No questions loaded yet.</p>}
+      <div style={{ display: "grid", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+        {questions.map((q, i) => {
+          const [c, label] = badge[q.round] || [COLORS.muted, (q.round || "?").toUpperCase()];
+          const isConfirming = confirmIdx === i;
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.surfaceRaised, borderRadius: 6, padding: "7px 10px", fontSize: 13 }}>
+              <span style={{ fontSize: 10, color: COLORS.muted, width: 22, flexShrink: 0 }}>{i + 1}</span>
+              <span style={{ fontSize: 9, fontWeight: 800, color: c, border: `1px solid ${c}`, borderRadius: 4, padding: "2px 5px", flexShrink: 0 }}>{label}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <b>{q.category}</b> — {q.question}
+              </span>
+              <button
+                title={isConfirming ? "Tap again to confirm" : "Delete question"}
+                onClick={() => {
+                  if (isConfirming) { onRemove(i); setConfirmIdx(null); }
+                  else setConfirmIdx(i);
+                }}
+                style={{
+                  background: isConfirming ? COLORS.red : "none", border: `1px solid ${COLORS.red}`, borderRadius: 6,
+                  color: isConfirming ? "#fff" : COLORS.red, cursor: "pointer", padding: "5px 8px", fontSize: 11,
+                  fontWeight: 700, flexShrink: 0, display: "flex", alignItems: "center", gap: 4,
+                }}
+              >
+                {isConfirming ? <AlertTriangle size={12} /> : <Trash2 size={12} />}
+                {isConfirming ? "Confirm?" : ""}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
+// Shows, for the current question, which players answered correctly vs
+// incorrectly (and what they picked), so the admin can review live.
+function PlayerAnswersPanel({ curQ, qIndex, players }) {
+  const rows = players.filter((p) => p.answers && p.answers[qIndex] !== undefined);
+  const correctCount = curQ.round === "hazard"
+    ? rows.filter((p) => (p.answers[qIndex].found?.length || 0) >= (curQ.hazards?.length || 0)).length
+    : rows.filter((p) => p.answers[qIndex].correct).length;
+
+  return (
+    <Panel
+      title={`Player Answers · Q${qIndex + 1}`}
+      icon={<ListChecks size={18} color={COLORS.green} />}
+      right={rows.length > 0 && <span style={{ fontSize: 12, color: COLORS.muted }}>{correctCount} / {rows.length} correct</span>}
+    >
+      {rows.length === 0 && <p style={{ color: COLORS.muted, fontSize: 13 }}>No answers submitted yet for this question.</p>}
+      {rows.length > 0 && (
+        <div style={{ display: "grid", gap: 6 }}>
+          {rows.map((p) => {
+            const a = p.answers[qIndex];
+            if (curQ.round === "hazard") {
+              const total = curQ.hazards?.length || 0;
+              const found = a.found?.length || 0;
+              const allFound = found >= total;
+              return (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.surfaceRaised, borderRadius: 6, padding: "7px 10px", fontSize: 13 }}>
+                  {allFound ? <CheckCircle2 size={15} color={COLORS.green} style={{ flexShrink: 0 }} /> : <XCircle size={15} color={COLORS.orange} style={{ flexShrink: 0 }} />}
+                  <span style={{ flex: 1, fontWeight: 600 }}>{p.name}</span>
+                  <span style={{ color: COLORS.muted }}>{found}/{total} found</span>
+                  <span style={{ fontWeight: 800, color: COLORS.yellow, minWidth: 44, textAlign: "right" }}>{(a.score || 0) >= 0 ? "+" : ""}{a.score || 0}</span>
+                </div>
+              );
+            }
+            return (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.surfaceRaised, borderRadius: 6, padding: "7px 10px", fontSize: 13 }}>
+                {a.correct ? <CheckCircle2 size={15} color={COLORS.green} style={{ flexShrink: 0 }} /> : <XCircle size={15} color={COLORS.red} style={{ flexShrink: 0 }} />}
+                <span style={{ flex: 1, fontWeight: 600 }}>{p.name}</span>
+                <span style={{ color: COLORS.muted, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {typeof a.answer === "number" && curQ.options ? curQ.options[a.answer] : "—"}
+                </span>
+                <span style={{ fontWeight: 800, color: COLORS.yellow, minWidth: 44, textAlign: "right" }}>+{a.points || 0}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// Lets the admin author their own quiz or true/false question on the fly.
+function AddQuestionForm({ onAdd, busy }) {
+  const [round, setRound] = useState("quiz");
+  const [category, setCategory] = useState("");
+  const [question, setQuestion] = useState("");
+  const [options, setOptions] = useState(["", "", "", ""]);
+  const [correct, setCorrect] = useState(0);
+  const [timer, setTimer] = useState(15);
+  const [points, setPoints] = useState(100);
+  const [explanation, setExplanation] = useState("");
+
+  const isTF = round === "truefalse";
+  const effectiveOptions = isTF ? ["TRUE", "FALSE"] : options;
+  const canSubmit = category.trim() && question.trim() && (isTF || effectiveOptions.every((o) => o.trim()));
+
+  async function submit() {
+    if (!canSubmit) return;
+    await onAdd({
+      round,
+      category: category.trim(),
+      difficulty: "Custom",
+      question: question.trim(),
+      options: effectiveOptions,
+      correct,
+      timer: Number(timer) || 15,
+      points: Number(points) || 100,
+      explanation: explanation.trim(),
+    });
+    setCategory(""); setQuestion(""); setOptions(["", "", "", ""]); setCorrect(0);
+    setTimer(15); setPoints(100); setExplanation("");
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+        <select style={{ ...inputStyle, marginBottom: 0, width: 190 }} value={round} onChange={(e) => { setRound(e.target.value); setCorrect(0); }}>
+          <option value="quiz">Quiz (multiple choice)</option>
+          <option value="truefalse">True / False</option>
+        </select>
+        <input style={{ ...inputStyle, marginBottom: 0, flex: 1, minWidth: 160 }} placeholder="Category" value={category} onChange={(e) => setCategory(e.target.value)} />
+      </div>
+      <input style={inputStyle} placeholder="Question text" value={question} onChange={(e) => setQuestion(e.target.value)} />
+
+      {isTF ? (
+        <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+          {["TRUE", "FALSE"].map((opt, i) => (
+            <label key={opt} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, background: COLORS.surfaceRaised, padding: "8px 12px", borderRadius: 8, cursor: "pointer", border: `1px solid ${correct === i ? COLORS.green : COLORS.line}` }}>
+              <input type="radio" name="tfcorrect" checked={correct === i} onChange={() => setCorrect(i)} /> {opt} is correct
+            </label>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+          {options.map((opt, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="radio" name="qcorrect" checked={correct === i} onChange={() => setCorrect(i)} title="Mark as correct answer" />
+              <input style={{ ...inputStyle, marginBottom: 0, flex: 1 }} placeholder={`Option ${String.fromCharCode(65 + i)}`} value={opt} onChange={(e) => { const next = [...options]; next[i] = e.target.value; setOptions(next); }} />
+            </div>
+          ))}
+          <p style={{ fontSize: 11, color: COLORS.muted, margin: 0 }}>Select the radio button next to the correct option.</p>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <input style={{ ...inputStyle, marginBottom: 0, width: 110 }} type="number" placeholder="Timer (s)" value={timer} onChange={(e) => setTimer(e.target.value)} />
+        <input style={{ ...inputStyle, marginBottom: 0, width: 110 }} type="number" placeholder="Points" value={points} onChange={(e) => setPoints(e.target.value)} />
+      </div>
+      <input style={inputStyle} placeholder="Explanation (shown on reveal, optional)" value={explanation} onChange={(e) => setExplanation(e.target.value)} />
+
+      <button disabled={busy || !canSubmit} style={btnStyle(COLORS.green)} onClick={submit}>
+        {busy ? "Adding…" : "Add Question"}
+      </button>
     </div>
   );
 }
@@ -769,6 +1292,12 @@ function PlayerView({ onExit }) {
     await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
   }
 
+  const sorted = useMemo(() => [...players].sort((a, b) => (b.score || 0) - (a.score || 0)), [players]);
+  const teamScores = useMemo(
+    () => (game?.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : []),
+    [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
+  );
+
   if (!game) {
     return <Centered><p style={{ color: COLORS.muted }}>Waiting for the admin to create a game…</p><button style={linkBtnStyle} onClick={onExit}>← Back</button></Centered>;
   }
@@ -794,9 +1323,7 @@ function PlayerView({ onExit }) {
     );
   }
 
-  const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
   const rank = sorted.findIndex((p) => p.id === me.id) + 1;
-  const teamScores = game.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : [];
   const curQ = questions[game.qIndex ?? 0];
   const myAnswer = curQ && me.answers ? me.answers[game.qIndex] : undefined;
 
@@ -993,7 +1520,7 @@ function MillionaireQuestion({ question, startedAt, now, me, players, qIndex, on
   );
 }
 
-function LifelineButton({ icon, label, used, onClick }) {
+const LifelineButton = React.memo(function LifelineButton({ icon, label, used, onClick }) {
   return (
     <button
       disabled={used}
@@ -1009,7 +1536,7 @@ function LifelineButton({ icon, label, used, onClick }) {
       {label}
     </button>
   );
-}
+});
 
 function HazardQuestion({ question, startedAt, now, myAnswer, onTap }) {
   const remaining = Math.max(0, question.timer - Math.floor((now - startedAt) / 1000));
@@ -1126,6 +1653,12 @@ function TVView({ onExit }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(id); }, []);
 
+  const sorted = useMemo(() => [...players].sort((a, b) => (b.score || 0) - (a.score || 0)), [players]);
+  const teamScores = useMemo(
+    () => (game?.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : []),
+    [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
+  );
+
   if (!game) {
     return (
       <Centered>
@@ -1136,8 +1669,6 @@ function TVView({ onExit }) {
   }
 
   const curQ = questions[game.qIndex ?? 0];
-  const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
-  const teamScores = game.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : [];
   const millionaireQs = questions.filter((q) => q.round === "millionaire");
 
   return (
@@ -1436,7 +1967,7 @@ function AddTeamForm({ onAdd }) {
   );
 }
 
-function TopBar({ title, onExit, connected }) {
+function TopBar({ title, onExit, connected, onLock }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
       <div>
@@ -1445,6 +1976,15 @@ function TopBar({ title, onExit, connected }) {
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
         <ConnBadge connected={connected} />
+        {onLock && (
+          <button
+            title="Lock admin on this device (you'll need the PIN again next time)"
+            onClick={onLock}
+            style={{ ...linkBtnStyle, margin: 0, display: "flex", alignItems: "center", gap: 4, textDecoration: "none" }}
+          >
+            <Lock size={13} /> Lock
+          </button>
+        )}
         <button style={linkBtnStyle} onClick={onExit}>Exit</button>
       </div>
     </div>
@@ -1467,16 +2007,16 @@ function Centered({ children }) {
   return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, gap: 10 }}>{children}</div>;
 }
 
-function StatCell({ label, value, big }) {
+const StatCell = React.memo(function StatCell({ label, value, big }) {
   return (
     <div style={{ background: COLORS.surfaceRaised, borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
       <div style={{ fontSize: big ? 22 : 18, fontWeight: 900, color: COLORS.yellow }}>{value}</div>
       <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>{label}</div>
     </div>
   );
-}
+});
 
-function AdminPlayerRow({ rank, player, teams, editing, editForm, setEditForm, onStartEdit, onCancelEdit, onSaveEdit, kickConfirming, onKick }) {
+const AdminPlayerRow = React.memo(function AdminPlayerRow({ rank, player, teams, editing, editForm, setEditForm, onStartEdit, onCancelEdit, onSaveEdit, kickConfirming, onKick }) {
   if (editing) {
     return (
       <div style={{ background: COLORS.surfaceRaised, border: `1px solid ${COLORS.yellow}`, borderRadius: 8, padding: 10, marginBottom: 6 }}>
@@ -1547,9 +2087,9 @@ function AdminPlayerRow({ rank, player, teams, editing, editForm, setEditForm, o
       </button>
     </div>
   );
-}
+});
 
-function LeaderRow({ rank, name, sub, score, highlight }) {
+const LeaderRow = React.memo(function LeaderRow({ rank, name, sub, score, highlight }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", background: highlight ? COLORS.yellow + "1f" : "transparent", borderRadius: 8, marginBottom: 4 }}>
       <div style={{ width: 22, fontWeight: 800, color: rank === 1 ? COLORS.yellow : COLORS.muted, fontSize: 14 }}>{rank}</div>
@@ -1560,7 +2100,7 @@ function LeaderRow({ rank, name, sub, score, highlight }) {
       <div style={{ fontWeight: 800, color: COLORS.yellow, fontSize: 14 }}>{score}</div>
     </div>
   );
-}
+});
 
 function StatusPill({ status }) {
   const map = {
@@ -1571,7 +2111,7 @@ function StatusPill({ status }) {
   return <span style={{ fontSize: 11, fontWeight: 800, color: c, border: `1px solid ${c}`, borderRadius: 20, padding: "3px 10px" }}>{label}</span>;
 }
 
-function ActionBtn({ icon, label, color, dark, onClick, disabled }) {
+const ActionBtn = React.memo(function ActionBtn({ icon, label, color, dark, onClick, disabled }) {
   return (
     <button disabled={disabled} onClick={onClick} style={{
       display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 8, border: "none",
@@ -1581,7 +2121,7 @@ function ActionBtn({ icon, label, color, dark, onClick, disabled }) {
       {icon}{label}
     </button>
   );
-}
+});
 
 const inputStyle = {
   width: "100%", padding: "12px 14px", marginBottom: 10, borderRadius: 8,
