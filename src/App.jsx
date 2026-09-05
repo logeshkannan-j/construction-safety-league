@@ -441,15 +441,23 @@ function shuffleQuestionOptions(q) {
 
 function enforceFixedGameTimer(question) {
   if (!question) return question;
-  return { ...question, timer: GAME_QUESTION_SECONDS };
+  return question.round === "hazard"
+    ? { ...question, timer: Number(question.timer) > 0 ? Number(question.timer) : 45 }
+    : { ...question, timer: GAME_QUESTION_SECONDS };
+}
+
+function getQuestionDuration(question) {
+  return Number(question?.timer) > 0 ? Number(question.timer) : GAME_QUESTION_SECONDS;
 }
 
 function buildRandomizedGameQuestions() {
   const mcqPool = SEED_QUESTIONS.filter((q) => q.round !== "hazard" && q.round !== "millionaire");
   const hazardPool = SEED_QUESTIONS.filter((q) => q.round === "hazard");
+  const hazardCount = 5;
 
-  const selectedMCQ = shuffleArray(mcqPool.slice(QUESTION_BANK_SKIP_COUNT)).slice(0, GAME_QUESTION_COUNT - 5);
-  const selectedHazard = shuffleArray(hazardPool).slice(0, 5);
+  const selectedHazard = shuffleArray(hazardPool).slice(0, Math.min(hazardCount, hazardPool.length));
+  const remainingSlots = Math.max(0, GAME_QUESTION_COUNT - selectedHazard.length);
+  const selectedMCQ = shuffleArray(mcqPool).slice(0, Math.min(remainingSlots, mcqPool.length));
   const chosen = shuffleArray([...selectedMCQ, ...selectedHazard]);
 
   return chosen.map((question) => {
@@ -873,7 +881,7 @@ function AdminView({ onExit }) {
     const newQ = {
       round: "hazard", category: hz.category || "Spot the Hazard", difficulty: "Medium",
       question: "FIND THE HAZARDS!", imageType: "raster", imageData: hz.image,
-      timer: GAME_QUESTION_SECONDS, wrongPenalty: 0, bonusAll: 100,
+      timer: Math.max(1, Number(hz.timer) || 45), wrongPenalty: 0, bonusAll: 100,
       explanation: "", hazards: hz.hazards,
     };
     const nextQuestions = [...(questionsRef || []), newQ];
@@ -1400,7 +1408,7 @@ function PlayerView({ onExit }) {
     if (prior.found.length >= question.hazards.length) return; // already found all
     const currentServerTime = Date.now() + serverOffset;
     const elapsed = (currentServerTime - (game.questionStartedAt || currentServerTime)) / 1000;
-    if (elapsed > GAME_QUESTION_SECONDS) return; // time's up
+    if (elapsed > getQuestionDuration(question)) return; // time's up
 
     const hit = question.hazards.find(
       (h) => !prior.found.includes(h.id) && hazardDistancePct(xPct, yPct, h.xPct, h.yPct) <= (h.radiusPct || 8)
@@ -1724,7 +1732,8 @@ const LifelineButton = React.memo(function LifelineButton({ icon, label, used, o
 });
 
 function HazardQuestion({ question, startedAt, now, myAnswer, onTap }) {
-  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
+  const duration = getQuestionDuration(question);
+  const remaining = Math.max(0, duration - Math.floor((now - startedAt) / 1000));
   const found = myAnswer?.found || [];
   const [flash, setFlash] = useState(null); // {x,y,hit}
   const allFound = found.length >= question.hazards.length;
@@ -1746,7 +1755,7 @@ function HazardQuestion({ question, startedAt, now, myAnswer, onTap }) {
     <div style={{ width: "100%", maxWidth: 460 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, color: COLORS.orange }}><Target size={14} /> FIND THE HAZARDS!</span>
-        <TimerBadge remaining={remaining} total={GAME_QUESTION_SECONDS} />
+        <TimerBadge remaining={remaining} total={duration} />
       </div>
       <p style={{ fontSize: 13, color: COLORS.muted, marginBottom: 10 }}>Tap the screen wherever you spot a safety hazard. Found {found.length} / {question.hazards.length}.</p>
       <HazardImage question={question} markers={markers} onTap={remaining > 0 && !allFound ? handleTap : undefined} />
@@ -2021,7 +2030,8 @@ function QRScanner({ onDetected, onClose }) {
 }
 
 function QuestionDisplay({ q, qIndex, total, startedAt, now, players }) {
-  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
+  const duration = getQuestionDuration(q);
+  const remaining = Math.max(0, duration - Math.floor((now - startedAt) / 1000));
   const pct = total ? Math.round(((qIndex + 1) / total) * 100) : 0;
 
   if (q.round === "hazard") {
