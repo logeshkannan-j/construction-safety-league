@@ -348,15 +348,7 @@ const SEED_HAZARD_QUESTION_10 = {
 
 SEED_QUESTIONS.push(...EXTRA_QUESTIONS);
 SEED_QUESTIONS.push(
-  SEED_HAZARD_QUESTION_2,
-  SEED_HAZARD_QUESTION_3,
-  SEED_HAZARD_QUESTION_4,
-  SEED_HAZARD_QUESTION_5,
-  SEED_HAZARD_QUESTION_6,
-  SEED_HAZARD_QUESTION_7,
-  SEED_HAZARD_QUESTION_8,
-  SEED_HAZARD_QUESTION_9,
-  SEED_HAZARD_QUESTION_10
+  // Keep one picture-matching hazard round in each fresh game.
 );
 
 // ------------------------- Safety Millionaire finale -------------------------
@@ -453,12 +445,15 @@ function getQuestionDuration(question) {
 function buildRandomizedGameQuestions() {
   const mcqPool = SEED_QUESTIONS.filter((q) => q.round !== "hazard" && q.round !== "millionaire");
   const hazardPool = SEED_QUESTIONS.filter((q) => q.round === "hazard");
-  const hazardCount = 5;
+  const millionairePool = SEED_QUESTIONS.filter((q) => q.round === "millionaire");
+  const hazardCount = 1;
+  const millionaireCount = 5;
 
   const selectedHazard = shuffleArray(hazardPool).slice(0, Math.min(hazardCount, hazardPool.length));
-  const remainingSlots = Math.max(0, GAME_QUESTION_COUNT - selectedHazard.length);
+  const selectedMillionaire = millionairePool.slice(-millionaireCount);
+  const remainingSlots = Math.max(0, GAME_QUESTION_COUNT - selectedHazard.length - selectedMillionaire.length);
   const selectedMCQ = shuffleArray(mcqPool).slice(0, Math.min(remainingSlots, mcqPool.length));
-  const chosen = shuffleArray([...selectedMCQ, ...selectedHazard]);
+  const chosen = [...shuffleArray([...selectedMCQ, ...selectedHazard]), ...selectedMillionaire];
 
   return chosen.map((question) => {
     const normalized = question && question.options ? shuffleQuestionOptions(question) : question;
@@ -1166,7 +1161,7 @@ function ManageQuestionsPanel({ questions, onRemove }) {
 function PlayerAnswersPanel({ curQ, qIndex, players }) {
   const rows = players.filter((p) => p.answers && p.answers[qIndex] !== undefined);
   const correctCount = curQ.round === "hazard"
-    ? rows.filter((p) => (p.answers[qIndex].found?.length || 0) >= (curQ.hazards?.length || 0)).length
+    ? rows.filter((p) => (p.answers[qIndex].correctCount || 0) >= (curQ.hazards?.length || 0)).length
     : rows.filter((p) => p.answers[qIndex].correct).length;
 
   return (
@@ -1188,7 +1183,7 @@ function PlayerAnswersPanel({ curQ, qIndex, players }) {
                 <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.surfaceRaised, borderRadius: 6, padding: "7px 10px", fontSize: 13 }}>
                   {allFound ? <CheckCircle2 size={15} color={COLORS.green} style={{ flexShrink: 0 }} /> : <XCircle size={15} color={COLORS.orange} style={{ flexShrink: 0 }} />}
                   <span style={{ flex: 1, fontWeight: 600 }}>{p.name}</span>
-                  <span style={{ color: COLORS.muted }}>{found}/{total} found</span>
+                  <span style={{ color: COLORS.muted }}>{a.correctCount || 0}/{total} matched</span>
                   <span style={{ fontWeight: 800, color: COLORS.yellow, minWidth: 44, textAlign: "right" }}>{(a.score || 0) >= 0 ? "+" : ""}{a.score || 0}</span>
                 </div>
               );
@@ -1387,16 +1382,17 @@ function PlayerView({ onExit }) {
     const currentServerTime = Date.now() + serverOffset;
     const elapsed = (currentServerTime - (game.questionStartedAt || currentServerTime)) / 1000;
     if (elapsed > GAME_QUESTION_SECONDS) return; // late
+    const scoredElapsed = Math.min(GAME_QUESTION_SECONDS, Math.max(0, elapsed));
     const correct = optionIndex === question.correct;
     let points = 0;
-    const speedMark = correct ? Math.max(0, Math.round(((GAME_QUESTION_SECONDS - elapsed) / GAME_QUESTION_SECONDS) * 100)) : 0;
+    const speedMark = correct ? Math.round(((GAME_QUESTION_SECONDS - scoredElapsed) / GAME_QUESTION_SECONDS) * 100) : 0;
     if (correct) {
       points = Math.round((question.points || 100) * (0.5 + speedMark / 200));
     }
     const updated = {
       ...me,
       score: (me.score || 0) + points,
-      answers: { ...(me.answers || {}), [qIndex]: { answer: optionIndex, correct, points, speedMark, elapsed: Math.round(elapsed * 10) / 10, submittedAt: currentServerTime } },
+      answers: { ...(me.answers || {}), [qIndex]: { answer: optionIndex, correct, points, speedMark, elapsed: Math.round(scoredElapsed * 10) / 10, submittedAt: currentServerTime } },
     };
     setMe(updated);
     await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
@@ -1431,6 +1427,26 @@ function PlayerView({ onExit }) {
       ...me,
       score: (me.score || 0) + addPoints,
       answers: { ...(me.answers || {}), [qIndex]: nextAnswer },
+    };
+    setMe(updated);
+    await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
+  }
+
+  async function submitHazardMatches(qIndex, matches, question) {
+    if (!me || !game || me.answers?.[qIndex] !== undefined) return;
+    const currentServerTime = Date.now() + serverOffset;
+    const elapsed = (currentServerTime - (game.questionStartedAt || currentServerTime)) / 1000;
+    if (elapsed > getQuestionDuration(question)) return;
+    const correctCount = question.hazards.reduce(
+      (count, hazard, index) => count + (matches[index] === hazard.id ? 1 : 0),
+      0
+    );
+    const score = correctCount * 60 + (correctCount === question.hazards.length ? question.bonusAll || 0 : 0);
+    const answer = { type: "hazard-match", matches, correctCount, score, submittedAt: currentServerTime };
+    const updated = {
+      ...me,
+      score: (me.score || 0) + score,
+      answers: { ...(me.answers || {}), [qIndex]: answer },
     };
     setMe(updated);
     await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
@@ -1529,7 +1545,7 @@ function PlayerView({ onExit }) {
             startedAt={game.questionStartedAt}
             now={now}
             myAnswer={myAnswer}
-            onTap={(x, y) => submitHazardTap(game.qIndex, x, y, curQ)}
+            onSubmit={(matches) => submitHazardMatches(game.qIndex, matches, curQ)}
           />
         )}
 
@@ -1731,25 +1747,26 @@ const LifelineButton = React.memo(function LifelineButton({ icon, label, used, o
   );
 });
 
-function HazardQuestion({ question, startedAt, now, myAnswer, onTap }) {
+function HazardQuestion({ question, startedAt, now, myAnswer, onSubmit }) {
   const duration = getQuestionDuration(question);
   const remaining = Math.max(0, duration - Math.floor((now - startedAt) / 1000));
-  const found = myAnswer?.found || [];
-  const [flash, setFlash] = useState(null); // {x,y,hit}
-  const allFound = found.length >= question.hazards.length;
+  const [selectedNumber, setSelectedNumber] = useState(null);
+  const [matches, setMatches] = useState({});
+  const submitted = myAnswer !== undefined;
+  const markers = question.hazards.map((hazard, index) => ({
+    key: hazard.id, xPct: hazard.xPct, yPct: hazard.yPct, color: COLORS.yellow, size: 28, label: String(index + 1),
+  }));
 
-  function handleTap(x, y) {
-    if (remaining === 0 || allFound) return;
-    onTap(x, y);
-    setFlash({ x, y, key: Date.now() });
-    setTimeout(() => setFlash(null), 500);
+  function chooseHazardName(hazardId) {
+    if (selectedNumber === null || submitted || remaining === 0) return;
+    setMatches((current) => ({ ...current, [selectedNumber]: hazardId }));
+    setSelectedNumber(null);
   }
 
-  const markers = found.map((id) => {
-    const h = question.hazards.find((hh) => hh.id === id);
-    return h ? { key: id, xPct: h.xPct, yPct: h.yPct, color: COLORS.green, size: 24, label: "✓" } : null;
-  }).filter(Boolean);
-  if (flash) markers.push({ key: "flash-" + flash.key, xPct: flash.x, yPct: flash.y, color: flash.hit ? COLORS.green : COLORS.red, size: 18, label: "" });
+  function submitMatches() {
+    if (submitted || remaining === 0 || Object.keys(matches).length !== question.hazards.length) return;
+    onSubmit(matches);
+  }
 
   return (
     <div style={{ width: "100%", maxWidth: 460 }}>
@@ -1757,28 +1774,55 @@ function HazardQuestion({ question, startedAt, now, myAnswer, onTap }) {
         <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, color: COLORS.orange }}><Target size={14} /> FIND THE HAZARDS!</span>
         <TimerBadge remaining={remaining} total={duration} />
       </div>
-      <p style={{ fontSize: 13, color: COLORS.muted, marginBottom: 10 }}>Tap the screen wherever you spot a safety hazard. Found {found.length} / {question.hazards.length}.</p>
-      <HazardImage question={question} markers={markers} onTap={remaining > 0 && !allFound ? handleTap : undefined} />
-      {allFound && <p style={{ textAlign: "center", color: COLORS.green, fontWeight: 800, marginTop: 12 }}>All hazards found! Waiting for results…</p>}
+      <p style={{ fontSize: 13, color: COLORS.muted, marginBottom: 10 }}>Match each numbered hazard in the picture to its correct name.</p>
+      <HazardImage question={question} markers={markers} />
+      <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
+        {question.hazards.map((hazard, index) => {
+          const matchedName = matches[index];
+          return (
+            <button key={hazard.id} disabled={submitted || remaining === 0} onClick={() => setSelectedNumber(index)} style={{
+              display: "flex", alignItems: "center", gap: 10, textAlign: "left", padding: "10px 12px",
+              borderRadius: 8, border: `1px solid ${selectedNumber === index ? COLORS.yellow : COLORS.line}`,
+              background: selectedNumber === index ? COLORS.yellow + "22" : COLORS.surfaceRaised,
+              color: COLORS.ink, cursor: submitted || remaining === 0 ? "default" : "pointer",
+            }}>
+              <b style={{ color: COLORS.yellow, minWidth: 22 }}>{index + 1}.</b>
+              <span>{matchedName ? question.hazards.find((item) => item.id === matchedName)?.name : "Select a hazard name below"}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+        {question.hazards.map((hazard) => (
+          <button key={hazard.id} disabled={submitted || remaining === 0 || Object.values(matches).includes(hazard.id)} onClick={() => chooseHazardName(hazard.id)} style={{
+            padding: "11px 12px", borderRadius: 8, border: `1px solid ${COLORS.green}88`, background: COLORS.green + "18",
+            color: COLORS.ink, textAlign: "left", cursor: submitted || remaining === 0 ? "default" : "pointer", opacity: Object.values(matches).includes(hazard.id) ? 0.5 : 1,
+          }}>{hazard.name}</button>
+        ))}
+      </div>
+      <button disabled={submitted || remaining === 0 || Object.keys(matches).length !== question.hazards.length} style={btnStyle(COLORS.orange)} onClick={submitMatches}>
+        {submitted ? "MATCHES SUBMITTED" : "SUBMIT MATCHES"}
+      </button>
     </div>
   );
 }
 
 function HazardResultCard({ question, myAnswer, score, rank }) {
-  const found = myAnswer?.found || [];
+  const matches = myAnswer?.matches || {};
+  const correctCount = myAnswer?.correctCount || 0;
   const allMarkers = question.hazards.map((h) => ({
     key: h.id, xPct: h.xPct, yPct: h.yPct,
-    color: found.includes(h.id) ? COLORS.green : COLORS.red,
-    size: 24, label: found.includes(h.id) ? "✓" : "✗",
+    color: Object.entries(matches).some(([index, id]) => Number(index) === question.hazards.indexOf(h) && id === h.id) ? COLORS.green : COLORS.red,
+    size: 24, label: String(question.hazards.indexOf(h) + 1),
   }));
   return (
     <div style={{ textAlign: "center", width: "100%", maxWidth: 460 }}>
-      <h2 style={{ fontSize: 20, fontWeight: 900, marginBottom: 10 }}>{found.length} / {question.hazards.length} hazards found</h2>
+      <h2 style={{ fontSize: 20, fontWeight: 900, marginBottom: 10 }}>{correctCount} / {question.hazards.length} matches correct</h2>
       <HazardImage question={question} markers={allMarkers} />
       <div style={{ textAlign: "left", marginTop: 14, display: "grid", gap: 6 }}>
         {question.hazards.map((h) => (
           <div key={h.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13 }}>
-            {found.includes(h.id) ? <CheckCircle2 size={15} color={COLORS.green} style={{ flexShrink: 0, marginTop: 1 }} /> : <XCircle size={15} color={COLORS.red} style={{ flexShrink: 0, marginTop: 1 }} />}
+            {matches[question.hazards.indexOf(h)] === h.id ? <CheckCircle2 size={15} color={COLORS.green} style={{ flexShrink: 0, marginTop: 1 }} /> : <XCircle size={15} color={COLORS.red} style={{ flexShrink: 0, marginTop: 1 }} />}
             <span><b>{h.name}</b> — <span style={{ color: COLORS.muted }}>{h.description}</span></span>
           </div>
         ))}
