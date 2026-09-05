@@ -41,7 +41,8 @@ const COLORS = {
 // shared, so sharing the game/join link never grants anyone else access.
 const ADMIN_UNLOCKED_KEY = "csl_admin_unlocked_v1";
 const ADMIN_PIN_KEY = "csl_admin_pin_v1";
-const GAME_QUESTION_SECONDS = 45;
+const GAME_QUESTION_SECONDS = 100;
+const GAME_QUESTION_COUNT = 20;
 const HOSTED_APP_URL = "https://logeshkannan-j.github.io/construction-safety-league/";
 
 const SEED_QUESTIONS = [
@@ -437,6 +438,22 @@ function shuffleQuestionOptions(q) {
   return { ...q, options, correct };
 }
 
+function buildRandomizedGameQuestions() {
+  const basePool = SEED_QUESTIONS.filter((q) => q.round !== "hazard" && q.round !== "millionaire");
+  const chosen = shuffleArray(basePool).slice(0, GAME_QUESTION_COUNT);
+  return chosen.map((question) => ({
+    ...shuffleQuestionOptions(question),
+    timer: GAME_QUESTION_SECONDS,
+  }));
+}
+
+function normalizeQuestionSet(questionsList) {
+  return (questionsList || []).map((question) => {
+    if (!question || !Array.isArray(question.options) || question.round === "hazard") return question;
+    return { ...shuffleQuestionOptions(question), timer: GAME_QUESTION_SECONDS };
+  });
+}
+
 function computeTeamScores(players, teams, mode) {
   const byTeam = {};
   (teams || []).forEach((t) => { byTeam[t] = []; });
@@ -728,9 +745,10 @@ function AdminView({ onExit }) {
     await Promise.all((keys || []).map((k) => safeDelete(k, true)));
     const g = defaultGame();
     await safeSet(GAME_KEY, JSON.stringify(g), true);
-    // Shuffle each question's answer order so the correct option isn't
-    // always sitting in the same slot every time the game is created.
-    await safeSet(Q_KEY, JSON.stringify(SEED_QUESTIONS.map(shuffleQuestionOptions)), true);
+    // Create a fresh 20-question game set for everyone playing, then shuffle
+    // the question order and the answer order inside each question.
+    const gameQuestions = buildRandomizedGameQuestions();
+    await safeSet(Q_KEY, JSON.stringify(gameQuestions), true);
     await refresh();
     setBusy(false);
   }
@@ -863,7 +881,7 @@ function AdminView({ onExit }) {
     const millionaireIdx = current.findIndex((x) => x.round === "millionaire");
     const insertAt = millionaireIdx === -1 ? current.length : millionaireIdx;
     const next = [...current.slice(0, insertAt), shuffled, ...current.slice(insertAt)];
-    await safeSet(Q_KEY, JSON.stringify(next), true);
+    await safeSet(Q_KEY, JSON.stringify(normalizeQuestionSet(next)), true);
     await refresh();
     setAqBusy(false);
   }
@@ -884,7 +902,7 @@ function AdminView({ onExit }) {
 
       {!game && (
         <Panel title="No active game" icon={<Play size={18} color={COLORS.yellow} />}>
-          <p style={{ color: COLORS.muted, fontSize: 14, marginBottom: 14 }}>Create a game to generate a join code and load the question set ({SEED_QUESTIONS.length} questions across quiz, true/false, hazard, and the Safety Millionaire finale — answer order is shuffled automatically).</p>
+          <p style={{ color: COLORS.muted, fontSize: 14, marginBottom: 14 }}>Create a game to generate a join code and load a fresh 20-question set with randomized order and a 100-second timer for every question.</p>
           <button disabled={busy} style={btnStyle(COLORS.yellow, "#1A1200")} onClick={createGame}>{busy ? "Creating…" : "Create Game"}</button>
         </Panel>
       )}
@@ -1577,7 +1595,6 @@ function QuestionCard({ question, startedAt, now, onAnswer }) {
               minHeight: 64,
             }}
           >
-            {!isTF && <span style={{ opacity: 0.6, marginRight: 6 }}>{String.fromCharCode(65 + i)}.</span>}
             {opt}
           </button>
         ))}
@@ -1667,7 +1684,6 @@ function MillionaireQuestion({ question, startedAt, now, me, players, qIndex, on
                 textDecoration: isOut ? "line-through" : "none",
               }}
             >
-              <span style={{ opacity: 0.6, marginRight: 6 }}>{String.fromCharCode(65 + i)}.</span>
               {isOut ? "" : opt}
             </button>
           );
