@@ -43,6 +43,7 @@ const ADMIN_UNLOCKED_KEY = "csl_admin_unlocked_v1";
 const ADMIN_PIN_KEY = "csl_admin_pin_v1";
 const GAME_QUESTION_SECONDS = 100;
 const GAME_QUESTION_COUNT = 20;
+const QUESTION_BANK_SKIP_COUNT = 5;
 const HOSTED_APP_URL = "https://logeshkannan-j.github.io/construction-safety-league/";
 
 const SEED_QUESTIONS = [
@@ -438,19 +439,30 @@ function shuffleQuestionOptions(q) {
   return { ...q, options, correct };
 }
 
+function enforceFixedGameTimer(question) {
+  if (!question) return question;
+  return { ...question, timer: GAME_QUESTION_SECONDS };
+}
+
 function buildRandomizedGameQuestions() {
-  const basePool = SEED_QUESTIONS.filter((q) => q.round !== "hazard" && q.round !== "millionaire");
-  const chosen = shuffleArray(basePool).slice(0, GAME_QUESTION_COUNT);
-  return chosen.map((question) => ({
-    ...shuffleQuestionOptions(question),
-    timer: GAME_QUESTION_SECONDS,
-  }));
+  const mcqPool = SEED_QUESTIONS.filter((q) => q.round !== "hazard" && q.round !== "millionaire");
+  const hazardPool = SEED_QUESTIONS.filter((q) => q.round === "hazard");
+
+  const selectedMCQ = shuffleArray(mcqPool.slice(QUESTION_BANK_SKIP_COUNT)).slice(0, GAME_QUESTION_COUNT - 5);
+  const selectedHazard = shuffleArray(hazardPool).slice(0, 5);
+  const chosen = shuffleArray([...selectedMCQ, ...selectedHazard]);
+
+  return chosen.map((question) => {
+    const normalized = question && question.options ? shuffleQuestionOptions(question) : question;
+    return enforceFixedGameTimer(normalized);
+  });
 }
 
 function normalizeQuestionSet(questionsList) {
   return (questionsList || []).map((question) => {
-    if (!question || !Array.isArray(question.options) || question.round === "hazard") return question;
-    return { ...shuffleQuestionOptions(question), timer: GAME_QUESTION_SECONDS };
+    if (!question) return question;
+    if (question.options && question.round !== "hazard") return enforceFixedGameTimer(shuffleQuestionOptions(question));
+    return enforceFixedGameTimer(question);
   });
 }
 
@@ -861,11 +873,11 @@ function AdminView({ onExit }) {
     const newQ = {
       round: "hazard", category: hz.category || "Spot the Hazard", difficulty: "Medium",
       question: "FIND THE HAZARDS!", imageType: "raster", imageData: hz.image,
-      timer: Number(hz.timer) || 60, wrongPenalty: 0, bonusAll: 100,
+      timer: GAME_QUESTION_SECONDS, wrongPenalty: 0, bonusAll: 100,
       explanation: "", hazards: hz.hazards,
     };
     const nextQuestions = [...(questionsRef || []), newQ];
-    await safeSet(Q_KEY, JSON.stringify(nextQuestions), true);
+    await safeSet(Q_KEY, JSON.stringify(normalizeQuestionSet(nextQuestions)), true);
     await refresh();
     setHz({ category: "Spot the Hazard", timer: 60, image: null, hazards: [], draftName: "", draftDesc: "", draftPoints: 50, pendingPoint: null });
     setHzBusy(false);
@@ -1215,7 +1227,7 @@ function AddQuestionForm({ onAdd, busy }) {
       question: question.trim(),
       options: effectiveOptions,
       correct,
-      timer: Number(timer) || 15,
+      timer: GAME_QUESTION_SECONDS,
       points: Number(points) || 100,
       explanation: explanation.trim(),
       videoUrl: videoUrl.trim(),
@@ -1256,7 +1268,7 @@ function AddQuestionForm({ onAdd, busy }) {
       )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-        <input style={{ ...inputStyle, marginBottom: 0, width: 110 }} type="number" placeholder="Timer (s)" value={timer} onChange={(e) => setTimer(e.target.value)} />
+        <input style={{ ...inputStyle, marginBottom: 0, width: 110 }} type="number" placeholder="Timer (s)" value={GAME_QUESTION_SECONDS} readOnly />
         <input style={{ ...inputStyle, marginBottom: 0, width: 110 }} type="number" placeholder="Points" value={points} onChange={(e) => setPoints(e.target.value)} />
       </div>
       <input style={inputStyle} placeholder="Explanation (shown on reveal, optional)" value={explanation} onChange={(e) => setExplanation(e.target.value)} />
