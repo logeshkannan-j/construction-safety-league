@@ -346,9 +346,28 @@ const SEED_HAZARD_QUESTION_10 = {
   ],
 };
 
+function addHazardChoices(question, distractors) {
+  question.answerOptions = [
+    ...question.hazards.map((hazard) => ({ id: hazard.id, name: hazard.name })),
+    ...distractors.map((name, index) => ({ id: `${question.category}-distractor-${index}`, name })),
+  ];
+  return question;
+}
+
+addHazardChoices(SEED_HAZARD_QUESTION, ["Correct PPE in use", "Clear walkway"]);
+addHazardChoices(SEED_HAZARD_QUESTION_2, ["Safe trench shoring", "Properly stored tools"]);
+addHazardChoices(SEED_HAZARD_QUESTION_3, ["Stable storage rack", "Approved access route"]);
+addHazardChoices(SEED_HAZARD_QUESTION_4, ["Secured ladder", "Guarded roof edge"]);
+addHazardChoices(SEED_HAZARD_QUESTION_5, ["Clean dry floor", "Clear loading area"]);
+addHazardChoices(SEED_HAZARD_QUESTION_6, ["Capped reinforcement bars", "Protected power cable"]);
+
 SEED_QUESTIONS.push(...EXTRA_QUESTIONS);
 SEED_QUESTIONS.push(
-  // Keep one picture-matching hazard round in each fresh game.
+  SEED_HAZARD_QUESTION_2,
+  SEED_HAZARD_QUESTION_3,
+  SEED_HAZARD_QUESTION_4,
+  SEED_HAZARD_QUESTION_5,
+  SEED_HAZARD_QUESTION_6
 );
 
 // ------------------------- Safety Millionaire finale -------------------------
@@ -434,7 +453,7 @@ function shuffleQuestionOptions(q) {
 function enforceFixedGameTimer(question) {
   if (!question) return question;
   return question.round === "hazard"
-    ? { ...question, timer: Number(question.timer) > 0 ? Number(question.timer) : 45 }
+    ? { ...question, timer: GAME_QUESTION_SECONDS }
     : { ...question, timer: GAME_QUESTION_SECONDS };
 }
 
@@ -446,7 +465,7 @@ function buildRandomizedGameQuestions() {
   const mcqPool = SEED_QUESTIONS.filter((q) => q.round !== "hazard" && q.round !== "millionaire");
   const hazardPool = SEED_QUESTIONS.filter((q) => q.round === "hazard");
   const millionairePool = SEED_QUESTIONS.filter((q) => q.round === "millionaire");
-  const hazardCount = 1;
+  const hazardCount = 6;
   const millionaireCount = 5;
 
   const selectedHazard = shuffleArray(hazardPool).slice(0, Math.min(hazardCount, hazardPool.length));
@@ -500,7 +519,8 @@ export default function App() {
   });
 
   return (
-    <div style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.ink, fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.ink, fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif", overflowX: "hidden" }}>
+      <style>{`*, *::before, *::after { box-sizing: border-box; } html, body, #root { margin: 0; min-width: 0; width: 100%; overflow-x: hidden; } .csl-player-stage { width: 100%; min-width: 0; padding: clamp(12px, 3vw, 28px); } .csl-hazard-question { width: min(100%, 560px); margin: 0 auto; } .csl-hazard-question img { max-width: 100%; } @media (min-width: 700px) { .csl-player-stage { padding: 28px 40px; } } @media (max-width: 520px) { .csl-player-stage { padding: 12px; } }`}</style>
       {!role && <RoleSelect onSelect={setRole} />}
       {role === "admin" && <AdminView onExit={() => setRole(null)} />}
       {role === "player" && <PlayerView onExit={() => setRole(null)} />}
@@ -667,8 +687,7 @@ function AdminView({ onExit }) {
   // These hooks must live above any early return (including the PIN lock
   // screen below) or React throws "rendered more hooks than previous render"
   // (error #310) the moment the admin unlocks the panel.
-  const [hz, setHz] = useState({ category: "Spot the Hazard", timer: 60, image: null, hazards: [], draftName: "", draftDesc: "", draftPoints: 50, pendingPoint: null });
-  const [hzBusy, setHzBusy] = useState(false);
+  const [hz, setHz] = useState({ category: "Spot the Hazard", question: "", explanation: "", image: null, hazards: [], draftName: "", draftDesc: "", pendingPoint: null, placing: false });
   const [questionsRef, setQuestionsRef] = useState(questions);
   useEffect(() => { setQuestionsRef(questions); }, [questions]);
   const [aqBusy, setAqBusy] = useState(false);
@@ -833,57 +852,43 @@ function AdminView({ onExit }) {
     await refresh();
   }
 
-  // ---- Spot the Hazard builder ----
   function onHazardImageFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const maxW = 900;
-        const scale = Math.min(1, maxW / img.width);
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
-        setHz((h) => ({ ...h, image: dataUrl, hazards: [] }));
-      };
-      img.src = reader.result;
-    };
+    reader.onload = () => setHz((current) => ({ ...current, image: reader.result, hazards: [] }));
     reader.readAsDataURL(file);
   }
 
   function onHazardImageTap(x, y) {
-    if (!hz.image) return;
-    setHz((h) => ({ ...h, pendingPoint: { x, y } }));
+    if (!hz.image || !hz.placing) return;
+    setHz((current) => ({ ...current, pendingPoint: { x, y }, placing: false }));
   }
 
   function confirmHazardMarker() {
     if (!hz.pendingPoint || !hz.draftName.trim()) return;
-    const marker = { id: genId(), xPct: hz.pendingPoint.x, yPct: hz.pendingPoint.y, radiusPct: 8, name: hz.draftName.trim(), description: hz.draftDesc.trim(), points: Number(hz.draftPoints) || 50 };
-    setHz((h) => ({ ...h, hazards: [...h.hazards, marker], pendingPoint: null, draftName: "", draftDesc: "", draftPoints: 50 }));
-  }
-  function removeHazardMarker(id) {
-    setHz((h) => ({ ...h, hazards: h.hazards.filter((m) => m.id !== id) }));
+    const marker = {
+      id: genId(), xPct: hz.pendingPoint.x, yPct: hz.pendingPoint.y, radiusPct: 8,
+      name: hz.draftName.trim(), description: hz.draftDesc.trim(), points: 60,
+    };
+    setHz((current) => ({ ...current, hazards: [...current.hazards, marker], pendingPoint: null, draftName: "", draftDesc: "" }));
   }
 
   async function addHazardRoundToGame() {
-    if (!hz.image || hz.hazards.length === 0) return;
-    setHzBusy(true);
-    const newQ = {
-      round: "hazard", category: hz.category || "Spot the Hazard", difficulty: "Medium",
-      question: "FIND THE HAZARDS!", imageType: "raster", imageData: hz.image,
-      timer: Math.max(1, Number(hz.timer) || 45), wrongPenalty: 0, bonusAll: 100,
-      explanation: "", hazards: hz.hazards,
+    if (!hz.image || hz.hazards.length < 1) return;
+    const newQuestion = {
+      round: "hazard", category: hz.category.trim() || "Spot the Hazard", difficulty: "Custom",
+      question: hz.question.trim() || "MATCH THE HAZARDS IN THE PICTURE",
+      imageType: "raster", imageData: hz.image, timer: GAME_QUESTION_SECONDS,
+      wrongPenalty: 0, bonusAll: 100, explanation: hz.explanation.trim(), hazards: hz.hazards,
     };
-    const nextQuestions = [...(questionsRef || []), newQ];
-    await safeSet(Q_KEY, JSON.stringify(normalizeQuestionSet(nextQuestions)), true);
+    const current = questionsRef || [];
+    const millionaireIndex = current.findIndex((question) => question.round === "millionaire");
+    const insertAt = millionaireIndex === -1 ? current.length : millionaireIndex;
+    const next = [...current.slice(0, insertAt), newQuestion, ...current.slice(insertAt)];
+    await safeSet(Q_KEY, JSON.stringify(normalizeQuestionSet(next)), true);
     await refresh();
-    setHz({ category: "Spot the Hazard", timer: 60, image: null, hazards: [], draftName: "", draftDesc: "", draftPoints: 50, pendingPoint: null });
-    setHzBusy(false);
+    setHz({ category: "Spot the Hazard", question: "", explanation: "", image: null, hazards: [], draftName: "", draftDesc: "", pendingPoint: null, placing: false });
   }
 
   // ---- Custom question builder (quiz / true-false) ----
@@ -1014,63 +1019,40 @@ function AdminView({ onExit }) {
             <AddQuestionForm busy={aqBusy} onAdd={addCustomQuestion} />
           </Panel>
 
-          <Panel title="Add a Spot the Hazard round" icon={<Target size={18} color={COLORS.orange} />}>
-            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12 }}>Upload a site photo, then click on it to mark each hazard. The round is appended to the end of the question list — 10 default example scenes are already loaded, and the Safety Millionaire finale sits at the very end.</p>
-
-            <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-              <input style={{ ...inputStyle, width: 200, marginBottom: 0 }} placeholder="Round category" value={hz.category} onChange={(e) => setHz({ ...hz, category: e.target.value })} />
-              <input style={{ ...inputStyle, width: 120, marginBottom: 0 }} type="number" placeholder="Timer (s)" value={hz.timer} onChange={(e) => setHz({ ...hz, timer: e.target.value })} />
-              <label style={{ ...btnStyle(COLORS.surfaceRaised, COLORS.ink), width: "auto", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", margin: 0 }}>
-                <ImagePlus size={15} /> Upload photo
-                <input type="file" accept="image/*" onChange={onHazardImageFile} style={{ display: "none" }} />
-              </label>
+          <Panel title="Add a picture hazard matching question" icon={<Target size={18} color={COLORS.orange} />}>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12 }}>Upload a picture, click each hazard location, then give every numbered hazard a name. Players will match the picture numbers to these names. This round always uses 100 seconds.</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input style={{ ...inputStyle, flex: 1, minWidth: 180, marginBottom: 8 }} placeholder="Question title" value={hz.question} onChange={(e) => setHz({ ...hz, question: e.target.value })} />
+              <input style={{ ...inputStyle, width: 180, marginBottom: 8 }} placeholder="Category" value={hz.category} onChange={(e) => setHz({ ...hz, category: e.target.value })} />
+              <label style={{ ...btnStyle(COLORS.surfaceRaised, COLORS.ink), width: "auto", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", margin: 0 }}><ImagePlus size={15} /> Upload picture<input type="file" accept="image/*" onChange={onHazardImageFile} style={{ display: "none" }} /></label>
             </div>
-
-            {hz.image && (
-              <>
-                <p style={{ fontSize: 12, color: COLORS.muted, marginBottom: 8 }}>Click on the image where a hazard is. {hz.hazards.length} hazard(s) marked.</p>
-                <HazardImage
-                  question={{ imageType: "raster", imageData: hz.image }}
-                  markers={[
-                    ...hz.hazards.map((m) => ({ key: m.id, xPct: m.xPct, yPct: m.yPct, color: COLORS.green, size: 22, label: "✓" })),
-                    ...(hz.pendingPoint ? [{ key: "pending", xPct: hz.pendingPoint.x, yPct: hz.pendingPoint.y, color: COLORS.yellow, size: 22, label: "?" }] : []),
-                  ]}
-                  onTap={onHazardImageTap}
-                  maxWidth={520}
-                />
-
-                {hz.pendingPoint && (
-                  <div style={{ marginTop: 12, background: COLORS.surfaceRaised, borderRadius: 8, padding: 12 }}>
-                    <input style={inputStyle} placeholder="Hazard name (e.g. Missing barricade)" value={hz.draftName} onChange={(e) => setHz({ ...hz, draftName: e.target.value })} />
-                    <input style={inputStyle} placeholder="Short description" value={hz.draftDesc} onChange={(e) => setHz({ ...hz, draftDesc: e.target.value })} />
-                    <input style={inputStyle} type="number" placeholder="Points" value={hz.draftPoints} onChange={(e) => setHz({ ...hz, draftPoints: e.target.value })} />
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button style={btnStyle(COLORS.green)} onClick={confirmHazardMarker}>Add hazard here</button>
-                      <button style={btnStyle(COLORS.surfaceRaised, COLORS.ink)} onClick={() => setHz({ ...hz, pendingPoint: null })}>Cancel</button>
-                    </div>
-                  </div>
-                )}
-
-                {hz.hazards.length > 0 && (
-                  <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
-                    {hz.hazards.map((m) => (
-                      <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.surfaceRaised, borderRadius: 6, padding: "6px 10px", fontSize: 13 }}>
-                        <MapPin size={13} color={COLORS.green} />
-                        <span style={{ flex: 1 }}>{m.name} <span style={{ color: COLORS.muted }}>· {m.points}pts</span></span>
-                        <button onClick={() => removeHazardMarker(m.id)} style={{ background: "none", border: "none", color: COLORS.red, cursor: "pointer" }}><Trash2 size={14} /></button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <button disabled={hzBusy || hz.hazards.length === 0} style={btnStyle(COLORS.orange)} onClick={addHazardRoundToGame}>
-                  {hzBusy ? "Adding…" : `Add Hazard Round to Game (${hz.hazards.length} hazards)`}
-                </button>
-              </>
-            )}
+            {hz.image && <>
+              <button style={{ ...btnStyle(hz.placing ? COLORS.yellow : COLORS.surfaceRaised, hz.placing ? "#14171A" : COLORS.ink), marginBottom: 8 }} onClick={() => setHz({ ...hz, placing: true })}>
+                {hz.placing ? "Now click the hazard location in the picture" : "Add location on picture"}
+              </button>
+              <HazardImage question={{ imageType: "raster", imageData: hz.image }} markers={hz.hazards.map((hazard, index) => ({ key: hazard.id, xPct: hazard.xPct, yPct: hazard.yPct, color: COLORS.yellow, size: 28, label: String(index + 1) }))} onTap={hz.placing ? onHazardImageTap : undefined} maxWidth={520} />
+              {hz.pendingPoint && <div style={{ marginTop: 10, background: COLORS.surfaceRaised, borderRadius: 8, padding: 10 }}>
+                <input style={inputStyle} placeholder="Hazard name (e.g. Fall hazard)" value={hz.draftName} onChange={(e) => setHz({ ...hz, draftName: e.target.value })} />
+                <input style={inputStyle} placeholder="Hazard description" value={hz.draftDesc} onChange={(e) => setHz({ ...hz, draftDesc: e.target.value })} />
+                <button style={btnStyle(COLORS.green)} onClick={confirmHazardMarker}>Add numbered hazard</button>
+              </div>}
+              <textarea style={{ ...inputStyle, minHeight: 60 }} placeholder="Explanation (optional)" value={hz.explanation} onChange={(e) => setHz({ ...hz, explanation: e.target.value })} />
+              <button disabled={hz.hazards.length === 0} style={btnStyle(COLORS.orange)} onClick={addHazardRoundToGame}>Add matching hazard question ({hz.hazards.length} hazards)</button>
+            </>}
           </Panel>
 
-          <ManageQuestionsPanel questions={questionsRef} onRemove={removeQuestionAt} />
+          <ManageQuestionsPanel questions={questionsRef} onRemove={removeQuestionAt} onSave={async (index, question) => {
+            const next = [...questionsRef];
+            next[index] = normalizeQuestionSet([{ ...question, ...(question.imageData ? { imageType: "raster" } : {}) }])[0];
+            await safeSet(Q_KEY, JSON.stringify(next), true);
+            await refresh();
+          }} onReorder={async (fromIndex, toIndex) => {
+            const next = [...questionsRef];
+            const [moved] = next.splice(fromIndex, 1);
+            next.splice(toIndex, 0, moved);
+            await safeSet(Q_KEY, JSON.stringify(next), true);
+            await refresh();
+          }} />
 
           <Panel title="Participants" icon={<Trophy size={18} color={COLORS.yellow} />}>
             {sorted.length === 0 && <p style={{ color: COLORS.muted, fontSize: 14 }}>No participants have joined yet.</p>}
@@ -1109,8 +1091,10 @@ function AdminView({ onExit }) {
 // Lets the admin delete any question — MCQ, True/False, custom, or a
 // hazard round (default or admin-uploaded). Delete needs a second tap
 // on the same row to confirm.
-function ManageQuestionsPanel({ questions, onRemove }) {
+function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder }) {
   const [confirmIdx, setConfirmIdx] = useState(null);
+  const [editingIdx, setEditingIdx] = useState(null);
+  const [draggedIndex, setDraggedIndex] = useState(null);
   const badge = {
     quiz: [COLORS.green, "MCQ"],
     truefalse: [COLORS.yellow, "T/F"],
@@ -1120,19 +1104,35 @@ function ManageQuestionsPanel({ questions, onRemove }) {
 
   return (
     <Panel title={`Manage Questions (${questions.length})`} icon={<ListChecks size={18} color={COLORS.orange} />}>
-      <p style={{ color: COLORS.muted, fontSize: 12, marginBottom: 10 }}>Remove any question from the game — quiz, true/false, or Spot the Hazard. Tap the trash icon twice to confirm.</p>
+      <p style={{ color: COLORS.muted, fontSize: 12, marginBottom: 10 }}>Drag a question row to change its position. Edit any question, or tap the trash icon twice to remove it.</p>
       {questions.length === 0 && <p style={{ color: COLORS.muted, fontSize: 13 }}>No questions loaded yet.</p>}
       <div style={{ display: "grid", gap: 6, maxHeight: 360, overflowY: "auto" }}>
         {questions.map((q, i) => {
           const [c, label] = badge[q.round] || [COLORS.muted, (q.round || "?").toUpperCase()];
           const isConfirming = confirmIdx === i;
+          if (editingIdx === i) {
+            return <QuestionEditor key={i} question={q} onCancel={() => setEditingIdx(null)} onSave={async (updated) => { await onSave(i, updated); setEditingIdx(null); }} />;
+          }
           return (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.surfaceRaised, borderRadius: 6, padding: "7px 10px", fontSize: 13 }}>
+            <div key={i} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={async (event) => {
+              event.preventDefault();
+              const sourceIndex = Number(event.dataTransfer.getData("text/plain"));
+              const fromIndex = Number.isInteger(sourceIndex) ? sourceIndex : draggedIndex;
+              if (fromIndex === null || fromIndex === undefined || fromIndex === i || !onReorder) return;
+              await onReorder(fromIndex, i);
+              setDraggedIndex(null);
+            }} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.surfaceRaised, borderRadius: 6, padding: "7px 10px", fontSize: 13 }}>
+              <span draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(i)); setDraggedIndex(i); }} onDragEnd={() => setDraggedIndex(null)} title="Drag to reorder" style={{ fontSize: 16, color: COLORS.muted, width: 22, flexShrink: 0, cursor: "grab", touchAction: "none", userSelect: "none" }}>≡</span>
               <span style={{ fontSize: 10, color: COLORS.muted, width: 22, flexShrink: 0 }}>{i + 1}</span>
               <span style={{ fontSize: 9, fontWeight: 800, color: c, border: `1px solid ${c}`, borderRadius: 4, padding: "2px 5px", flexShrink: 0 }}>{label}</span>
               <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 <b>{q.category}</b> — {q.question}
               </span>
+              <button title="Edit question" onClick={() => { setConfirmIdx(null); setEditingIdx(i); }} style={{ background: "none", border: `1px solid ${COLORS.yellow}`, borderRadius: 6, color: COLORS.yellow, cursor: "pointer", padding: 6, display: "flex" }}>
+                <Pencil size={12} />
+              </button>
+              <button disabled={i === 0} title="Move question up" onClick={() => onReorder?.(i, i - 1)} style={{ background: "none", border: `1px solid ${i === 0 ? COLORS.line : COLORS.green}`, borderRadius: 6, color: i === 0 ? COLORS.line : COLORS.green, cursor: i === 0 ? "default" : "pointer", padding: "4px 7px", fontSize: 14, lineHeight: 1 }}>↑</button>
+              <button disabled={i === questions.length - 1} title="Move question down" onClick={() => onReorder?.(i, i + 1)} style={{ background: "none", border: `1px solid ${i === questions.length - 1 ? COLORS.line : COLORS.green}`, borderRadius: 6, color: i === questions.length - 1 ? COLORS.line : COLORS.green, cursor: i === questions.length - 1 ? "default" : "pointer", padding: "4px 7px", fontSize: 14, lineHeight: 1 }}>↓</button>
               <button
                 title={isConfirming ? "Tap again to confirm" : "Delete question"}
                 onClick={() => {
@@ -1154,6 +1154,75 @@ function ManageQuestionsPanel({ questions, onRemove }) {
       </div>
     </Panel>
   );
+}
+
+function QuestionEditor({ question, onCancel, onSave }) {
+  const [draft, setDraft] = useState(() => ({
+    ...question,
+    options: question.options ? [...question.options] : undefined,
+    hazards: question.hazards ? question.hazards.map((hazard) => ({ ...hazard })) : undefined,
+  }));
+  const isHazard = draft.round === "hazard";
+  const update = (patch) => setDraft((current) => ({ ...current, ...patch }));
+
+  function updateOption(index, value) {
+    const options = [...draft.options];
+    options[index] = value;
+    update({ options });
+  }
+
+  function updateHazard(index, patch) {
+    const hazards = draft.hazards.map((hazard, hazardIndex) => hazardIndex === index ? { ...hazard, ...patch } : hazard);
+    update({ hazards });
+  }
+
+  return (
+    <div style={{ background: COLORS.surfaceRaised, border: `1px solid ${COLORS.yellow}`, borderRadius: 8, padding: 12 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input style={{ ...inputStyle, flex: 1, minWidth: 180, marginBottom: 8 }} value={draft.category || ""} placeholder="Category" onChange={(e) => update({ category: e.target.value })} />
+        <input style={{ ...inputStyle, width: 110, marginBottom: 8 }} type="number" value={draft.points ?? 100} placeholder="Points" onChange={(e) => update({ points: Number(e.target.value) || 0 })} />
+      </div>
+      <input style={inputStyle} value={draft.question || ""} placeholder="Question" onChange={(e) => update({ question: e.target.value })} />
+      <input style={{ ...inputStyle, background: COLORS.surface, color: COLORS.muted }} value={GAME_QUESTION_SECONDS} readOnly aria-label="Timer in seconds" />
+      <label style={{ ...btnStyle(COLORS.surface, COLORS.ink), display: "inline-flex", alignItems: "center", gap: 6, width: "auto", cursor: "pointer" }}><ImagePlus size={15} /> {draft.imageData ? "Replace picture" : "Add picture"}<input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => update({ imageType: "raster", imageData: reader.result, imageSvg: "" });
+        reader.readAsDataURL(file);
+      }} /></label>
+      {draft.imageData && <img src={draft.imageData} alt="Question preview" style={{ display: "block", width: "100%", maxWidth: 520, maxHeight: 180, objectFit: "contain", borderRadius: 8, margin: "8px 0 10px", background: COLORS.surface }} />}
+      {isHazard ? (
+        <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+          {draft.hazards.map((hazard, index) => (
+            <div key={hazard.id || index} style={{ display: "grid", gap: 6, background: COLORS.surface, borderRadius: 6, padding: 8 }}>
+              <b style={{ color: COLORS.yellow }}>Hazard {index + 1}</b>
+              <input style={{ ...inputStyle, marginBottom: 0 }} value={hazard.name || ""} placeholder="Hazard name" onChange={(e) => updateHazard(index, { name: e.target.value })} />
+              <input style={{ ...inputStyle, marginBottom: 0 }} value={hazard.description || ""} placeholder="Description" onChange={(e) => updateHazard(index, { description: e.target.value })} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+          {(draft.options || []).map((option, index) => (
+            <div key={index} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="radio" name={`correct-${question.id || question.question}`} checked={draft.correct === index} onChange={() => update({ correct: index })} />
+              <input style={{ ...inputStyle, marginBottom: 0 }} value={option} placeholder={`Option ${String.fromCharCode(65 + index)}`} onChange={(e) => updateOption(index, e.target.value)} />
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button style={{ ...btnStyle(COLORS.green), width: "auto", padding: "9px 14px", margin: 0 }} onClick={() => onSave(draft)}>Save</button>
+        <button style={{ ...btnStyle(COLORS.surfaceRaised, COLORS.ink), width: "auto", padding: "9px 14px", margin: 0 }} onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function QuestionImage({ question }) {
+  if (!question?.imageData) return null;
+  return <img src={question.imageData} alt="Question" style={{ display: "block", width: "100%", maxWidth: 560, maxHeight: 280, objectFit: "contain", borderRadius: 8, margin: "0 auto 16px", background: COLORS.surfaceRaised }} />;
 }
 
 // Shows, for the current question, which players answered correctly vs
@@ -1216,6 +1285,7 @@ function AddQuestionForm({ onAdd, busy }) {
   const [points, setPoints] = useState(100);
   const [explanation, setExplanation] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
+  const [imageData, setImageData] = useState("");
 
   const isTF = round === "truefalse";
   const effectiveOptions = isTF ? ["TRUE", "FALSE"] : options;
@@ -1234,9 +1304,11 @@ function AddQuestionForm({ onAdd, busy }) {
       points: Number(points) || 100,
       explanation: explanation.trim(),
       videoUrl: videoUrl.trim(),
+      imageType: imageData ? "raster" : "",
+      imageData,
     });
     setCategory(""); setQuestion(""); setOptions(["", "", "", ""]); setCorrect(0);
-    setTimer(15); setPoints(100); setExplanation(""); setVideoUrl("");
+    setTimer(15); setPoints(100); setExplanation(""); setVideoUrl(""); setImageData("");
   }
 
   return (
@@ -1276,6 +1348,14 @@ function AddQuestionForm({ onAdd, busy }) {
       </div>
       <input style={inputStyle} placeholder="Explanation (shown on reveal, optional)" value={explanation} onChange={(e) => setExplanation(e.target.value)} />
       <input style={inputStyle} type="url" placeholder="Video link (YouTube or direct MP4, optional)" value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} />
+      <label style={{ ...btnStyle(COLORS.surfaceRaised, COLORS.ink), display: "inline-flex", alignItems: "center", gap: 6, width: "auto", cursor: "pointer" }}><ImagePlus size={15} /> {imageData ? "Picture selected" : "Add picture"}<input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => setImageData(reader.result);
+        reader.readAsDataURL(file);
+      }} /></label>
+      {imageData && <img src={imageData} alt="Question preview" style={{ display: "block", width: "100%", maxWidth: 520, maxHeight: 220, objectFit: "contain", borderRadius: 8, marginBottom: 10, background: COLORS.surfaceRaised }} />}
 
       <button disabled={busy || !canSubmit} style={btnStyle(COLORS.green)} onClick={submit}>
         {busy ? "Adding…" : "Add Question"}
@@ -1441,7 +1521,7 @@ function PlayerView({ onExit }) {
       (count, hazard, index) => count + (matches[index] === hazard.id ? 1 : 0),
       0
     );
-    const score = correctCount * 60 + (correctCount === question.hazards.length ? question.bonusAll || 0 : 0);
+    const score = correctCount * 62 + (correctCount === question.hazards.length ? question.bonusAll || 0 : 0);
     const answer = { type: "hazard-match", matches, correctCount, score, submittedAt: currentServerTime };
     const updated = {
       ...me,
@@ -1524,7 +1604,7 @@ function PlayerView({ onExit }) {
   const myAnswer = curQ && me.answers ? me.answers[game.qIndex] : undefined;
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <div className="csl-player-stage" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${COLORS.line}` }}>
         <div style={{ fontWeight: 800, fontSize: 14 }}>{me.name}</div>
         <ConnBadge connected={connected} />
@@ -1616,6 +1696,7 @@ function QuestionCard({ question, startedAt, now, onAnswer }) {
         <TimerBadge remaining={remaining} total={GAME_QUESTION_SECONDS} />
       </div>
       <p style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.35, marginBottom: 18 }}>{question.question}</p>
+      <QuestionImage question={question} />
       {question.videoUrl && <VideoEmbed url={question.videoUrl} />}
       <div style={{ display: "grid", gridTemplateColumns: isTF ? "1fr 1fr" : "1fr 1fr", gap: 10 }}>
         {question.options.map((opt, i) => (
@@ -1677,6 +1758,7 @@ function MillionaireQuestion({ question, startedAt, now, me, players, qIndex, on
       <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 12 }}>Worth {question.points} points</div>
       {question.videoUrl && <VideoEmbed url={question.videoUrl} />}
       <p style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.35, marginBottom: 16 }}>{question.question}</p>
+      <QuestionImage question={question} />
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         <LifelineButton icon={<Percent size={14} />} label="50:50" used={me.lifelines?.fifty} onClick={() => onLifeline("fifty")} />
@@ -1750,58 +1832,84 @@ const LifelineButton = React.memo(function LifelineButton({ icon, label, used, o
 function HazardQuestion({ question, startedAt, now, myAnswer, onSubmit }) {
   const duration = getQuestionDuration(question);
   const remaining = Math.max(0, duration - Math.floor((now - startedAt) / 1000));
-  const [selectedNumber, setSelectedNumber] = useState(null);
   const [matches, setMatches] = useState({});
+  const [draggedHazardId, setDraggedHazardId] = useState(null);
+  const [selectedNumber, setSelectedNumber] = useState(0);
+  const [confirming, setConfirming] = useState(false);
+  const [shuffledHazards] = useState(() => shuffleArray(question.answerOptions || question.hazards.map((hazard) => ({ id: hazard.id, name: hazard.name }))));
   const submitted = myAnswer !== undefined;
   const markers = question.hazards.map((hazard, index) => ({
     key: hazard.id, xPct: hazard.xPct, yPct: hazard.yPct, color: COLORS.yellow, size: 28, label: String(index + 1),
   }));
 
+  function placeHazardName(slotIndex, hazardId) {
+    if (submitted || remaining === 0) return;
+    setMatches((current) => {
+      const next = { ...current };
+      Object.keys(next).forEach((index) => { if (next[index] === hazardId) delete next[index]; });
+      next[slotIndex] = hazardId;
+      return next;
+    });
+    const nextEmpty = question.hazards.findIndex((_, index) => index !== slotIndex && !matches[index]);
+    setSelectedNumber(nextEmpty === -1 ? null : nextEmpty);
+  }
+
   function chooseHazardName(hazardId) {
-    if (selectedNumber === null || submitted || remaining === 0) return;
-    setMatches((current) => ({ ...current, [selectedNumber]: hazardId }));
-    setSelectedNumber(null);
+    if (selectedNumber === null) return;
+    placeHazardName(selectedNumber, hazardId);
   }
 
   function submitMatches() {
     if (submitted || remaining === 0 || Object.keys(matches).length !== question.hazards.length) return;
+    setConfirming(true);
+  }
+
+  function confirmMatches() {
+    if (!confirming) return;
+    setConfirming(false);
     onSubmit(matches);
   }
 
   return (
-    <div style={{ width: "100%", maxWidth: 460 }}>
+    <div className="csl-hazard-question" style={{ width: "100%", maxWidth: 560, paddingBottom: 20 }}>
+      <style>{`@media (max-width: 520px) { .csl-hazard-question { max-width: 100% !important; } .csl-hazard-question .csl-hazard-slot, .csl-hazard-question .csl-hazard-answer { padding: 8px 10px !important; min-height: 36px !important; font-size: 13px !important; } .csl-hazard-question .csl-hazard-image { aspect-ratio: 4 / 3 !important; } .csl-hazard-question .csl-hazard-heading { font-size: 12px !important; } }`}</style>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, color: COLORS.orange }}><Target size={14} /> FIND THE HAZARDS!</span>
+        <span className="csl-hazard-heading" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, color: COLORS.orange }}><Target size={14} /> FIND THE HAZARDS!</span>
         <TimerBadge remaining={remaining} total={duration} />
       </div>
-      <p style={{ fontSize: 13, color: COLORS.muted, marginBottom: 10 }}>Match each numbered hazard in the picture to its correct name.</p>
-      <HazardImage question={question} markers={markers} />
+      <p style={{ fontSize: 13, color: COLORS.muted, marginBottom: 10 }}>Drag each hazard name into the matching numbered box, then confirm once. After confirming, your answers cannot be changed.</p>
+      <div className="csl-hazard-image"><HazardImage question={question} markers={markers} aspectRatio="4 / 3" maxWidth={560} /></div>
       <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
         {question.hazards.map((hazard, index) => {
           const matchedName = matches[index];
           return (
-            <button key={hazard.id} disabled={submitted || remaining === 0} onClick={() => setSelectedNumber(index)} style={{
+            <div className="csl-hazard-slot" key={hazard.id} onClick={() => { if (!submitted && remaining > 0) setSelectedNumber(index); }} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedHazardId) placeHazardName(index, draggedHazardId); setDraggedHazardId(null); }} style={{
               display: "flex", alignItems: "center", gap: 10, textAlign: "left", padding: "10px 12px",
-              borderRadius: 8, border: `1px solid ${selectedNumber === index ? COLORS.yellow : COLORS.line}`,
-              background: selectedNumber === index ? COLORS.yellow + "22" : COLORS.surfaceRaised,
-              color: COLORS.ink, cursor: submitted || remaining === 0 ? "default" : "pointer",
+              borderRadius: 8, border: `1px dashed ${selectedNumber === index ? COLORS.yellow : COLORS.line}`,
+              background: selectedNumber === index ? COLORS.yellow + "22" : COLORS.surfaceRaised, color: COLORS.ink, minHeight: 42,
+              cursor: submitted || remaining === 0 ? "default" : "pointer",
             }}>
               <b style={{ color: COLORS.yellow, minWidth: 22 }}>{index + 1}.</b>
-              <span>{matchedName ? question.hazards.find((item) => item.id === matchedName)?.name : "Select a hazard name below"}</span>
-            </button>
+              <span>{matchedName ? shuffledHazards.find((item) => item.id === matchedName)?.name : "Drop answer here"}</span>
+            </div>
           );
         })}
       </div>
       <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-        {question.hazards.map((hazard) => (
-          <button key={hazard.id} disabled={submitted || remaining === 0 || Object.values(matches).includes(hazard.id)} onClick={() => chooseHazardName(hazard.id)} style={{
+        {shuffledHazards.map((hazard) => (
+          <div className="csl-hazard-answer" key={hazard.id} draggable={!submitted && remaining > 0} onDragStart={() => setDraggedHazardId(hazard.id)} style={{
             padding: "11px 12px", borderRadius: 8, border: `1px solid ${COLORS.green}88`, background: COLORS.green + "18",
-            color: COLORS.ink, textAlign: "left", cursor: submitted || remaining === 0 ? "default" : "pointer", opacity: Object.values(matches).includes(hazard.id) ? 0.5 : 1,
-          }}>{hazard.name}</button>
+            color: COLORS.ink, textAlign: "left", cursor: submitted || remaining === 0 ? "default" : "grab", opacity: Object.values(matches).includes(hazard.id) ? 0.5 : 1,
+          }} onClick={() => chooseHazardName(hazard.id)}>
+            {hazard.name}
+          </div>
         ))}
       </div>
-      <button disabled={submitted || remaining === 0 || Object.keys(matches).length !== question.hazards.length} style={btnStyle(COLORS.orange)} onClick={submitMatches}>
-        {submitted ? "MATCHES SUBMITTED" : "SUBMIT MATCHES"}
+      {confirming && <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: COLORS.yellow + "22", color: COLORS.ink, fontSize: 13 }}>
+        Confirm your matches? You cannot edit them after confirmation.
+      </div>}
+      <button disabled={submitted || remaining === 0 || Object.keys(matches).length !== question.hazards.length} style={btnStyle(confirming ? COLORS.green : COLORS.orange)} onClick={confirming ? confirmMatches : submitMatches}>
+        {submitted ? "MATCHES LOCKED" : confirming ? "CONFIRM MATCHES" : "CHECK MATCHES"}
       </button>
     </div>
   );
@@ -2079,7 +2187,7 @@ function QuestionDisplay({ q, qIndex, total, startedAt, now, players }) {
   const pct = total ? Math.round(((qIndex + 1) / total) * 100) : 0;
 
   if (q.round === "hazard") {
-    const foundAll = players.filter((p) => p.answers && p.answers[qIndex] && p.answers[qIndex].found?.length >= q.hazards.length).length;
+    const foundAll = players.filter((p) => p.answers && p.answers[qIndex] && p.answers[qIndex].correctCount >= q.hazards.length).length;
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: COLORS.muted, marginBottom: 6 }}>
@@ -2093,7 +2201,7 @@ function QuestionDisplay({ q, qIndex, total, startedAt, now, players }) {
           <div style={{ fontSize: remaining <= 3 ? 96 : 60, fontWeight: 900, color: remaining <= 3 ? COLORS.red : COLORS.yellow }}>{remaining}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 30, fontWeight: 900 }}><Target color={COLORS.orange} /> FIND THE HAZARDS!</div>
           <HazardImage question={q} maxWidth={640} />
-          <p style={{ color: COLORS.muted, fontSize: 15 }}>Players are tapping their phones to spot {q.hazards.length} hazards in this scene.</p>
+          <p style={{ color: COLORS.muted, fontSize: 15 }}>Players are matching the numbered hazards to their names.</p>
         </div>
       </div>
     );
@@ -2112,6 +2220,7 @@ function QuestionDisplay({ q, qIndex, total, startedAt, now, players }) {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 26 }}>
         <div style={{ fontSize: remaining <= 3 ? 96 : 72, fontWeight: 900, color: remaining <= 3 ? COLORS.red : COLORS.yellow, transition: "font-size .2s" }}>{remaining}</div>
         <p style={{ fontSize: 32, fontWeight: 800, textAlign: "center", maxWidth: 900, lineHeight: 1.3 }}>{q.question}</p>
+        <QuestionImage question={q} />
         {q.videoUrl && <div style={{ width: "100%", maxWidth: 560 }}><VideoEmbed url={q.videoUrl} /></div>}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, width: "100%", maxWidth: 800 }}>
           {q.options.map((opt, i) => (
@@ -2138,6 +2247,7 @@ function MillionaireDisplay({ q, qIndex, total, startedAt, now, players, ladder 
           <div style={{ fontSize: remaining <= 3 ? 96 : 72, fontWeight: 900, color: remaining <= 3 ? COLORS.red : COLORS.purple }}>{remaining}</div>
           <div style={{ fontSize: 14, fontWeight: 800, color: COLORS.muted }}>{q.tier} · {q.points} POINTS</div>
           <p style={{ fontSize: 30, fontWeight: 800, textAlign: "center", maxWidth: 800, lineHeight: 1.3 }}>{q.question}</p>
+          <QuestionImage question={q} />
           {q.videoUrl && <div style={{ width: "100%", maxWidth: 560 }}><VideoEmbed url={q.videoUrl} /></div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, width: "100%", maxWidth: 760 }}>
             {q.options.map((opt, i) => (
@@ -2171,9 +2281,7 @@ function MillionaireDisplay({ q, qIndex, total, startedAt, now, players, ladder 
 function RevealDisplay({ q, qIndex, total, players }) {
   if (q.round === "hazard") {
     const markers = q.hazards.map((h) => {
-      const foundBy = players.filter((p) => p.answers && p.answers[qIndex] && p.answers[qIndex].found?.includes(h.id)).length;
-      const pctFound = players.length ? Math.round((foundBy / players.length) * 100) : 0;
-      return { ...h, key: h.id, xPct: h.xPct, yPct: h.yPct, color: COLORS.green, size: 26, label: String(pctFound) + "%" };
+      return { ...h, key: h.id, xPct: h.xPct, yPct: h.yPct, color: COLORS.green, size: 26, label: String(q.hazards.indexOf(h) + 1) };
     });
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
