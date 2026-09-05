@@ -346,28 +346,9 @@ const SEED_HAZARD_QUESTION_10 = {
   ],
 };
 
-function addHazardChoices(question, distractors) {
-  question.answerOptions = [
-    ...question.hazards.map((hazard) => ({ id: hazard.id, name: hazard.name })),
-    ...distractors.map((name, index) => ({ id: `${question.category}-distractor-${index}`, name })),
-  ];
-  return question;
-}
-
-addHazardChoices(SEED_HAZARD_QUESTION, ["Correct PPE in use", "Clear walkway"]);
-addHazardChoices(SEED_HAZARD_QUESTION_2, ["Safe trench shoring", "Properly stored tools"]);
-addHazardChoices(SEED_HAZARD_QUESTION_3, ["Stable storage rack", "Approved access route"]);
-addHazardChoices(SEED_HAZARD_QUESTION_4, ["Secured ladder", "Guarded roof edge"]);
-addHazardChoices(SEED_HAZARD_QUESTION_5, ["Clean dry floor", "Clear loading area"]);
-addHazardChoices(SEED_HAZARD_QUESTION_6, ["Capped reinforcement bars", "Protected power cable"]);
-
 SEED_QUESTIONS.push(...EXTRA_QUESTIONS);
 SEED_QUESTIONS.push(
-  SEED_HAZARD_QUESTION_2,
-  SEED_HAZARD_QUESTION_3,
-  SEED_HAZARD_QUESTION_4,
-  SEED_HAZARD_QUESTION_5,
-  SEED_HAZARD_QUESTION_6
+  // Keep one picture-matching hazard round in each fresh game.
 );
 
 // ------------------------- Safety Millionaire finale -------------------------
@@ -465,7 +446,7 @@ function buildRandomizedGameQuestions() {
   const mcqPool = SEED_QUESTIONS.filter((q) => q.round !== "hazard" && q.round !== "millionaire");
   const hazardPool = SEED_QUESTIONS.filter((q) => q.round === "hazard");
   const millionairePool = SEED_QUESTIONS.filter((q) => q.round === "millionaire");
-  const hazardCount = 6;
+  const hazardCount = 1;
   const millionaireCount = 5;
 
   const selectedHazard = shuffleArray(hazardPool).slice(0, Math.min(hazardCount, hazardPool.length));
@@ -1043,7 +1024,7 @@ function AdminView({ onExit }) {
 
           <ManageQuestionsPanel questions={questionsRef} onRemove={removeQuestionAt} onSave={async (index, question) => {
             const next = [...questionsRef];
-            next[index] = normalizeQuestionSet([{ ...question, ...(question.imageData ? { imageType: "raster" } : {}) }])[0];
+            next[index] = normalizeQuestionSet([question])[0];
             await safeSet(Q_KEY, JSON.stringify(next), true);
             await refresh();
           }} onReorder={async (fromIndex, toIndex) => {
@@ -1188,7 +1169,7 @@ function QuestionEditor({ question, onCancel, onSave }) {
         const file = e.target.files?.[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = () => update({ imageType: "raster", imageData: reader.result, imageSvg: "" });
+        reader.onload = () => update({ imageType: "raster", imageData: reader.result });
         reader.readAsDataURL(file);
       }} /></label>
       {draft.imageData && <img src={draft.imageData} alt="Question preview" style={{ display: "block", width: "100%", maxWidth: 520, maxHeight: 180, objectFit: "contain", borderRadius: 8, margin: "8px 0 10px", background: COLORS.surface }} />}
@@ -1836,7 +1817,7 @@ function HazardQuestion({ question, startedAt, now, myAnswer, onSubmit }) {
   const [draggedHazardId, setDraggedHazardId] = useState(null);
   const [selectedNumber, setSelectedNumber] = useState(0);
   const [confirming, setConfirming] = useState(false);
-  const [shuffledHazards] = useState(() => shuffleArray(question.answerOptions || question.hazards.map((hazard) => ({ id: hazard.id, name: hazard.name }))));
+  const [shuffledHazards] = useState(() => shuffleArray(question.hazards));
   const submitted = myAnswer !== undefined;
   const markers = question.hazards.map((hazard, index) => ({
     key: hazard.id, xPct: hazard.xPct, yPct: hazard.yPct, color: COLORS.yellow, size: 28, label: String(index + 1),
@@ -1890,7 +1871,7 @@ function HazardQuestion({ question, startedAt, now, myAnswer, onSubmit }) {
               cursor: submitted || remaining === 0 ? "default" : "pointer",
             }}>
               <b style={{ color: COLORS.yellow, minWidth: 22 }}>{index + 1}.</b>
-              <span>{matchedName ? shuffledHazards.find((item) => item.id === matchedName)?.name : "Drop answer here"}</span>
+              <span>{matchedName ? question.hazards.find((item) => item.id === matchedName)?.name : "Drop answer here"}</span>
             </div>
           );
         })}
