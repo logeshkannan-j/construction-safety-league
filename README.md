@@ -28,11 +28,17 @@ which any static site can talk to directly from the browser.
 In the Firebase console, go to **Realtime Database → Rules**, paste in the
 contents of `rules.json` from this repo, and click **Publish**.
 
-> ⚠️ Those rules make the database fully public (anyone with your Firebase
-> URL can read/write it) — fine for a single internal event where the only
-> "secret" is your game's join code, but don't reuse this project for
-> anything sensitive. If you want it locked down after the event, just set
-> `.write` back to `false` in the console.
+> ⚠️ **If you already had an older version of these rules published, you must
+> re-publish.** `rules.json` was rewritten when the 3D Gaming Arena was added.
+> The quiz paths (`game`, `questions`, `players`, `misc`) keep exactly the
+> access they had, but the Arena's own paths are now validated, and **Arena
+> scores will not save until the new rules are published.**
+
+> The database is still world-readable, and the quiz paths are still
+> world-writable — fine for an internal event where the only "secret" is the
+> join code, but don't reuse this project for anything sensitive. See
+> [ARENA.md](ARENA.md) section 4 for exactly where the security boundary sits
+> and a step-by-step way to tighten it with Firebase Anonymous Auth.
 
 ## 3. Push this project to GitHub
 
@@ -87,11 +93,70 @@ Open the deployed URL on:
 Everyone must open the *same deployed URL* — that's what makes them share
 one Firebase database and therefore one game.
 
+## One integrated participant session
+
+A participant enters the game code, submits their details **once**, and gets a single
+session:
+
+```
+3D Safety Game  →  10 safety quiz questions  →  5 Safety Millionaire questions  →  combined result
+```
+
+- All 15 questions come from a construction-safety question bank covering working
+  at height, scaffolding, electrical, PPE, excavation, lifting, crane and hoist,
+  fire, housekeeping, confined space, emergency response and material handling.
+- Each participant gets their **own** shuffled paper — one question per topic, the
+  finale in ascending tiers, and the answer options shuffled too.
+- Closing the page and coming back resumes the **same** questions at the **same**
+  place with the **same** score. No duplicate participants, no re-shuffle.
+- The 3D game, the quiz and the finale are scored separately and combined into one
+  total, which is what the TV race and the leaderboard show.
+
+In Admin → **How participants play**, choose:
+
+| Mode | What participants get |
+|---|---|
+| **Integrated session** (default for new games) | The flow above, at their own pace |
+| **Live event** | The original host-paced format: you advance the questions and the TV shows the current one to the room |
+
+The same panel picks which of the five 3D missions the session uses.
+
+## 3D Safety Gaming Arena
+
+Alongside the sessions, the site has a standalone **3D Safety Gaming Arena**: five
+playable 3D construction-safety missions that anyone can play on their own, at any
+time, without a live event running.
+
+- **Safety Mission Simulator** — patrol a construction site on foot, find ten
+  real hazards, classify them and choose the corrective action.
+- **Tower Crane Master** — operate a tower crane with real load-swing physics,
+  a capacity chart, exclusion zones and wind limits.
+- **Build the Safest Tower** — fit the right safety systems in the right places
+  in the right order, then get audited.
+- **Safety Escape Challenge** — escape a building through seven areas, one
+  safety decision each.
+- **Emergency Response Commander** — command a live incident through the eight
+  steps of a site emergency response.
+
+Open it from the main menu ("3D Gaming Arena") or link straight to it with
+`?role=arena`. It works on phones with a real virtual joystick and touch camera,
+on tablets, and on desktop with WASD and the mouse.
+
+Scores feed a persistent Arena leaderboard (daily, weekly, all-time, overall and
+per game) under the same player identity the quiz uses, and the admin panel gains
+a **3D Gaming Arena** section for switching games on and off and reviewing
+participation, scores and anything that looks tampered with.
+
+**Before scores will save you must re-publish `rules.json`** — see step 2 above.
+Full implementation notes, the data model, the security position and a device
+testing checklist are in **[ARENA.md](ARENA.md)**.
+
 ## Local development
 
 ```bash
 npm install
 npm run dev
+npm test     # 396 tests: the 3D games, the question bank, sessions, scoring and rules
 ```
 
 This runs the game locally (still talking to your real Firebase project,
@@ -120,8 +185,10 @@ seconds. The layout stacks cleanly on mobile screens.
 
 ## Notes and limits
 
-- Scoring is client-trusted, same as the original artifact — fine for a fun
-  team event, not for anything with real stakes riding on it.
+- Quiz scoring is still client-trusted, same as the original — fine for a fun team
+  event, not for anything with real stakes riding on it. The 3D Arena scores ARE
+  validated server-side by the database rules; see ARENA.md section 4 for exactly
+  where the boundary sits.
 - Firebase's free "Spark" plan comfortably covers a single live event; you'd
   only need to upgrade for very heavy, sustained traffic.
 - Hazard-round photos are stored as base64 strings directly in the database.

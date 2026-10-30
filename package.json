@@ -7,13 +7,18 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test": "node tests/arena-logic.test.mjs && node tests/arena-games.test.mjs && node tests/session.test.mjs",
+    "test:logic": "node tests/arena-logic.test.mjs",
+    "test:games": "node tests/arena-games.test.mjs",
+    "test:session": "node tests/session.test.mjs",
     "deploy": "gh-pages -d dist"
   },
   "dependencies": {
     "firebase": "^10.14.1",
     "lucide-react": "^0.383.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "three": "^0.169.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
