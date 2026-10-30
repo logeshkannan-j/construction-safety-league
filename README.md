@@ -28,11 +28,19 @@ which any static site can talk to directly from the browser.
 In the Firebase console, go to **Realtime Database → Rules**, paste in the
 contents of `rules.json` from this repo, and click **Publish**.
 
-> ⚠️ **If you already had an older version of these rules published, you must
-> re-publish.** `rules.json` was rewritten when the 3D Gaming Arena was added.
-> The quiz paths (`game`, `questions`, `players`, `misc`) keep exactly the
-> access they had, but the Arena's own paths are now validated, and **Arena
-> scores will not save until the new rules are published.**
+> ⚠️ **Publish these rules, and re-publish them if you had an older set.**
+>
+> **If the app shows "The database is refusing this app", this is the fix.** Firebase
+> databases started in **test mode** only grant access until a fixed date, then lock
+> everything: every read and write fails with *Permission denied*, so the admin panel
+> shows "No active game", the TV shows nothing and nobody can join. Your data is
+> untouched — it is just invisible until the rules are replaced. Paste `rules.json`
+> here, press **Publish**, and reload the page.
+>
+> `rules.json` was also rewritten when the 3D Gaming Arena was added. The quiz paths
+> (`game`, `questions`, `players`, `misc`) keep exactly the access they had, but the
+> Arena's own paths are now validated, and **Arena scores will not save until the new
+> rules are published.**
 
 > The database is still world-readable, and the quiz paths are still
 > world-writable — fine for an internal event where the only "secret" is the
