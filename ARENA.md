@@ -386,7 +386,7 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 391 assertions with no browser required, across three suites.
+`npm test` runs 413 assertions with no browser required, across four suites.
 
 ### `tests/arena-games.test.mjs` — the 3D games, actually played (212 assertions)
 
@@ -454,6 +454,21 @@ and api, exactly as a player or a phone would:
 - live event mode: a live paper is still 10 + 5, still shuffled in place, still never moves the
   correct answer away from its text, and still deals a different paper per game
 
+### `tests/app-render.test.mjs` — the app actually mounts (22 assertions)
+
+Mounts the **real** React app in jsdom with effects running, clicks through to the admin panel and
+waits for the live Firebase record to arrive. A blank screen is invisible to every other suite
+here — `npm run build` compiles a broken component perfectly happily, and the 3D suites never mount
+React at all.
+
+- the menu renders and offers Join as player, Run the event and the TV display, and **no longer
+  offers a separate 3D Gaming Arena tile**
+- clicking through to admin renders the panel, its game status, the session-mode chooser and the
+  Arena section — with **zero React errors**, specifically no hook-order violation
+- a static scan proving no component in `App.jsx` or `SoloSession.jsx` calls a hook after an early
+  return, with the detector itself tested against a known-bad, a known-good and a
+  `return`-inside-a-callback sample so it cannot silently stop working
+
 ### `tests/arena-logic.test.mjs` — engine and backend (73 assertions)
 
 - the first-person controller: gravity, wall collision, step-up onto a tread, refusing to climb a
@@ -469,7 +484,7 @@ and api, exactly as a player or a phone would:
 
 ### Bugs these tests caught
 
-Seven of these tests exist because they found real faults:
+Eight of these tests exist because they found real faults:
 
 1. **Tower Crane Master was unfinishable.** The hook's lower limit was computed from the slab just
    *below* the load's current height, so a load travelling at height could only ever descend to the
@@ -495,6 +510,12 @@ Seven of these tests exist because they found real faults:
    `createdAt` with it and `rules.json` validates `createdAt` against the server clock, so a player
    with a skewed phone clock would have had their score **rejected by the rules**. Now read once via
    `onValue` and cached, with a 5 s fallback to `0`.
+
+8. **The admin panel went completely blank.** `AdminView`'s `soloStats` `useMemo` sat *below* the
+   PIN-lock early return, so the unlocked render ran one more hook than the locked render had.
+   React rejects that outright and tears down the whole tree. It only fires on the **second**
+   render — the moment the PIN is accepted — which is why the build passed, all three other suites
+   passed, and it still reached the user. `tests/app-render.test.mjs` exists because of this one.
 
 Two smaller ones: the player could walk out of the site through the open gateway, and
 `stageStartedAt || now` broke on a timestamp of `0`.

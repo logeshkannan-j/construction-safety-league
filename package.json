@@ -7,11 +7,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tests/arena-logic.test.mjs && node tests/arena-games.test.mjs && node tests/session.test.mjs",
+    "test": "node tests/arena-logic.test.mjs && node tests/arena-games.test.mjs && node tests/session.test.mjs && node tests/app-render.test.mjs",
     "test:logic": "node tests/arena-logic.test.mjs",
     "test:games": "node tests/arena-games.test.mjs",
     "test:session": "node tests/session.test.mjs",
-    "deploy": "gh-pages -d dist"
+    "deploy": "gh-pages -d dist",
+    "test:render": "node tests/app-render.test.mjs"
   },
   "dependencies": {
     "firebase": "^10.14.1",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "gh-pages": "^6.1.1",
+    "jsdom": "^29.1.1",
     "vite": "^5.4.0"
   }
 }

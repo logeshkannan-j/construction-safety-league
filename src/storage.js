@@ -15,6 +15,46 @@ import { GAME_KEY, Q_KEY, PLAYER_PREFIX } from "./constants.js";
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
+/* ----------------------- database health ----------------------- *
+ *
+ * Every helper below catches its own errors and returns null, which is
+ * what keeps the UI from crashing when the network drops. The cost is
+ * that a database which is REFUSING us looks exactly like a database
+ * with no data in it — the admin panel just says "No active game".
+ *
+ * That is how an expired set of Firebase rules presents: everything is
+ * silently empty and nothing explains why. So the last failure is
+ * recorded here and surfaced in the UI.
+ * ---------------------------------------------------------------- */
+
+let lastError = null;
+
+function noteFailure(operation, key, error) {
+  const message = String(error?.message || error || "");
+  const denied = /permission[_ ]denied/i.test(message) || error?.code === "PERMISSION_DENIED";
+  lastError = {
+    operation,
+    key,
+    denied,
+    message,
+    at: Date.now(),
+  };
+  console.error(`${operation} failed`, key, error);
+}
+
+function noteSuccess() {
+  lastError = null;
+}
+
+/**
+ * The last shared-storage failure, or null if the most recent shared
+ * operation succeeded. `denied` is true when the database rules rejected
+ * us, which is a configuration problem rather than a connectivity one.
+ */
+export function getDbError() {
+  return lastError;
+}
+
 // The app only ever uses three shared keys/prefixes, so we map them to fixed,
 // human-readable Firebase paths instead of trying to support arbitrary keys.
 function keyToPath(key) {
@@ -31,9 +71,10 @@ export async function safeGet(key, shared) {
   }
   try {
     const snap = await get(ref(db, keyToPath(key)));
+    noteSuccess();
     return snap.exists() ? snap.val() : null;
   } catch (e) {
-    console.error("safeGet failed", key, e);
+    noteFailure("safeGet", key, e);
     return null;
   }
 }
@@ -44,9 +85,10 @@ export async function safeSet(key, value, shared) {
   }
   try {
     await set(ref(db, keyToPath(key)), value);
+    noteSuccess();
     return { key, value, shared };
   } catch (e) {
-    console.error("safeSet failed", key, e);
+    noteFailure("safeSet", key, e);
     return null;
   }
 }
@@ -57,9 +99,10 @@ export async function safeDelete(key, shared) {
   }
   try {
     await remove(ref(db, keyToPath(key)));
+    noteSuccess();
     return { key, deleted: true, shared };
   } catch (e) {
-    console.error("safeDelete failed", key, e);
+    noteFailure("safeDelete", key, e);
     return null;
   }
 }
@@ -81,10 +124,11 @@ export async function safeList(prefix, shared) {
   if (prefix === PLAYER_PREFIX) {
     try {
       const snap = await get(ref(db, "players"));
+      noteSuccess();
       if (!snap.exists()) return [];
       return Object.keys(snap.val()).map((id) => PLAYER_PREFIX + id);
     } catch (e) {
-      console.error("safeList failed", prefix, e);
+      noteFailure("safeList", prefix, e);
       return [];
     }
   }

@@ -30,7 +30,7 @@ const SoloSession = lazy(() => import("./SoloSession.jsx"));
  * ------------------------------------------------------------------ */
 
 import { GAME_KEY, Q_KEY, PLAYER_PREFIX, MY_ID_KEY, POLL_MS } from "./constants";
-import { safeGet, safeSet, safeDelete, safeList, getServerTimeOffset } from "./storage";
+import { safeGet, safeSet, safeDelete, safeList, getServerTimeOffset, getDbError } from "./storage";
 import {
   createSession, createLivePaper,
   ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, NOT_RELEASED,
@@ -607,6 +607,9 @@ function useGamePoll() {
   const [questions, setQuestions] = useState([]);
   const [players, setPlayers] = useState([]);
   const [connected, setConnected] = useState(true);
+  // Set when the database actively REFUSES us, which otherwise looks
+  // identical to an empty database and reads as "No active game".
+  const [dbError, setDbError] = useState(null);
   const mounted = useRef(true);
 
   const refresh = useCallback(async () => {
@@ -615,6 +618,7 @@ function useGamePoll() {
     const keys = await safeList(PLAYER_PREFIX, true);
     const vals = await Promise.all((keys || []).map((k) => safeGet(k, true)));
     if (!mounted.current) return;
+    setDbError(getDbError());
     setConnected(true);
     if (g) { try { setGame(JSON.parse(g)); } catch {} } else { setGame(null); }
     if (q) { try { setQuestions(JSON.parse(q)); } catch {} } else { setQuestions([]); }
@@ -628,7 +632,54 @@ function useGamePoll() {
     return () => { mounted.current = false; clearInterval(id); };
   }, [refresh]);
 
-  return { game, setGame, questions, setQuestions, players, connected, refresh };
+  return { game, setGame, questions, setQuestions, players, connected, dbError, refresh };
+}
+
+/**
+ * Shown whenever the Realtime Database is refusing us. Without this the
+ * app just looks empty, which is indistinguishable from "no game yet" —
+ * and that is exactly how an expired set of Firebase rules presents.
+ */
+function DbErrorBanner({ dbError }) {
+  if (!dbError) return null;
+  const denied = dbError.denied;
+  return (
+    <div style={{
+      background: COLORS.red + "1f", border: `1px solid ${COLORS.red}`,
+      borderRadius: 10, padding: "13px 15px", marginBottom: 14,
+      display: "flex", gap: 11, alignItems: "flex-start",
+    }}>
+      <AlertTriangle size={18} color={COLORS.red} style={{ flexShrink: 0, marginTop: 1 }} />
+      <div style={{ minWidth: 0, fontSize: 13, lineHeight: 1.55 }}>
+        <div style={{ fontWeight: 800, color: COLORS.red, marginBottom: 4 }}>
+          {denied ? "The database is refusing this app" : "Cannot reach the database"}
+        </div>
+        {denied ? (
+          <>
+            <p style={{ color: COLORS.ink, margin: "0 0 8px" }}>
+              Firebase returned <b>Permission denied</b>. Nothing can be read or saved, so the
+              panel below will look empty even if you have an active game. This is a rules
+              problem, not a problem with your data — <b>your data is still there</b>.
+            </p>
+            <p style={{ color: COLORS.muted, margin: "0 0 8px" }}>
+              The usual cause is that the database was started in <b>test mode</b>, which stops
+              granting access on a fixed date and then locks everything.
+            </p>
+            <p style={{ color: COLORS.ink, margin: 0 }}>
+              Fix it in the Firebase console → <b>Realtime Database → Rules</b>: paste the contents
+              of <code>rules.json</code> from this project and press <b>Publish</b>. Reload this
+              page afterwards.
+            </p>
+          </>
+        ) : (
+          <p style={{ color: COLORS.ink, margin: 0 }}>
+            {dbError.message || "The connection failed."} Check this device's internet connection —
+            the app will recover on its own once the database is reachable.
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ConnBadge({ connected }) {
@@ -696,7 +747,7 @@ function AdminView({ onExit }) {
   const [pinError, setPinError] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [checkingUnlock, setCheckingUnlock] = useState(true);
-  const { game, questions, players, connected, refresh } = useGamePoll();
+  const { game, questions, players, connected, dbError, refresh } = useGamePoll();
   const [busy, setBusy] = useState(false);
 
   // These hooks must live above any early return (including the PIN lock
@@ -763,6 +814,33 @@ function AdminView({ onExit }) {
     () => (game?.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : []),
     [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
   );
+
+  // Live picture of an integrated-session event: where each participant
+  // has got to, and the average combined score.
+  //
+  // MUST stay above the early returns below. Putting this useMemo after
+  // the PIN lock meant the unlocked render ran one more hook than the
+  // locked one, which React rejects outright — the whole admin panel
+  // went blank the moment the PIN was accepted.
+  const soloStats = useMemo(() => {
+    const stageOf = (p) => p?.session?.stage || null;
+    const scores = players.map((p) => p.score || 0);
+    // How many have finished everything the host has released so far —
+    // this is what tells the host it is safe to release the next round.
+    const waiting = players.filter((p) => {
+      const stage = stageOf(p);
+      return stage === "roundDone" || stage === "locked" || stage === "done";
+    }).length;
+    return {
+      finished: players.filter((p) => stageOf(p) === "done").length,
+      inGame: players.filter((p) => stageOf(p) === "game3d").length,
+      inQuiz: players.filter((p) => stageOf(p) === "quiz").length,
+      inFinale: players.filter((p) => stageOf(p) === "millionaire").length,
+      waiting,
+      allCaughtUp: players.length > 0 && waiting === players.length,
+      avgScore: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0,
+    };
+  }, [players]);
 
   if (checkingUnlock) {
     return <Centered><p style={{ color: COLORS.muted }}>Loading…</p></Centered>;
@@ -944,29 +1022,9 @@ function AdminView({ onExit }) {
   const curQ = questions[game?.qIndex ?? 0];
   const answeredCount = curQ ? players.filter((p) => p.answers && p.answers[game.qIndex] !== undefined).length : 0;
 
-  // Live picture of an integrated-session event: where each participant
-  // has got to, and the average combined score.
+  // Plain derived values, safe to compute after the early returns.
   const adminSoloMode = game?.sessionMode === "solo";
   const releasedRound = Number.isFinite(game?.releasedRound) ? game.releasedRound : NOT_RELEASED;
-  const soloStats = useMemo(() => {
-    const stageOf = (p) => p?.session?.stage || null;
-    const scores = players.map((p) => p.score || 0);
-    // How many have finished everything the host has released so far —
-    // this is what tells the host it is safe to release the next round.
-    const waiting = players.filter((p) => {
-      const stage = stageOf(p);
-      return stage === "roundDone" || stage === "locked" || stage === "done";
-    }).length;
-    return {
-      finished: players.filter((p) => stageOf(p) === "done").length,
-      inGame: players.filter((p) => stageOf(p) === "game3d").length,
-      inQuiz: players.filter((p) => stageOf(p) === "quiz").length,
-      inFinale: players.filter((p) => stageOf(p) === "millionaire").length,
-      waiting,
-      allCaughtUp: players.length > 0 && waiting === players.length,
-      avgScore: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0,
-    };
-  }, [players]);
 
   // Releasing a round is the ONLY way the room moves forward in an
   // integrated session. It never goes backwards: a participant already
@@ -980,6 +1038,8 @@ function AdminView({ onExit }) {
   return (
     <div style={{ padding: "20px 20px 60px", maxWidth: 880, margin: "0 auto" }}>
       <TopBar title="Admin Control Panel" onExit={onExit} connected={connected} onLock={lockAdmin} />
+
+      <DbErrorBanner dbError={dbError} />
 
       {!game && (
         <Panel title="No active game" icon={<Play size={18} color={COLORS.yellow} />}>
@@ -1560,7 +1620,7 @@ function AddQuestionForm({ onAdd, busy }) {
 /* ------------------------------ PLAYER VIEW ------------------------------ */
 
 function PlayerView({ onExit }) {
-  const { game, questions, players, connected } = useGamePoll();
+  const { game, questions, players, connected, dbError } = useGamePoll();
   const [me, setMe] = useState(null);
   const [form, setForm] = useState({ name: "", employeeId: "", company: "", team: "" });
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -1780,7 +1840,15 @@ function PlayerView({ onExit }) {
   }, []);
 
   if (!game) {
-    return <Centered><p style={{ color: COLORS.muted }}>Waiting for the admin to create a game…</p><button style={linkBtnStyle} onClick={onExit}>← Back</button></Centered>;
+    return (
+      <Centered>
+        <div style={{ width: "min(100%, 460px)" }}>
+          <DbErrorBanner dbError={dbError} />
+          {!dbError && <p style={{ color: COLORS.muted }}>Waiting for the admin to create a game…</p>}
+          <button style={linkBtnStyle} onClick={onExit}>← Back</button>
+        </div>
+      </Centered>
+    );
   }
 
   if (!me && !codeVerified) {
@@ -2243,7 +2311,7 @@ function WinnerBlock({ players, me, rank, teamScores = [] }) {
 /* -------------------------------- TV VIEW -------------------------------- */
 
 function TVView({ onExit }) {
-  const { game, questions, players, connected } = useGamePoll();
+  const { game, questions, players, connected, dbError } = useGamePoll();
   const [now, setNow] = useState(Date.now());
   const [serverOffset, setServerOffset] = useState(0);
   useEffect(() => {
@@ -2267,8 +2335,11 @@ function TVView({ onExit }) {
   if (!game) {
     return (
       <Centered>
-        <p style={{ color: COLORS.muted }}>No active game. Ask the admin to create one.</p>
-        <button style={linkBtnStyle} onClick={onExit}>← Back</button>
+        <div style={{ width: "min(100%, 520px)" }}>
+          <DbErrorBanner dbError={dbError} />
+          {!dbError && <p style={{ color: COLORS.muted }}>No active game. Ask the admin to create one.</p>}
+          <button style={linkBtnStyle} onClick={onExit}>← Back</button>
+        </div>
       </Centered>
     );
   }

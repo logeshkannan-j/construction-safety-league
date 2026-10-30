@@ -9,7 +9,7 @@ import { getAnalytics, isSupported as analyticsIsSupported } from "firebase/anal
 export const firebaseConfig = {
   apiKey: "AIzaSyA1q41hB7QL8gatydAgNyhhDdLilC9mzA0",
   authDomain: "safety-league.firebaseapp.com",
-  databaseURL: "https://safety-league-default-rtdb.firebaseio.com",
+  databaseURL: "https://safety-league-c3c84-default-rtdb.firebaseio.com",
   projectId: "safety-league",
   storageBucket: "safety-league.firebasestorage.app",
   messagingSenderId: "509689180005",
