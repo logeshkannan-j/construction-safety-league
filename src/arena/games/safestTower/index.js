@@ -450,14 +450,22 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   function showQuestion(hazard) {
     const def = hazard.def;
     api.dialog({
+      eyebrow: `GROUND LEVEL — HAZARD ${HAZARDS.indexOf(def) + 1} OF ${HAZARD_COUNT}`,
       title: def.title,
-      body: `${def.brief}\n\n${def.question}`,
-      tone: "warn",
+      subtitle: `${def.brief}\n\n${def.question}`,
+      tone: "danger",
       options: def.options.map((text, index) => ({
         id: String(index),
         label: text,
-        onPick: () => answer(hazard, index),
+        badge: String.fromCharCode(65 + index),
       })),
+      footer: hazard.attempts > 0
+        ? "Second attempt — worth half."
+        : "Right first time is worth double. Take a proper look before you answer.",
+      dismissable: true,
+      dismissLabel: "Look around first",
+      onDismiss: () => { api.dialog(null); state.openHazard = null; pushHud(); },
+      onPick: (id) => answer(hazard, Number(id)),
     });
   }
 

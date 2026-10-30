@@ -6,29 +6,52 @@ before scores will save, and an honest account of where the security boundary si
 
 ---
 
-## 0. The integrated participant session
+## 0. The participant session: five host-released rounds
 
-A participant enters the game code, submits their details once, and gets one session:
+A participant enters the game code, submits their details once, and plays five rounds:
 
 ```
-3D Safety Game  →  10 safety quiz questions  →  5 Safety Millionaire questions  →  combined result
+ROUND n:  3D mission n  →  1 quiz question  →  1 Safety Millionaire question
 ```
 
-**There is no second sign-in.** The 3D game, both quiz sections and the leaderboard all run against
-the same participant record and the same game code.
+Five rounds x three items = **15 items**, and the five rounds use the five different 3D missions in
+order. **There is no second sign-in** — the missions, both question types and the leaderboard all
+run against the same participant record and the same game code.
 
-### How participants play is now an admin choice
+### The host releases each round
+
+The game record carries `releasedRound` (−1 before the event starts). A participant can never run
+ahead of it:
+
+| `session.stage` | Meaning |
+|---|---|
+| `locked` | Waiting for the host to release this round |
+| `game3d` | Playing this round's 3D mission |
+| `quiz` | On this round's quiz question |
+| `millionaire` | On this round's finale question |
+| `roundDone` | Round finished; waiting for the host to release the next |
+| `done` | All five rounds complete |
+
+`releaseRound()` is the only transition into a round, and it is a no-op unless the host has
+actually released it. It also **cannot pull a participant out of a round they have already
+started**, so pressing *Release Round 3* does not cut off someone still in Round 2's mission — it
+only lets through everyone already sitting on `roundDone`.
+
+Inside a round, pacing is the participant's own, because a 3D mission takes a different amount of
+time for everyone.
+
+### How participants play is still an admin choice
 
 `defaultGame()` carries a `sessionMode`:
 
 | Mode | Behaviour |
 |---|---|
-| `"solo"` (**default for new games**) | The integrated session above. Each participant works at their own pace, with their own shuffled paper. |
-| `"live"` | The original host-paced event, unchanged: you advance the questions and the TV shows the current one to the room. |
+| `"solo"` (**default for new games**) | The five rounds above, released one at a time. |
+| `"live"` | The original host-paced event, unchanged: a flat 10 + 5 paper, you advance the questions and the TV shows the current one to the room. |
 
-Admin → **How participants play** switches between them and picks which of the five 3D missions the
-session uses. Games created before this change have no `sessionMode`, and are treated as `"live"`,
-so **no existing game changes behaviour**.
+Games created before this change have no `sessionMode`, and are treated as `"live"`, so **no
+existing game changes behaviour**. Live mode keeps its own 10 + 5 shape via `createLivePaper()`,
+which shares this module's draw and shuffle so the two modes cannot drift apart.
 
 ### Scores
 
@@ -43,35 +66,50 @@ player.score  = game3d + quiz + millionaire     // what the TV race, leaderboard
 Keeping `score` as the total is deliberate: the existing TV race, the leaderboard, the team scoring
 and the admin participants panel all already read `player.score`, so none of them needed changing.
 
+Each 3D mission is scored out of 12,000 in the Arena, which would swamp ten written questions. In a
+session each mission is **normalised to 1,000 points** (`game3dPoints()`), giving a rough balance
+of 5,000 from the missions, ~750 from the quiz and 3,000 from the finale.
+
 ### Shuffling, and why a refresh is safe
 
 Each participant's paper is drawn **once, when they join**, and stored on their own record as a
-compact descriptor — question **ids** plus an option **permutation**, about 600 bytes:
+compact descriptor — question **ids** plus an option **permutation**:
 
 ```js
-session.descriptor = { v: 1, quiz: [{ id, perm }, …×10], mq: [{ id, perm }, …×5] }
+session.descriptor = {
+  v: 2,
+  rounds: [{ gameId, quiz: { id, perm }, mq: { id, perm } }, …×5],
+}
 ```
 
-- 10 general questions, drawn **one per topic** across 10 of the 12 topics, so a participant never
+- 5 general questions, drawn **one per topic** across 5 of the 12 topics, so a participant never
   gets two questions on the same subject while other subjects go unasked.
 - 5 finale questions, one per tier, always ordered lowest stake first.
 - Option order is shuffled per question, and `correct` is remapped so it follows its answer text.
-- Because the descriptor is stored, **a refresh rebuilds the identical paper** and resumes at the
-  same question with the same score. It does not re-shuffle and does not create a second
-  participant.
-- Because it stores ids rather than text, it costs almost nothing per player.
+- Because the descriptor is stored, **a refresh rebuilds the identical paper** and resumes in the
+  same round at the same stage with the same score. It does not re-shuffle and does not create a
+  second participant.
+- Because it stores ids rather than text, it costs under 2 KB per player.
 
-A page refresh also now **resumes straight into the session** rather than asking for the game code
+`SESSION_VERSION` is **2**. A session written by the old (non-round) build no longer validates, so
+such a participant is dealt a fresh paper rather than being resumed into a shape this build cannot
+read.
+
+A page refresh also **resumes straight into the session** rather than asking for the game code
 again, since that device already proved the code for this game.
 
 ### Things that cannot score twice
 
-- **A double tap on an answer**: `answerQuestion` refuses an index that already has an answer.
-- **Replaying the 3D mission**: `completeGame3d` is idempotent, and nothing is banked until the
-  participant presses *Continue* — so only the attempt they carry forward counts, once.
+- **A double tap on an answer**: `answerQuestion` refuses a round that already has an answer for
+  that section.
+- **Replaying a 3D mission**: `completeGame3d` is idempotent **per round**, and nothing is banked
+  until the participant presses *Continue* — so only the attempt they carry forward counts, once.
+  A skipped mission banks a zero that cannot later be replaced with a score.
 - **A stale poll**: every write stamps an incrementing `revision`, and the 1.4s poll will not
   overwrite local state with an older revision. Without this, an answer could visibly roll back for
   a moment.
+- **A re-release**: `releaseRound` returns `changed: false` for a round already played, so an
+  admin pressing a release button twice moves nobody.
 
 ### Timers
 
@@ -80,7 +118,15 @@ again, since that device already proved the code for this game.
 event already used. Running out of time records a zero-score answer and shows the explanation,
 rather than leaving the participant stuck. **If a participant leaves a question open and comes back
 after the clock has expired, that one question is lost** — the clock is the clock, and the
-alternative would let a refresh buy more time.
+alternative would let a refresh buy more time. The waiting screens between rounds are untimed.
+
+### The site
+
+Every mission is set on **Casagrand Aira**, a 19-floor residential tower. `SITE_NAME` lives in
+`arenaConstants.js` (not `kit.js`, so the HUD can use it without pulling three.js into its chunk)
+and shows up in four places: the HUD line above the objective in every mission, the hoarding
+banners inside the compound, the tower crane's counterweight, and the finished 19-floor tower
+itself standing on the skyline of every outdoor scene.
 
 ---
 
@@ -340,9 +386,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 396 assertions with no browser required, across three suites.
+`npm test` runs 391 assertions with no browser required, across three suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (180 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (212 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of
@@ -357,40 +403,56 @@ and api, exactly as a player or a phone would:
   the camera, the hoarding *and* the gateway both stopping the player leaving the site, climbing the
   stairs to Level 1, then **finding, classifying and correcting all ten hazards** and completing the
   mission at 100%
-- **Tower Crane Master**: slew, trolley and hoist each moving the crane, emergency stop braking it,
-  the capacity chart falling with radius, **swinging a load over an exclusion zone being penalised**,
-  the pendulum settling when the controls are still, and a full lift rigged, travelled, landed and
-  released onto the target
-- **Build the Safest Tower**: a wrong component being refused and costing points, every position
-  fillable in a valid order, a correct build auditing at 100% — and a second run where every
-  *plausible* component is chosen, proving a tower that **looks** finished does not score 100% and
-  the audit lists what is actually wrong
-- **Safety Escape Challenge**: walking inside the building, interior walls holding, all seven areas
-  solved, each unlocking its door, and the final door completing the escape
-- **Emergency Response Commander**: the brief, all eight decision steps, the
+- **Tower Crane Master**: the plan being a **single** lift to a floor of the building, slew, trolley
+  and hoist each moving the crane, emergency stop braking it, the capacity chart falling with radius,
+  **swinging a load over an exclusion zone being penalised**, the pendulum settling when the controls
+  are still, and that one lift rigged, travelled, landed and released onto the target
+- **Spot the Hazards**: five ground-level hazards each with four options and one correct control; a
+  plausible-but-wrong answer leaving the hazard exactly where it was and costing points; the correct
+  control **rebuilding the hazard in its fixed form**; and a second run answering every hazard with a
+  plausible option, proving nothing gets controlled and the walk-round does not finish itself
+- **Safety Escape Challenge**: walking inside the building, interior walls holding, six areas solved
+  by decision, then the plant room **played out** — picking the water extinguisher off the rack,
+  carrying it to the fire, discharging it, the fire *not* going out and the mistake being counted;
+  then the CO2 one, a sustained knock-down rather than an instant fix, and the fire going out. The
+  final door is opened and deliberately does **not** end the run; standing short of the assembly area
+  does nothing; walking into it finishes the escape
+- **Emergency Response Commander**: the brief, the **observation beat** opening each step with the
+  scene rather than the question, the question opening only afterwards, all eight decision steps, the
   alarm/isolation/services flags, the workforce actually walking to the muster point, and a textbook
   response saving the casualty
 
-### `tests/session.test.mjs` — questions and sessions (143 assertions)
+### `tests/session.test.mjs` — questions, rounds and sessions (106 assertions)
 
 - the bank: 24 + 8 questions, unique ids, 4 options each, valid answer indexes, no duplicate
   options, an explanation on every question, and **all twelve required topics covered with at least
   two questions each**
-- the draw: exactly 10 + 5, no repeats, 10 **different** topics, the finale ascending by tier, and a
-  descriptor small enough to store per player
+- the round structure: five rounds, one quiz and one finale question each, 15 items; every round
+  naming a **real** Arena game; five *different* missions; every Arena game used by exactly one
+  round; and a display name and blurb for each
+- the draw: five rounds with no repeated question, 5 **different** topics, the finale ascending by
+  tier, and a descriptor small enough to store per player
 - variety: 40 draws produce many different papers, and the correct answer appears in **every**
   option slot across draws
 - remapping: 300 shuffles never move the correct answer away from its text; a malformed permutation
   falls back safely
-- refresh safety: a JSON round-trip rebuilds the identical paper, and a session from another version
-  is rejected rather than half-used
-- scoring: full value instantly, half value at the buzzer, zero for wrong, elapsed time clamped
-- the full flow: 3D game → 10 quiz → 5 finale → combined total, with section scores tracked
-  separately
+- refresh safety: a JSON round-trip rebuilds the identical paper; a session from an older version, a
+  session missing a round, and a session naming an unknown mission are all rejected rather than
+  half-used
+- scoring: full value instantly, half value at the buzzer, zero for wrong, elapsed time clamped, and
+  a 3D mission normalised and capped to its per-round allowance
+- **host-released rounds**: an unreleased round does not open; releasing round 1 opens it; a later
+  release **cannot pull a participant out of the round they are in**; finishing a round returns them
+  to waiting; and they stay there until the *next* round is released
+- the full flow: five rounds of mission → quiz → finale → combined total, with the three section
+  scores tracked separately
+- duplicate protection: replaying a mission does not bank twice, a double tap never scores a question
+  twice, and a skipped mission cannot later be scored
 - **the participant record end to end**: joining captures their details and ties them to the game
-  code, a mid-session refresh keeps the id, score, paper and position, replaying the 3D game does
-  not add points twice, a double tap never scores a question twice, and `player.score` ends as the
-  combined total the leaderboard reads
+  code, a mid-round refresh keeps the id, score, paper and round position, a refresh does not re-open
+  a finished round, and `player.score` ends as the combined total the leaderboard reads
+- live event mode: a live paper is still 10 + 5, still shuffled in place, still never moves the
+  correct answer away from its text, and still deals a different paper per game
 
 ### `tests/arena-logic.test.mjs` — engine and backend (73 assertions)
 
@@ -444,12 +506,18 @@ device performance have still not been observed**. The simulations are now drive
 headlessly, which is far stronger evidence than before — but the following need a real device, and
 I am not claiming otherwise:
 
-- [ ] Each game renders correctly and the frame rate is acceptable on your target phones
+- [ ] Each mission renders correctly and the frame rate is acceptable on your target phones
 - [ ] Joystick, touch look and action buttons on Android Chrome
 - [ ] Joystick, touch look and action buttons on iPhone Safari (check the safe-area insets)
 - [ ] Pointer lock and mouse look on desktop
-- [ ] A participant session end to end on a phone, with the score arriving on the TV leaderboard
-- [ ] The admin session-mode switch and the game on/off switches taking effect
+- [ ] **Casagrand Aira is legible** — the HUD line, the hoarding banners, the crane counterweight
+      and the 19-floor tower on the skyline, at phone size as well as desktop
+- [ ] **Sound** in Emergency Response: the opening siren, the radio cue, the decision pips, the
+      last-five-seconds countdown and the ambulance (phones need a tap to unlock audio at all)
+- [ ] All five rounds end to end on a phone, with the combined score arriving on the TV leaderboard
+- [ ] **The admin round controls with more than one participant in the room** — releasing a round
+      moves everybody who is waiting, and does not cut off anyone still inside the previous one
+- [ ] The admin session-mode switch and the mission on/off switches taking effect
 - [ ] The existing live event mode, TV display and admin panel still behaving exactly as before
 
 ---

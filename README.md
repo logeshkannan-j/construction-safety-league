@@ -93,70 +93,87 @@ Open the deployed URL on:
 Everyone must open the *same deployed URL* — that's what makes them share
 one Firebase database and therefore one game.
 
-## One integrated participant session
+## One session: five rounds
 
-A participant enters the game code, submits their details **once**, and gets a single
-session:
+A participant enters the game code, submits their details **once**, and plays five
+rounds. Each round is a 3D mission, then one quiz question, then one Safety
+Millionaire question:
 
 ```
-3D Safety Game  →  10 safety quiz questions  →  5 Safety Millionaire questions  →  combined result
+ROUND 1   Safety Mission      →  quiz Q1  →  millionaire Q1
+ROUND 2   Tower Crane         →  quiz Q2  →  millionaire Q2
+ROUND 3   Spot the Hazards    →  quiz Q3  →  millionaire Q3
+ROUND 4   Safety Escape       →  quiz Q4  →  millionaire Q4
+ROUND 5   Emergency Response  →  quiz Q5  →  millionaire Q5
+                                 ─────────────────────────
+                       5 missions + 5 quiz + 5 finale = 15 items
 ```
 
-- All 15 questions come from a construction-safety question bank covering working
+**The host releases each round.** Nobody can start until Admin presses *Start Round 1*,
+and nobody runs ahead: finishing a round puts a participant back on a waiting screen
+until the host releases the next one. Inside a round everyone works at their own
+speed, because a 3D mission takes a different amount of time for everyone.
+
+- The ten written questions come from a construction-safety bank covering working
   at height, scaffolding, electrical, PPE, excavation, lifting, crane and hoist,
   fire, housekeeping, confined space, emergency response and material handling.
-- Each participant gets their **own** shuffled paper — one question per topic, the
-  finale in ascending tiers, and the answer options shuffled too.
-- Closing the page and coming back resumes the **same** questions at the **same**
-  place with the **same** score. No duplicate participants, no re-shuffle.
-- The 3D game, the quiz and the finale are scored separately and combined into one
-  total, which is what the TV race and the leaderboard show.
+- Each participant gets their **own** shuffled paper — a different topic each round,
+  the finale ascending through the tiers, and the answer options shuffled too.
+- Closing the page and coming back resumes the **same** round with the **same**
+  questions and the **same** score. No duplicate participants, no re-shuffle.
+- The 3D missions, the quiz and the finale are scored separately and combined into
+  one total, which is what the TV race and the leaderboard show. Each mission is
+  normalised to 1,000 points so the 3D half cannot swamp the written half.
 
 In Admin → **How participants play**, choose:
 
 | Mode | What participants get |
 |---|---|
-| **Integrated session** (default for new games) | The flow above, at their own pace |
-| **Live event** | The original host-paced format: you advance the questions and the TV shows the current one to the room |
+| **Integrated session** (default for new games) | The five rounds above, released one at a time |
+| **Live event** | The original host-paced format: 10 + 5 questions, you advance each one and the TV shows it to the room |
 
-The same panel picks which of the five 3D missions the session uses.
+Admin → **Game status** shows the round timeline, how many people are in the 3D
+mission / on the quiz / on the finale, and how many are waiting on you.
 
-## 3D Safety Gaming Arena
+## The five 3D missions
 
-Alongside the sessions, the site has a standalone **3D Safety Gaming Arena**: five
-playable 3D construction-safety missions that anyone can play on their own, at any
-time, without a live event running.
+Every mission is set on the **Casagrand Aira** site — a 19-floor residential tower,
+which stands on the skyline of each outdoor scene, on the hoarding banners and on
+the tower crane's counterweight.
 
-- **Safety Mission Simulator** — patrol a construction site on foot, find ten
-  real hazards, classify them and choose the corrective action.
-- **Tower Crane Master** — operate a tower crane with real load-swing physics,
-  a capacity chart, exclusion zones and wind limits.
-- **Build the Safest Tower** — fit the right safety systems in the right places
-  in the right order, then get audited.
-- **Safety Escape Challenge** — escape a building through seven areas, one
-  safety decision each.
+- **Safety Mission Simulator** — patrol the site on foot, find ten real hazards,
+  classify them and choose the corrective action.
+- **Tower Crane Master** — one lift, done properly: rig a steel bundle, slew,
+  trolley and hoist it up onto the building against a capacity chart, exclusion
+  zones and the wind.
+- **Spot the Hazards** — a ground-level walk-round of the compound. Five real
+  hazards; for each one, choose the control that removes the risk rather than the
+  sign that warns people about it.
+- **Safety Escape Challenge** — work out of a building through seven areas. Pick
+  an extinguisher off the rack, carry it to the fire and discharge it; then open
+  the final exit and walk into the marked assembly area to finish.
 - **Emergency Response Commander** — command a live incident through the eight
-  steps of a site emergency response.
+  steps of a site emergency. Each step takes you to the scene and zooms in first;
+  the question only opens once you have seen what is happening.
 
-Open it from the main menu ("3D Gaming Arena") or link straight to it with
-`?role=arena`. It works on phones with a real virtual joystick and touch camera,
-on tablets, and on desktop with WASD and the mouse.
+They work on phones with a real virtual joystick and touch camera, on tablets, and
+on desktop with WASD and the mouse.
 
 Scores feed a persistent Arena leaderboard (daily, weekly, all-time, overall and
-per game) under the same player identity the quiz uses, and the admin panel gains
-a **3D Gaming Arena** section for switching games on and off and reviewing
+per game) under the same player identity the quiz uses, and the admin panel has a
+**3D Gaming Arena** section for switching missions on and off and reviewing
 participation, scores and anything that looks tampered with.
 
-**Before scores will save you must re-publish `rules.json`** — see step 2 above.
-Full implementation notes, the data model, the security position and a device
-testing checklist are in **[ARENA.md](ARENA.md)**.
+**Before Arena scores will save you must re-publish `rules.json`** — see step 2
+above. Full implementation notes, the data model, the security position and a
+device testing checklist are in **[ARENA.md](ARENA.md)**.
 
 ## Local development
 
 ```bash
 npm install
 npm run dev
-npm test     # 396 tests: the 3D games, the question bank, sessions, scoring and rules
+npm test     # 391 tests: the 3D games, the question bank, rounds, scoring and rules
 ```
 
 This runs the game locally (still talking to your real Firebase project,

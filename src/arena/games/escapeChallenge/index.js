@@ -20,6 +20,7 @@ import {
   buildGround, buildSign, buildFireExtinguisher, buildElectricalPanel,
   buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadder,
   buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
+  buildZoneMarker,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
@@ -39,7 +40,8 @@ export const meta = {
       "In each area, find the interactive point and make the right safety decision.",
       "A correct decision unlocks the door to the next area.",
       "A wrong decision costs you score and 25 seconds of a clock you cannot afford.",
-      "Reach the final exit before the timer reaches zero.",
+      "In the plant room, pick an extinguisher off the rack, carry it to the fire and discharge it.",
+      "Open the final exit, then WALK INTO the marked assembly area outside. The door is not the finish line.",
     ],
     scoring: [
       { label: "Area solved first time", value: "+250" },
@@ -51,7 +53,8 @@ export const meta = {
     tips: [
       "The nearest door is almost never the escape route. The signed one is.",
       "Isolate the circuit you need, not the whole building — emergency lighting runs on it too.",
-      "Extinguisher class matters more than extinguisher size.",
+      "Extinguisher class matters more than extinguisher size — and you have to carry it there yourself.",
+      "You are not safe when you are outside. You are safe when you are at the muster point.",
       "A red scaffold tag means do not use, even in an evacuation.",
       "Raising the alarm protects everyone still inside. Do it before you leave.",
     ],
@@ -61,13 +64,13 @@ export const meta = {
     ["W A S D", "Move through the building"],
     ["Mouse", "Look around (click once to capture the mouse)"],
     ["Shift", "Run"],
-    ["E", "Interact with the decision point or a door"],
+    ["E", "Interact — decision point, door, extinguisher, or discharge it"],
     ["Esc", "Pause"],
   ],
   mobileControls: [
     ["Joystick", "Move — bottom-left of the screen"],
     ["Drag right", "Look around while moving"],
-    ["INTERACT", "Use the decision point or open a door"],
+    ["INTERACT", "Use a decision point, door or extinguisher"],
     ["RUN", "Hold to move faster"],
     ["Pause", "Top-right of the HUD"],
   ],
@@ -101,6 +104,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   const colliders = [];
   const animated = [];
+  // The plant-room fire and the extinguishers the player can carry to it.
+  const extinguishers = [];
+  let fire = null;
+  // The marked zone out in the yard that ends the run on contact.
+  let finishZone = null;
 
   /* --------------------------- environment --------------------------- */
 
@@ -272,7 +280,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   const interactables = [];
 
-  function addInteractable({ key, position, radius = 2.6, label, onUse }) {
+  function addInteractable({ key, position, radius = 2.6, label, onUse, manual = false }) {
     const marker = new THREE.Mesh(
       new THREE.TorusGeometry(0.75, 0.07, 6, 18),
       new THREE.MeshBasicMaterial({ color: 0xffc629, transparent: true, opacity: 0.75, depthWrite: false })
@@ -289,6 +297,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       radius,
       marker,
       onUse,
+      manual,
       done: false,
     };
     interactables.push(item);
@@ -469,7 +478,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     smoke.position.set(room.x1 - 4.0, 3.0, room.centreZ);
     scene.add(smoke);
 
-    // The four extinguishers on the wall.
+    // The four extinguishers on the wall. Each one is picked up
+    // individually and carried to the fire — the player physically
+    // chooses, rather than reading four lines in a dialog.
     const classes = [
       ["water", mat.red, "Water"],
       ["foam", mat.white, "Foam"],
@@ -478,20 +489,40 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     ];
     classes.forEach(([id, bodyMat, label], i) => {
       const ext = buildFireExtinguisher(geo, mat, { onStand: false, cls: id });
-      ext.position.set(room.x0 + 2.4 + i * 1.6, 0.5, room.z0 + 0.8);
+      const ex = room.x0 + 2.4 + i * 1.6;
+      const ez = room.z0 + 0.8;
+      ext.position.set(ex, 0.5, ez);
       scene.add(ext);
       const tag = buildSign(geo, mat, { text: label, kind: "info", height: 1.6, width: 0.45, post: false });
-      tag.position.set(room.x0 + 2.4 + i * 1.6, 0, room.z0 + 0.55);
+      tag.position.set(ex, 0, room.z0 + 0.55);
       tag.rotation.y = Math.PI;
       scene.add(tag);
-      scene.add(box(geo, bodyMat, 0.3, 0.1, 0.1, room.x0 + 2.4 + i * 1.6, 1.3, room.z0 + 0.7, { shadow: false }));
+      scene.add(box(geo, bodyMat, 0.3, 0.1, 0.1, ex, 1.3, room.z0 + 0.7, { shadow: false }));
+
+      extinguishers.push({
+        cls: id, label, object: ext,
+        home: new THREE.Vector3(ex, 0.5, ez),
+        position: new THREE.Vector3(ex, 1.0, ez + 0.6),
+      });
     });
 
+    // The fire itself is the interaction point once something is carried.
+    fire = {
+      position: new THREE.Vector3(room.x1 - 4.0, 1.4, room.centreZ),
+      flames,
+      smoke,
+      out: false,
+      discharging: 0,
+    };
+
+    // The plant room is played out, not answered, so this entry exists
+    // only to keep the route checklist and the solved count consistent
+    // with the other six areas. `manual` keeps findTarget off it.
     addInteractable({
       key: "fire",
-      position: { x: room.x0 + 4.8, z: room.z0 + 2.4 },
-      label: "Choose an extinguisher",
-      radius: 3.4,
+      position: { x: room.x1 - 4.0, z: room.centreZ },
+      label: "Put the fire out",
+      manual: true,
     });
   }
 
@@ -575,6 +606,39 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       scene.add(worker);
       animated.push({ kind: "worker", object: worker, phase: Math.random() * 6 });
     });
+
+    /* ---- the finish zone ----
+     * Reaching safety is walking to the muster point and standing in it,
+     * not pressing a key on a door. The zone is marked on the ground,
+     * lit, and triggers the moment the player steps inside it.
+     */
+    const zx = yardX + 6;
+    const zz = last.centreZ;
+    const half = 3.4;
+
+    const pad = buildZoneMarker(mat, { rect: [half * 2, half * 2], ok: true });
+    pad.position.set(zx, 0.04, zz);
+    scene.add(pad);
+
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(half, 0.12, 6, 32),
+      new THREE.MeshBasicMaterial({ color: 0x33c481, transparent: true, opacity: 0.9, depthWrite: false })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(zx, 0.08, zz);
+    scene.add(ring);
+
+    // Chevrons on the ground leading from the final door into the zone.
+    for (let i = 0; i < 6; i++) {
+      scene.add(box(geo, mat.green, 0.9, 0.02, 0.26,
+        last.x1 + 2 + i * 1.5, 0.012, zz, { shadow: false }));
+    }
+
+    const zoneSign = buildSign(geo, mat, { text: "ASSEMBLY AREA", kind: "emergency", height: 3.0, width: 1.5 });
+    zoneSign.position.set(zx, 0, zz - half - 0.8);
+    scene.add(zoneSign);
+
+    finishZone = { x: zx, z: zz, half, ring };
   }
 
   /* ============================== player ============================== */
@@ -620,6 +684,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     consequence: null,
     consequenceUntil: 0,
     lessons: [],
+    // The plant room is played out rather than answered: pick an
+    // extinguisher up, carry it to the fire, discharge it.
+    carrying: null,
+    fireAttempts: 0,
+    doorsOpen: false,
   };
 
   /* ---------------------------- interaction ---------------------------- */
@@ -634,7 +703,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Unsolved decision points.
     for (const item of interactables) {
-      if (item.done) continue;
+      if (item.done || item.manual) continue;
       toTarget.copy(item.position).sub(camera.position);
       const distance = toTarget.length();
       if (distance > item.radius) continue;
@@ -643,6 +712,35 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       if (facing < 0.1) continue;
       const rank = facing * 2 - distance / item.radius;
       if (rank > bestRank) { bestRank = rank; best = { kind: "puzzle", item }; }
+    }
+
+    // Extinguishers on the rack — only worth offering while the fire is
+    // alight and the player's hands are empty.
+    if (fire && !fire.out && !state.carrying) {
+      for (const ext of extinguishers) {
+        toTarget.copy(ext.position).sub(camera.position);
+        const distance = toTarget.length();
+        if (distance > 2.6) continue;
+        toTarget.normalize();
+        const facing = toTarget.dot(lookDir);
+        if (facing < 0.2) continue;
+        const rank = facing * 2 - distance / 2.6;
+        if (rank > bestRank) { bestRank = rank; best = { kind: "pickup", ext }; }
+      }
+    }
+
+    // The fire, once something is being carried to it.
+    if (fire && !fire.out && state.carrying) {
+      toTarget.copy(fire.position).sub(camera.position);
+      const distance = toTarget.length();
+      if (distance <= 4.2) {
+        toTarget.normalize();
+        const facing = toTarget.dot(lookDir);
+        if (facing > 0.2) {
+          const rank = facing * 2 - distance / 4.2 + 1;  // prefer the fire
+          if (rank > bestRank) { bestRank = rank; best = { kind: "fire" }; }
+        }
+      }
     }
 
     // Doors, so the player can see whether one is locked.
@@ -749,11 +847,98 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       return;
     }
     if (door.isFinal && !state.escaped) {
-      state.escaped = true;
-      state.score += SCORING.escaped;
-      sfx.missionComplete();
-      finish(true);
+      // The door is only the way out. Being SAFE is reaching the muster
+      // point, so the run finishes when the player stands in the zone.
+      state.doorsOpen = true;
+      sfx.doorOpen();
+      api.toast("You're outside. Get to the assembly area — follow the green markers.", "info");
     }
+  }
+
+  /* ------------------------ the plant room fire ------------------------ */
+
+  // Carrying an extinguisher: it rides in front of the camera so the
+  // player can see which one they picked up.
+  let carriedModel = null;
+
+  function pickUpExtinguisher(ext) {
+    if (state.carrying || !fire || fire.out) return;
+    state.carrying = ext;
+    ext.object.visible = false;
+
+    carriedModel = buildFireExtinguisher(geo, mat, { onStand: false, cls: ext.cls });
+    carriedModel.scale.setScalar(0.62);
+    // Held low and to the right, the way you actually carry one.
+    carriedModel.position.set(0.42, -0.52, -0.85);
+    carriedModel.rotation.set(-0.15, 0.35, 0.12);
+    carriedModel.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+    // The camera must be in the scene graph for its children to render.
+    if (!camera.parent) scene.add(camera);
+    camera.add(carriedModel);
+
+    sfx.interact();
+    api.toast(`${ext.label} extinguisher picked up. Take it to the fire and discharge it.`, "info");
+  }
+
+  function dropCarried() {
+    if (!state.carrying) return;
+    state.carrying.object.visible = true;
+    state.carrying = null;
+    if (carriedModel) {
+      camera.remove(carriedModel);
+      carriedModel = null;
+    }
+  }
+
+  function dischargeAtFire() {
+    if (!state.carrying || !fire || fire.out || fire.discharging > 0) return;
+    const ext = state.carrying;
+    const puzzle = PUZZLES.fire;
+    const option = puzzle.options.find((o) => o.id === ext.cls);
+
+    if (option?.correct) {
+      fire.discharging = 1;          // the loop runs the knock-down
+      sfx.interact();
+      api.toast("Discharging — sweep the base of the fire.", "info");
+      return;
+    }
+
+    // Wrong medium on live electrics: it flares, and it costs.
+    state.fireAttempts += 1;
+    state.mistakes += 1;
+    state.score += SCORING.wrong;
+    state.remainingMs = Math.max(0, state.remainingMs - SCORING.wrongTimePenaltyMs);
+    state.lessons.push(option?.feedback || "Wrong extinguisher for a live electrical fire.");
+    state.consequence = option?.consequence || "The fire flared up.";
+    state.consequenceUntil = stage.elapsed + 2.6;
+    sfx.wrong();
+    sfx.alarm();
+    api.toast(option?.feedback || "Wrong medium for this fire.", "bad", SCORING.wrong);
+    api.toast("Put it back and get the right one. 25 seconds lost.", "warn");
+
+    // The extinguisher is spent — it goes back on the rack empty, and
+    // the player has to walk back and choose again.
+    dropCarried();
+    if (state.remainingMs <= 0) finish(false);
+  }
+
+  function fireIsOut() {
+    fire.out = true;
+    fire.flames.visible = false;
+    fire.smoke.visible = false;
+    dropCarried();
+
+    const item = interactables.find((i) => i.key === "fire");
+    const points = state.fireAttempts === 0 ? SCORING.firstTry : SCORING.afterMistake;
+    state.score += points;
+    state.solved += 1;
+    if (state.fireAttempts === 0) state.firstTryCount += 1;
+    if (item) { item.done = true; if (item.marker) item.marker.visible = false; }
+    unlockDoor("fire");
+    sfx.correct();
+    api.toast("Fire out. CO2 is non-conductive and leaves no residue on electrical gear.", "good", points);
+    api.toast("Plant room clear — the door is open.", "info");
+    state.currentArea = Math.min(AREA_ORDER.length - 1, AREA_ORDER.indexOf("fire") + 1);
   }
 
   /* ------------------------------ finishing ------------------------------ */
@@ -826,10 +1011,20 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     let prompt = null;
     if (target?.kind === "puzzle") {
       prompt = { text: mobile ? `Tap USE — ${target.item.label}` : `Press E — ${target.item.label}`, tone: "good", key: "E" };
+    } else if (target?.kind === "pickup") {
+      prompt = { text: mobile ? `Tap USE — take the ${target.ext.label} extinguisher` : `Press E — take the ${target.ext.label} extinguisher`, tone: "good", key: "E" };
+    } else if (target?.kind === "fire") {
+      prompt = { text: mobile ? `Tap USE — discharge the ${state.carrying?.label} extinguisher` : `Press E — discharge the ${state.carrying?.label} extinguisher`, tone: "good", key: "E" };
+    } else if (state.carrying && fire && !fire.out) {
+      prompt = { text: `Carrying the ${state.carrying.label} extinguisher — get to the fire`, tone: "normal", key: "" };
+    } else if (fire && !fire.out && state.currentArea === AREA_ORDER.indexOf("fire")) {
+      prompt = { text: "Take an extinguisher off the rack", tone: "normal", key: "" };
+    } else if (state.doorsOpen && !state.escaped) {
+      prompt = { text: "Walk into the assembly area", tone: "good", key: "" };
     } else if (target?.kind === "door") {
       prompt = target.door.locked
         ? { text: "Secured — solve this area first", tone: "bad", key: "E" }
-        : { text: target.door.isFinal ? (mobile ? "Tap USE to escape" : "Press E to escape") : "Open", tone: "good", key: "E" };
+        : { text: target.door.isFinal ? (mobile ? "Tap USE to open the final exit" : "Press E to open the final exit") : "Open", tone: "good", key: "E" };
     }
 
     api.hud({
@@ -844,6 +1039,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       progress: (state.solved / AREA_ORDER.length) * 100,
       progressLabel: `${state.solved} of ${AREA_ORDER.length} areas cleared`,
       crosshair: target ? (target.kind === "door" && target.door.locked ? "idle" : "target") : "idle",
+      carrying: state.carrying ? state.carrying.label : null,
       prompt,
       danger: urgent,
       flashDanger: state.consequence !== null && stage.elapsed < state.consequenceUntil,
@@ -880,6 +1076,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       state.target = findTarget();
       if (state.target && input.wasPressed("interact")) {
         if (state.target.kind === "puzzle") openPuzzle(state.target.item);
+        else if (state.target.kind === "pickup") pickUpExtinguisher(state.target.ext);
+        else if (state.target.kind === "fire") dischargeAtFire();
         else useDoor(state.target.door);
       }
     } else {
@@ -888,6 +1086,35 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     if (state.consequence && stage.elapsed > state.consequenceUntil) {
       state.consequence = null;
+    }
+
+    /* ---- the fire being knocked down ---- */
+    if (fire && !fire.out && fire.discharging > 0) {
+      fire.discharging = Math.max(0, fire.discharging - dt / 2.2);
+      const left = fire.discharging;
+      fire.flames.scale.setScalar(Math.max(0.001, left));
+      fire.smoke.scale.setScalar(Math.max(0.001, 0.6 + left * 0.8));
+      fire.smoke.material.opacity = 0.3 * left;
+      if (carriedModel) {
+        // A visible discharge from the horn while the trigger is held.
+        carriedModel.rotation.x = -0.35 - Math.sin(stage.elapsed * 30) * 0.03;
+      }
+      if (left <= 0) fireIsOut();
+    }
+
+    /* ---- reaching the assembly area ---- */
+    if (finishZone && !state.escaped && !state.finished) {
+      const p = controller.position;
+      if (Math.abs(p.x - finishZone.x) < finishZone.half
+        && Math.abs(p.z - finishZone.z) < finishZone.half) {
+        state.escaped = true;
+        state.score += SCORING.escaped;
+        sfx.missionComplete();
+        api.toast("You reached the assembly area.", "good", SCORING.escaped);
+        finish(true);
+      }
+      // Pulse the ring so it reads as live.
+      finishZone.ring.scale.setScalar(1 + Math.sin(stage.elapsed * 3) * 0.03);
     }
 
     // Door leaves swing open once unlocked.
@@ -945,7 +1172,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
-    __test: { state, controller, interactables, doors, rooms },
+    __test: {
+      state, controller, interactables, doors, rooms,
+      get fire() { return fire; },
+      get finishZone() { return finishZone; },
+      extinguishers,
+    },
   };
 }
 

@@ -159,6 +159,44 @@ export const sfx = {
     [659, 880, 1047, 1319].forEach((f, i) => tone({ freq: f, type: "sine", dur: 0.26, gain: 0.18, delay: i * 0.1 }));
   },
   tick: () => tone({ freq: 1200, type: "sine", dur: 0.03, gain: 0.07 }),
+
+  /* ---- emergency response ---- */
+
+  // The site evacuation siren: a long two-tone wail, loud enough to be
+  // the thing that starts the incident.
+  siren: () => {
+    for (let i = 0; i < 3; i++) {
+      tone({ freq: 500, type: "sawtooth", dur: 0.55, gain: 0.2, slideTo: 980, delay: i * 1.1 });
+      tone({ freq: 980, type: "sawtooth", dur: 0.5, gain: 0.18, slideTo: 500, delay: i * 1.1 + 0.55 });
+    }
+  },
+
+  // Radio squelch before a message from the scene.
+  radio: () => {
+    noiseBurst({ dur: 0.07, gain: 0.1, filterFreq: 2600 });
+    tone({ freq: 1500, type: "square", dur: 0.05, gain: 0.07, delay: 0.07 });
+    noiseBurst({ dur: 0.05, gain: 0.07, filterFreq: 2200, delay: 0.14 });
+  },
+
+  // Three rising pips as the decision window opens.
+  decisionOpen: () => {
+    [700, 900, 1150].forEach((f, i) =>
+      tone({ freq: f, type: "triangle", dur: 0.1, gain: 0.16, delay: i * 0.09 })
+    );
+  },
+
+  // Urgent repeating beep as a decision clock runs out.
+  countdown: () => {
+    tone({ freq: 1000, type: "square", dur: 0.07, gain: 0.13 });
+  },
+
+  // An ambulance arriving.
+  ambulance: () => {
+    for (let i = 0; i < 4; i++) {
+      tone({ freq: 760, type: "square", dur: 0.26, gain: 0.14, delay: i * 0.52 });
+      tone({ freq: 580, type: "square", dur: 0.26, gain: 0.14, delay: i * 0.52 + 0.26 });
+    }
+  },
 };
 
 /* ---------------------------- motor loops ---------------------------- */

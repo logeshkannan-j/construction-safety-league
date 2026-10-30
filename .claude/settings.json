@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk 'NR>=360 && NR<=382' src/arena/engine/fpsController.js)",
+      "Bash(node -e ' *)",
+      "Bash(awk -F' ' '{s+=$1} END {print \"total assertions:\", s}')"
+    ]
+  }
+}

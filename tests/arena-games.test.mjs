@@ -535,88 +535,89 @@ section("Tower Crane Master — lift a load");
  *  Game 3 — build the tower
  * ================================================================ */
 
-section("Build the Safest Tower — full audit");
+const G3 = await import(`${SRC}/games/safestTower/hazards.js`);
+
+section("Spot the Hazards — clearing the site correctly");
 {
   const { instance, record } = await boot("safestTower");
-  const { state, slots, prerequisitesMet, selectSlot, placeSelected, setComponent } = instance.__test;
+  const { state, hazards, inspect, answer, HAZARD_COUNT } = instance.__test;
 
   runFrames(10);
-  check("the build has 17 positions", slots.length === 17, `${slots.length}`);
-  check("the palette is published to the HUD", (record.hud.palette?.items || []).length === 13,
-    `${(record.hud.palette?.items || []).length}`);
-  check("every position has a correct component", slots.every((s) => !!s.def.correct));
-  check("at least five positions accept a plausible-but-wrong component",
-    slots.filter((s) => s.def.plausible).length >= 5,
-    `${slots.filter((s) => s.def.plausible).length}`);
-  check("every plausible trap explains itself",
-    slots.filter((s) => s.def.plausible).every((s) => !!s.def.plausibleWhy));
+  check("the walk-round has exactly 5 ground-level hazards",
+    hazards.length === 5 && HAZARD_COUNT === 5, `${hazards.length}`);
+  check("every hazard sits at ground level",
+    hazards.every((h) => h.world.y === 0), "a hazard is off the ground");
+  check("every hazard asks a question with 4 options",
+    hazards.every((h) => h.def.options.length === 4));
+  check("every hazard has exactly one correct option",
+    hazards.every((h) => h.def.correct >= 0 && h.def.correct < 4));
+  check("every hazard explains why", hazards.every((h) => (h.def.why || "").length > 40));
+  check("every hazard names the control type",
+    hazards.every((h) => ["eliminate", "engineer", "admin", "ppe"].includes(h.def.control)));
+  check("the HUD lists the five hazards as tasks",
+    (record.hud.tasks || []).length === 5, `${(record.hud.tasks || []).length}`);
 
-  // A wrong component must be refused and cost points.
-  const firstSlot = slots[0];
-  selectSlot(firstSlot);
-  setComponent("extinguisher");               // not what a stair position needs
-  placeSelected();
-  check("a wrong component is refused", firstSlot.filled === null);
-  check("a wrong component costs points", state.score < 0, `${state.score}`);
-  check("a wrong component is counted", state.wrong === 1, `${state.wrong}`);
+  // --- a plausible-but-wrong answer must be refused and cost points ---
+  const first = hazards[0];
+  inspect(first);
+  check("inspecting a hazard opens its question", !!record.dialog && record.dialog.title === first.def.title);
+  const wrongIndex = [0, 1, 2, 3].find((i) => i !== first.def.correct);
+  answer(first, wrongIndex);
+  check("a wrong control does not solve the hazard", first.solved === false);
+  check("a wrong control costs points", state.score < 0, `${state.score}`);
+  check("the hazard object is still the unsafe one", first.fixed === null);
+  check("the hazard is still flagged on site", first.flag.visible === true);
 
-  // Now fill every position correctly, respecting prerequisites.
-  let guard = 0;
-  while (slots.some((s) => !s.filled) && guard < 100) {
-    guard += 1;
-    const next = slots.find((s) => !s.filled && prerequisitesMet(s.def))
-      || slots.find((s) => !s.filled);
-    selectSlot(next);
-    setComponent(next.def.correct);
-    placeSelected();
-    runFrames(1);
-  }
-  check("every position can be filled", slots.every((s) => s.filled), `${slots.filter((s) => s.filled).length}/${slots.length}`);
-  check("all positions are compliant when built correctly",
-    slots.every((s) => s.compliant), `${slots.filter((s) => s.compliant).length} compliant`);
-  check("prerequisites were satisfiable in order", state.sequenceMisses === 0, `${state.sequenceMisses} out of order`);
+  // --- the correct answer rebuilds the hazard in its fixed form ---
+  answer(first, first.def.correct);
+  check("the correct control solves the hazard", first.solved === true);
+  check("the fix is actually built on site", !!first.fixed);
+  check("a solved hazard stops being flagged", first.flag.visible === false);
+  check("a second attempt is worth less than first time",
+    state.score === G3.SCORING.wrongAnswer + G3.SCORING.solvedAfterMiss, `${state.score}`);
+
+  // --- clear the rest, all first time ---
+  hazards.slice(1).forEach((h) => { inspect(h); answer(h, h.def.correct); runFrames(1); });
+  check("every hazard can be cleared", hazards.every((h) => h.solved));
+  check("four of five were cleared first time", state.firstTime === 4, `${state.firstTime}`);
 
   runFrames(5);
   const result = record.finished;
-  check("filling every position finishes the build", !!result && result.completed === true);
+  check("clearing every hazard finishes the walk-round", !!result && result.completed === true);
   if (result) {
-    check("a correct build audits at 100% compliance", result.accuracy === 100, `${result.accuracy}%`);
-    check("the audit reports no findings beyond the pass note",
-      (result.lessons || []).length === 1, JSON.stringify(result.lessons));
-    check("the build score is under the ceiling", result.score <= 12000, `${result.score}`);
+    check("accuracy reflects the one hazard that took two attempts",
+      result.accuracy === 80, `${result.accuracy}%`);
+    check("the debrief calls out the hazard that took two attempts",
+      (result.lessons || []).length === 1 && result.lessons[0].includes("attempt 2"),
+      JSON.stringify(result.lessons));
+    check("the score stays under the Arena ceiling", result.score <= 12000, `${result.score}`);
+    check("the debrief counts what was cleared",
+      result.stats?.hazardsCleared === 5 && result.stats?.wrongAnswers === 1,
+      JSON.stringify(result.stats));
   }
 
   instance.dispose();
   check("game 3 disposes without throwing", true);
 }
 
-section("Build the Safest Tower — a tower that only looks finished");
+section("Spot the Hazards — answering with the plausible option every time");
 {
   const { instance, record } = await boot("safestTower");
-  const { slots, prerequisitesMet, selectSlot, placeSelected, setComponent } = instance.__test;
+  const { state, hazards, inspect, answer } = instance.__test;
   runFrames(5);
 
-  // Fill every position, choosing the plausible option wherever one
-  // exists. The building will look complete and must still fail.
-  let guard = 0;
-  while (slots.some((s) => !s.filled) && guard < 100) {
-    guard += 1;
-    const next = slots.find((s) => !s.filled && prerequisitesMet(s.def)) || slots.find((s) => !s.filled);
-    selectSlot(next);
-    setComponent(next.def.plausible || next.def.correct);
-    placeSelected();
+  // Pick a wrong-but-plausible control for every hazard. Nothing is
+  // fixed, and the site must still be exactly as hazardous as it was.
+  hazards.forEach((h) => {
+    inspect(h);
+    answer(h, [0, 1, 2, 3].find((i) => i !== h.def.correct));
     runFrames(1);
-  }
-  runFrames(5);
-  const result = record.finished;
-  check("the 'looks finished' build still completes", !!result);
-  if (result) {
-    check("a tower that only looks finished does NOT score 100%", result.accuracy < 100, `${result.accuracy}%`);
-    check("the audit lists what is actually wrong", (result.lessons || []).length > 1,
-      `${(result.lessons || []).length} findings`);
-    check("the audit counts the questionable items",
-      (result.stats?.lookedFinished || 0) > 0, JSON.stringify(result.stats));
-  }
+  });
+  check("no hazard is controlled by a plausible answer", hazards.every((h) => !h.solved));
+  check("every hazard is still flagged", hazards.every((h) => h.flag.visible));
+  check("five wrong calls were counted", state.wrong === 5, `${state.wrong}`);
+  check("the walk-round has not finished itself", !record.finished);
+
   instance.dispose();
 }
 
@@ -651,9 +652,11 @@ section("Safety Escape Challenge — escape the building");
   check("interior walls stop the player", controller.position.x > -6.6,
     `x=${controller.position.x.toFixed(2)}`);
 
-  // Solve every area.
+  // Solve every area. The plant room is played out rather than
+  // answered, so it is driven separately below.
   let solved = 0;
   for (const item of interactables) {
+    if (item.manual) continue;
     controller.teleport(item.position.x, 0, item.position.z + 1.4, 0);
     controller.state.pitch = 0;
     runFrames(3);
@@ -685,10 +688,60 @@ section("Safety Escape Challenge — escape the building");
     solved += 1;
   }
 
-  check("all 7 areas can be solved", solved === 7, `${solved}/7`);
+  check("six areas are solved by decision", solved === 6, `${solved}/6`);
+
+  /* ---- the plant room is played out: carry an extinguisher to the fire ---- */
+  {
+    const { fire, extinguishers } = instance.__test;
+    check("the plant room has a live fire", !!fire && fire.out === false);
+    check("four extinguishers are on the rack", extinguishers.length === 4, `${extinguishers.length}`);
+    check("the player starts empty handed", state.carrying === null);
+
+    // Take the WRONG one first: water on live electrical gear.
+    const water = extinguishers.find((e) => e.cls === "water");
+    controller.teleport(water.position.x, 0, water.position.z + 1.2, 0);
+    controller.state.pitch = 0;
+    runFrames(3);
+    check("an extinguisher on the rack can be picked up",
+      state.target?.kind === "pickup", `target=${state.target?.kind}`);
+    input.press("interact"); runFrames(2); input.release("interact"); runFrames(2);
+    check("picking one up puts it in the player's hands", state.carrying?.cls === "water");
+
+    // Carry it to the fire and discharge it.
+    controller.teleport(fire.position.x - 2.2, 0, fire.position.z, -Math.PI / 2);
+    controller.state.pitch = 0;
+    runFrames(3);
+    check("the fire can be discharged at once something is carried",
+      state.target?.kind === "fire", `target=${state.target?.kind}`);
+    input.press("interact"); runFrames(2); input.release("interact"); runFrames(4);
+    check("water on live electrics does NOT put the fire out", fire.out === false);
+    check("the wrong medium costs a mistake", state.mistakes === 1, `${state.mistakes}`);
+    check("the spent extinguisher leaves the player's hands", state.carrying === null);
+
+    // Now the right one.
+    const co2 = extinguishers.find((e) => e.cls === "co2");
+    controller.teleport(co2.position.x, 0, co2.position.z + 1.2, 0);
+    controller.state.pitch = 0;
+    runFrames(3);
+    input.press("interact"); runFrames(2); input.release("interact"); runFrames(2);
+    check("the CO2 extinguisher can be picked up", state.carrying?.cls === "co2");
+
+    controller.teleport(fire.position.x - 2.2, 0, fire.position.z, -Math.PI / 2);
+    controller.state.pitch = 0;
+    runFrames(3);
+    input.press("interact"); runFrames(2); input.release("interact");
+    check("discharging starts a knock-down rather than finishing instantly",
+      fire.discharging > 0 && fire.out === false);
+    runFrames(180);
+    check("sustained discharge puts the fire out", fire.out === true);
+    check("the flames are gone from the scene", fire.flames.visible === false);
+    check("putting the fire out clears the plant room", state.solved === 7, `${state.solved}`);
+  }
+
+  check("all 7 areas end up cleared", state.solved === 7, `${state.solved}/7`);
   check("solving an area unlocks its door", doors.every((d) => !d.locked),
     `${doors.filter((d) => d.locked).length} still locked`);
-  check("no wrong decisions were recorded on a perfect run", state.mistakes === 0, `${state.mistakes}`);
+  check("the only mistake was the deliberate wrong extinguisher", state.mistakes === 1, `${state.mistakes}`);
 
   // Use the final door to escape.
   const finalDoor = doors[doors.length - 1];
@@ -702,12 +755,31 @@ section("Safety Escape Challenge — escape the building");
   input.release("interact");
   runFrames(5);
 
+  // Opening the final door is NOT the end — reaching the muster point is.
+  check("opening the final door does not end the run on its own", !record.finished);
+  check("the final door is reported open", state.doorsOpen === true);
+
+  const { finishZone } = instance.__test;
+  check("there is a marked finish zone in the yard", !!finishZone);
+
+  // Standing outside it changes nothing.
+  controller.teleport(finishZone.x - finishZone.half - 4, 0, finishZone.z, -Math.PI / 2);
+  runFrames(5);
+  check("standing short of the assembly area does not finish", !record.finished);
+
+  // Walking into it does.
+  controller.teleport(finishZone.x, 0, finishZone.z, -Math.PI / 2);
+  runFrames(5);
+
   const result = record.finished;
-  check("using the final door escapes the building", !!result && result.completed === true,
+  check("walking into the assembly area finishes the escape", !!result && result.completed === true,
     JSON.stringify(result && { completed: result.completed, escaped: result.stats?.escaped }));
   if (result) {
     check("escaping scores the escape bonus", result.score > 1500, `${result.score}`);
-    check("a flawless escape rates 100%", result.performance === 100, `${result.performance}`);
+    // 7 areas cleared, 1 mistake -> 100 * (7/7) * (7/8).
+    check("the rating reflects the one wrong extinguisher, not a perfect run",
+      result.performance === Math.round(100 * (7 / 8)), `${result.performance}`);
+    check("the rating is below a perfect run", result.performance < 100, `${result.performance}`);
     check("the escape result is under the ceiling", result.score <= 12000, `${result.score}`);
   }
 
@@ -722,7 +794,7 @@ section("Safety Escape Challenge — escape the building");
 section("Emergency Response Commander — command the incident");
 {
   const { instance, record } = await boot("emergencyCommander");
-  const { state, scenario, crowd, currentOptions } = instance.__test;
+  const { state, scenario, crowd, currentOptions, beginDecision, OBSERVE_MS } = instance.__test;
 
   check("a scenario was selected", !!scenario?.steps?.length, scenario?.id);
   check("the scenario has all 8 response steps", scenario.steps.length === 8, `${scenario.steps.length}`);
@@ -735,18 +807,34 @@ section("Emergency Response Commander — command the incident");
   check("the incident brief is shown first", record.dialogs[0]?.eyebrow === "INCIDENT BRIEF");
 
   // Advance past the brief delay.
-  await new Promise((resolve) => setTimeout(resolve, 2700));
+  await new Promise((resolve) => setTimeout(resolve, 3500));
   runFrames(5);
-  check("the first decision opens after the brief", state.dialogOpen === true);
+
+  // Each step now opens with an observation beat: the camera zooms onto
+  // the scene and the question is deliberately NOT asked yet.
+  check("the step opens by showing the scene, not the question",
+    state.observing === true && state.dialogOpen === false,
+    `observing=${state.observing} dialogOpen=${state.dialogOpen}`);
+  check("the observation beat is a real pause to look", OBSERVE_MS >= 4000, `${OBSERVE_MS}ms`);
+  check("the HUD tells the player to look at the scene",
+    (record.hud.objective || "").includes("LOOK AT THE SCENE"), record.hud.objective);
+
+  // Skip the wait rather than sleeping through eight of them.
+  beginDecision();
+  runFrames(5);
+  check("the question opens after the observation beat",
+    state.dialogOpen === true && state.observing === false);
 
   const casualtyStart = state.casualty;
   let decided = 0;
   for (let step = 0; step < scenario.steps.length; step++) {
-    // Wait for the dialog (there is a 1.4s beat between decisions).
-    for (let wait = 0; wait < 40 && !state.dialogOpen; wait++) {
+    // Wait for the step to open (a 1.4s beat, then the observation
+    // beat), then skip straight to its question.
+    for (let wait = 0; wait < 60 && !state.dialogOpen && !state.observing; wait++) {
       await new Promise((resolve) => setTimeout(resolve, 60));
       runFrames(4);
     }
+    if (state.observing) { beginDecision(); runFrames(3); }
     if (!state.dialogOpen) break;
     const options = currentOptions();
     const best = options.find((o) => o.correct);

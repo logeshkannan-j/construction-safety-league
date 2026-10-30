@@ -40,7 +40,8 @@ export const meta = {
       "yours — and every one of them is on the clock.",
     objectives: [
       "Work the eight steps in order: identify, assess, alarm, isolate, respond, evacuate, call, close out.",
-      "Each decision has its own countdown. Let it expire and the decision is made for you, badly.",
+      "Each step opens by taking you to the scene. Watch what is happening — the question is about what you were just shown.",
+      "The decision clock only starts once the question opens, so the look is free. Let it expire and the decision is made for you, badly.",
       "Watch the three meters: casualty condition, scene control, and evacuation accounted for.",
       "Keep the casualty alive and the scene under control.",
       "Never commit untrained people into the hazard. That is always the wrong answer.",
@@ -59,6 +60,7 @@ export const meta = {
       "Call the emergency services with what you know now, and update them later. Never delay the call to improve it.",
       "Isolate from outside the hazard. Never send a person in to make it safe.",
       "Preserve the scene. The investigation is how the next person does not get hurt.",
+      "Use the observation beat. Drag to look around and wheel to zoom before the question opens.",
     ],
   },
 
@@ -66,7 +68,7 @@ export const meta = {
     ["Click", "Choose a decision option"],
     ["1 – 4", "Choose option A to D"],
     ["Mouse drag", "Look around the incident"],
-    ["Wheel", "Zoom"],
+    ["Wheel", "Zoom in on the scene"],
     ["Esc", "Pause"],
   ],
   mobileControls: [
@@ -80,6 +82,20 @@ export const meta = {
 const BUILDING = { x: -8, z: 6, width: 20, depth: 15, floors: 4, floorHeight: 3.4 };
 const MUSTER = { x: 30, z: 26 };
 const GATE = { x: 34, z: -28 };
+
+/**
+ * How long the camera holds on the scene before the question opens.
+ * The decision clock does not start until this has elapsed, so this is
+ * free time to actually look at what is happening.
+ */
+const OBSERVE_MS = 5000;
+
+/**
+ * Decision windows were tight enough that players were answering on
+ * instinct rather than on what they could see. Every step's own limit
+ * is multiplied by this.
+ */
+const DECISION_TIME_MULTIPLIER = 1.6;
 
 /* ============================== the game ============================== */
 
@@ -382,6 +398,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     briefOpen: false,
     decisionEndsAt: 0,
     decisionLength: 0,
+    // The "look at the scene" beat that runs before each question.
+    observing: false,
+    observeEndsAt: 0,
+    lastCountdownBeep: 0,
     consequence: null,
     consequenceUntil: 0,
     lessons: [],
@@ -423,6 +443,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const wheel = input.consumeWheel();
     if (wheel) cam.distance = Math.max(10, Math.min(70, cam.distance + wheel * 0.03));
 
+    // While observing, ease the camera in towards the subject. The
+    // player can still drag and wheel — this only moves the baseline.
+    if (state.observing && cam.observeDistance) {
+      cam.distance += (cam.observeDistance - cam.distance) * Math.min(1, dt * 1.4);
+    }
+
     cam.target.lerp(cam.desired, Math.min(1, dt * 2.2));
     const horizontal = Math.cos(cam.pitch) * cam.distance;
     camera.position.set(
@@ -433,17 +459,22 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     camera.lookAt(cam.target);
   }
 
-  // The camera moves to whatever the current step is about.
+  // The camera moves to whatever the current step is about, and then
+  // pushes IN while the player is observing it, so the thing they are
+  // about to be asked about is unmistakably on screen.
   function frameForPhase(phase) {
     if (phase === 2 || phase === 5) {
       cam.desired.set(MUSTER.x, 1, MUSTER.z);
       cam.distance = 34;
+      cam.observeDistance = 19;
     } else if (phase === 6) {
       cam.desired.set(GATE.x, 1, GATE.z);
       cam.distance = 30;
+      cam.observeDistance = 17;
     } else {
       cam.desired.copy(incident.position);
       cam.distance = scenario.scene === "fall" ? 22 : 24;
+      cam.observeDistance = scenario.scene === "fall" ? 11 : 12;
     }
   }
 
@@ -474,6 +505,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     return Math.max(0, Math.min(100, value));
   }
 
+  /**
+   * Every step now runs in two beats:
+   *
+   *   1. OBSERVE — the camera flies in and zooms onto whatever the step
+   *      is about, with a short "look at the scene" countdown and no
+   *      question on screen. You are supposed to see the incident.
+   *   2. DECIDE — the question opens, based on what you were just shown.
+   *
+   * The decision clock does not start until beat 2, so the observation
+   * time is genuinely free.
+   */
   function openStep() {
     if (state.finished) return;
     const step = scenario.steps[state.stepIndex];
@@ -485,12 +527,31 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     currentOptions = step.options;
     frameForPhase(step.phase);
 
-    const limit = step.timeLimitMs * difficulty.timeScale;
+    // Beat 1: observe.
+    state.observing = true;
+    state.dialogOpen = false;
+    state.briefOpen = false;
+    state.observeEndsAt = stage.elapsed * 1000 + OBSERVE_MS;
+    sfx.radio();
+    api.toast(step.title, "warn");
+    if (step.subtitle) api.toast(step.subtitle, "info");
+
+    later(() => {
+      if (state.finished || state.disposed) return;
+      beginDecision();
+    }, OBSERVE_MS);
+  }
+
+  function beginDecision() {
+    if (!currentStep || state.finished) return;
+    state.observing = false;
+
+    const limit = currentStep.timeLimitMs * DECISION_TIME_MULTIPLIER * difficulty.timeScale;
     state.decisionLength = limit;
     state.decisionEndsAt = stage.elapsed * 1000 + limit;
     state.dialogOpen = true;
-    state.briefOpen = false;
-    sfx.warning();
+    state.lastCountdownBeep = 0;
+    sfx.decisionOpen();
     renderDialog();
   }
 
@@ -586,6 +647,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     if (phase === 6 && wasCorrect) {
       state.servicesCalled = true;
       ambulance.visible = true;
+      // You hear it before you see it come through the gate.
+      sfx.ambulance();
     }
 
     state.stepIndex += 1;
@@ -706,9 +769,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       controlScheme: "command",
       objective: state.finished
         ? "Incident closed out"
-        : step
-          ? `${PHASES[step.phase]} — step ${step.phase + 1} of 8`
-          : scenario.title,
+        : state.observing && step
+          ? `LOOK AT THE SCENE — ${PHASES[step.phase]}`
+          : step
+            ? `${PHASES[step.phase]} — step ${step.phase + 1} of 8`
+            : scenario.title,
       score: Math.max(0, state.score),
       timeMs: state.remainingMs,
       progress: (state.stepIndex / scenario.steps.length) * 100,
@@ -732,6 +797,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         label,
         done: index < state.stepIndex,
       })),
+      prompt: state.observing
+        ? {
+            text: `Watch what is happening — the question opens in ${Math.max(0, Math.ceil((state.observeEndsAt - stage.elapsed * 1000) / 1000))}s`,
+            tone: "normal",
+            key: "",
+          }
+        : null,
       tasksTitle: "RESPONSE STEPS",
       keyHints: mobile ? [] : [
         { key: "1-4", label: "Decide" },
@@ -746,10 +818,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   // Show the brief, then start the clock on the first decision. The
   // brief stays dismissable from the BRIEF button at any time.
+  // The incident announces itself: the site evacuation siren runs under
+  // the brief, so the player hears the emergency before they read it.
+  sfx.siren();
   showBrief();
   later(() => {
     if (!state.finished) { api.dialog(null); openStep(); }
-  }, 2600);
+  }, 3400);
 
   stage.start((dt) => {
     if (state.paused) return;
@@ -765,6 +840,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Decision clock.
     if (state.dialogOpen && currentStep && !state.finished) {
       const remaining = state.decisionEndsAt - stage.elapsed * 1000;
+      // An audible countdown over the last five seconds, so the clock is
+      // something you hear rather than something you have to watch.
+      if (remaining > 0 && remaining <= 5000) {
+        const second = Math.ceil(remaining / 1000);
+        if (second !== state.lastCountdownBeep) {
+          state.lastCountdownBeep = second;
+          sfx.countdown();
+        }
+      }
       if (remaining <= 0) {
         resolveStep(null);
       } else if (!state.briefOpen) {
@@ -914,6 +998,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       state, scenario, crowd,
       currentStep: () => currentStep,
       currentOptions: () => currentOptions,
+      // Lets the headless test skip the 5-second observation beat
+      // rather than sleeping through eight of them.
+      beginDecision,
+      OBSERVE_MS,
     },
   };
 }
