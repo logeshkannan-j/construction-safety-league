@@ -32,8 +32,9 @@ const SoloSession = lazy(() => import("./SoloSession.jsx"));
 import { GAME_KEY, Q_KEY, PLAYER_PREFIX, MY_ID_KEY, POLL_MS } from "./constants";
 import { safeGet, safeSet, safeDelete, safeList, getServerTimeOffset, getDbError } from "./storage";
 import {
-  createSession, createLivePaper,
+  createSession, createLivePaper, clampQuizPerRound, totalItems,
   ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, NOT_RELEASED,
+  QUIZ_PER_ROUND, QUIZ_PER_ROUND_OPTIONS, MQ_PER_ROUND,
 } from "./session.js";
 
 // The palette and the shared control styles now live in theme.js so the
@@ -373,6 +374,9 @@ function defaultGame() {
     // Highest round the host has released, -1 before the event starts.
     // A participant can never run ahead of this.
     releasedRound: NOT_RELEASED,
+    // How many MCQs each round holds. The host sets this; a round is
+    // always 1 x 3D mission, then this many MCQs, then 1 finale.
+    quizPerRound: QUIZ_PER_ROUND,
 
     qIndex: 0,
     questionStartedAt: null,
@@ -530,7 +534,7 @@ export default function App() {
 
   return (
     <div style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.ink, fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif", overflowX: "hidden" }}>
-      <style>{`*, *::before, *::after { box-sizing: border-box; } html, body, #root { margin: 0; min-width: 0; width: 100%; overflow-x: hidden; } .csl-player-stage { width: 100%; min-width: 0; padding: clamp(12px, 3vw, 28px); } .csl-hazard-question { width: min(100%, 560px); margin: 0 auto; } .csl-hazard-question img { max-width: 100%; } @media (min-width: 700px) { .csl-player-stage { padding: 28px 40px; } } @media (max-width: 520px) { .csl-player-stage { padding: 12px; } }`}</style>
+      <style>{`*, *::before, *::after { box-sizing: border-box; } html, body, #root { margin: 0; min-width: 0; width: 100%; overflow-x: hidden; } .csl-player-stage { width: 100%; min-width: 0; padding: clamp(12px, 3vw, 28px); } .csl-hazard-question { width: min(100%, 560px); margin: 0 auto; } .csl-hazard-question img { max-width: 100%; } @media (min-width: 700px) { .csl-player-stage { padding: 28px 40px; } } @media (max-width: 520px) { .csl-player-stage { padding: 12px; } } /* Answer buttons must never look pre-selected. A mouse or touch tap leaves no ring at all; only real keyboard navigation shows one, and it is a dashed outline rather than a filled highlight so it cannot be mistaken for "this is the answer". */ .csl-answer:focus { outline: none; } .csl-answer:focus-visible { outline: 2px dashed #909AA3; outline-offset: 2px; } .csl-answer::-moz-focus-inner { border: 0; }`}</style>
       {!role && <RoleSelect onSelect={setRole} />}
       {role === "admin" && <AdminView onExit={() => setRole(null)} />}
       {role === "player" && <PlayerView onExit={() => setRole(null)} />}
@@ -1025,6 +1029,7 @@ function AdminView({ onExit }) {
   // Plain derived values, safe to compute after the early returns.
   const adminSoloMode = game?.sessionMode === "solo";
   const releasedRound = Number.isFinite(game?.releasedRound) ? game.releasedRound : NOT_RELEASED;
+  const adminQuizPerRound = clampQuizPerRound(game?.quizPerRound ?? QUIZ_PER_ROUND);
 
   // Releasing a round is the ONLY way the room moves forward in an
   // integrated session. It never goes backwards: a participant already
@@ -1061,6 +1066,26 @@ function AdminView({ onExit }) {
 
             {adminSoloMode ? (
               <>
+                {/* Until Round 1 is released nothing happens for anyone,
+                    and the panel otherwise gives no clue that the host
+                    is the thing everybody is waiting on. */}
+                {releasedRound < 0 && (
+                  <div style={{
+                    background: COLORS.green + "16", border: `1px solid ${COLORS.green}`,
+                    borderRadius: 10, padding: "13px 15px", marginBottom: 14,
+                    display: "flex", gap: 11, alignItems: "flex-start",
+                  }}>
+                    <Play size={18} color={COLORS.green} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <div style={{ fontSize: 13, lineHeight: 1.55 }}>
+                      <div style={{ fontWeight: 800, color: COLORS.green, marginBottom: 3 }}>
+                        Nothing has started yet
+                      </div>
+                      Participants who join are sitting on a waiting screen. Press{" "}
+                      <b>Start Round 1</b> below to open the first 3D mission for the room.
+                    </div>
+                  </div>
+                )}
+
                 <RoundTimeline releasedRound={releasedRound} />
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: 8, margin: "14px 0" }}>
@@ -1134,7 +1159,7 @@ function AdminView({ onExit }) {
                 {
                   id: "solo",
                   title: "Integrated session (recommended)",
-                  detail: `One game code, one set of details, ${ROUND_COUNT} rounds. Each round is a 3D mission, then one quiz question, then one finale question — ${ROUND_COUNT * 3} items scored into a single result. You release each round; inside a round everyone works at their own pace on their own shuffled paper.`,
+                  detail: `One game code, one set of details, ${ROUND_COUNT} rounds. Each round is a 3D mission, then ${adminQuizPerRound} quiz questions, then a finale question — ${totalItems(adminQuizPerRound)} items scored into a single result. You release each round; inside a round everyone works at their own pace on their own shuffled paper.`,
                   color: COLORS.green,
                 },
                 {
@@ -1176,21 +1201,78 @@ function AdminView({ onExit }) {
 
             {(game.sessionMode || "live") === "solo" && (
               <>
+                {/* The host owns the shape of a round. */}
                 <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, letterSpacing: 0.6, marginBottom: 7 }}>
-                  THE {ROUND_COUNT} ROUNDS
+                  WHAT EACH ROUND CONTAINS
+                </div>
+                <div style={{
+                  background: COLORS.surfaceRaised, border: `1px solid ${COLORS.line}`,
+                  borderRadius: 10, padding: "12px 13px", marginBottom: 12,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13, marginBottom: 10 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: COLORS.orange, fontWeight: 700 }}>
+                      <Gamepad2 size={14} /> 1 × 3D mission
+                    </span>
+                    <span style={{ color: COLORS.muted }}>→</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: COLORS.green, fontWeight: 700 }}>
+                      <Target size={14} /> {adminQuizPerRound} × quiz
+                    </span>
+                    <span style={{ color: COLORS.muted }}>→</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: COLORS.purple, fontWeight: 700 }}>
+                      <Gem size={14} /> {MQ_PER_ROUND} × finale
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: 11.5, color: COLORS.muted, marginBottom: 7 }}>
+                    QUIZ QUESTIONS PER ROUND
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {QUIZ_PER_ROUND_OPTIONS.map((n) => {
+                      const active = adminQuizPerRound === n;
+                      return (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => patchGame({ quizPerRound: n })}
+                          style={{
+                            minWidth: 44, padding: "8px 12px", borderRadius: 8,
+                            background: active ? COLORS.green + "22" : COLORS.surface,
+                            border: `1px solid ${active ? COLORS.green : COLORS.line}`,
+                            color: active ? COLORS.green : COLORS.ink,
+                            fontWeight: 800, fontSize: 14, cursor: "pointer",
+                          }}
+                        >
+                          {n}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p style={{ fontSize: 12, color: COLORS.muted, margin: "9px 0 0", lineHeight: 1.55 }}>
+                    That is <b style={{ color: COLORS.ink }}>{ROUND_COUNT} × ({1 + adminQuizPerRound + MQ_PER_ROUND}) = {totalItems(adminQuizPerRound)} items</b>
+                    {" "}per participant — {ROUND_COUNT} missions, {ROUND_COUNT * adminQuizPerRound} quiz
+                    questions and {ROUND_COUNT * MQ_PER_ROUND} finale questions. Changing this affects
+                    participants who join from now on; anyone already playing keeps the paper they were dealt.
+                  </p>
+                </div>
+
+                <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, letterSpacing: 0.6, marginBottom: 7 }}>
+                  THE {ROUND_COUNT} MISSIONS — DEALT IN A DIFFERENT ORDER TO EACH PARTICIPANT
                 </div>
                 <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
-                  {ROUND_GAMES.map((gameId, i) => (
+                  {ROUND_GAMES.map((gameId) => (
                     <div key={gameId} style={{ display: "flex", alignItems: "center", gap: 10, background: COLORS.surfaceRaised, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "9px 11px" }}>
-                      <span style={{ width: 22, height: 22, borderRadius: "50%", background: COLORS.green + "22", border: `1px solid ${COLORS.green}66`, color: COLORS.green, fontSize: 11, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
+                      <span style={{ width: 22, height: 22, borderRadius: "50%", background: COLORS.green + "22", border: `1px solid ${COLORS.green}66`, color: COLORS.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <Gamepad2 size={12} />
+                      </span>
                       <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink }}>{ROUND_MISSION_NAMES[gameId]}</span>
                       <span style={{ fontSize: 12, color: COLORS.muted, marginLeft: "auto" }}>+ 1 quiz + 1 finale</span>
                     </div>
                   ))}
                 </div>
                 <p style={{ color: COLORS.muted, fontSize: 12, lineHeight: 1.55, margin: 0 }}>
-                  Changing the mode affects participants who join from now on. Anyone already
-                  part-way through keeps the session they started.
+                  Every participant plays all five, but in their own order, with their own
+                  questions. Changing the mode affects participants who join from now on — anyone
+                  already part-way through keeps the session they started.
                 </p>
               </>
             )}
@@ -1305,6 +1387,16 @@ function AdminView({ onExit }) {
             next.splice(toIndex, 0, moved);
             await safeSet(Q_KEY, JSON.stringify(next), true);
             await refresh();
+          }}
+          soloMode={adminSoloMode}
+          onReshuffle={async () => {
+            // Deals a whole new live paper: different questions, a
+            // different order, and the options shuffled inside each one.
+            // Any custom questions the admin added are kept and appended.
+            const custom = (questionsRef || []).filter((q) => q.custom || q.round === "hazard");
+            const fresh = buildRandomizedGameQuestions();
+            await safeSet(Q_KEY, JSON.stringify([...fresh, ...custom]), true);
+            await refresh();
           }} />
 
           <Panel title="Participants" icon={<Trophy size={18} color={COLORS.yellow} />}>
@@ -1344,10 +1436,11 @@ function AdminView({ onExit }) {
 // Lets the admin delete any question — MCQ, True/False, custom, or a
 // hazard round (default or admin-uploaded). Delete needs a second tap
 // on the same row to confirm.
-function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder }) {
+function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder, soloMode, onReshuffle }) {
   const [confirmIdx, setConfirmIdx] = useState(null);
   const [editingIdx, setEditingIdx] = useState(null);
   const [draggedIndex, setDraggedIndex] = useState(null);
+  const [shuffling, setShuffling] = useState(false);
   const badge = {
     quiz: [COLORS.green, "MCQ"],
     truefalse: [COLORS.yellow, "T/F"],
@@ -1356,7 +1449,51 @@ function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder }) {
   };
 
   return (
-    <Panel title={`Manage Questions (${questions.length})`} icon={<ListChecks size={18} color={COLORS.orange} />}>
+    <Panel title={`Live event questions (${questions.length})`} icon={<ListChecks size={18} color={COLORS.orange} />}>
+      {/* This list belongs to LIVE EVENT mode only. Saying so here is
+          what stops "where are my 3D missions?" — an integrated session
+          never touches this list. */}
+      {soloMode ? (
+        <div style={{
+          background: COLORS.yellow + "14", border: `1px solid ${COLORS.yellow}66`,
+          borderRadius: 9, padding: "11px 13px", marginBottom: 12,
+          fontSize: 12.5, color: COLORS.ink, lineHeight: 1.55,
+        }}>
+          <b style={{ color: COLORS.yellow }}>Not in use right now.</b> You are running an{" "}
+          <b>Integrated session</b>, so participants get the five 3D missions plus their own
+          shuffled questions dealt fresh from the question bank — this list is ignored.
+          It is only used if you switch to <b>Live event</b> mode, which has no 3D missions.
+        </div>
+      ) : (
+        <div style={{
+          background: COLORS.surfaceRaised, borderRadius: 9, padding: "11px 13px",
+          marginBottom: 12, fontSize: 12.5, color: COLORS.muted, lineHeight: 1.55,
+        }}>
+          <b style={{ color: COLORS.ink }}>Live event mode has no 3D missions.</b> It is the
+          original host-paced quiz: everyone answers the same question at the same time.
+          For the 3D missions, switch to <b>Integrated session</b> above.
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <button
+          disabled={shuffling}
+          onClick={async () => {
+            setShuffling(true);
+            await onReshuffle?.();
+            setShuffling(false);
+          }}
+          style={{
+            background: COLORS.surfaceRaised, color: COLORS.ink,
+            border: `1px solid ${COLORS.line}`, borderRadius: 8,
+            padding: "8px 12px", fontSize: 12.5, fontWeight: 700,
+            cursor: shuffling ? "default" : "pointer", opacity: shuffling ? 0.6 : 1,
+          }}
+        >
+          {shuffling ? "Dealing…" : "🎲 Reshuffle — deal a new paper"}
+        </button>
+      </div>
+
       <p style={{ color: COLORS.muted, fontSize: 12, marginBottom: 10 }}>Drag a question row to change its position. Edit any question, or tap the trash icon twice to remove it.</p>
       {questions.length === 0 && <p style={{ color: COLORS.muted, fontSize: 13 }}>No questions loaded yet.</p>}
       <div style={{ display: "grid", gap: 6, maxHeight: 360, overflowY: "auto" }}>
@@ -1719,7 +1856,10 @@ function PlayerView({ onExit }) {
     // now and stored on their record, so it survives a page refresh and
     // is theirs alone. The live event mode is unchanged and ignores it.
     if (isSoloMode) {
-      player.session = createSession({ now: Date.now() });
+      player.session = createSession({
+        now: Date.now(),
+        quizPerRound: clampQuizPerRound(game.quizPerRound ?? QUIZ_PER_ROUND),
+      });
       player.scores = { game3d: 0, quiz: 0, millionaire: 0 };
     }
     await safeSet(PLAYER_PREFIX + id, JSON.stringify(player), true);
@@ -2004,6 +2144,15 @@ function QuestionCard({ question, startedAt, now, onAnswer }) {
   const [picked, setPicked] = useState(null);
   const optionColors = [COLORS.orange, COLORS.green, COLORS.yellow, "#5B8DEF"];
 
+  // A new question must arrive with nothing focused and nothing picked,
+  // or the previous answer's focus ring carries over and looks like a
+  // hint. Keyed on the question text so it fires on every change.
+  useEffect(() => {
+    setPicked(null);
+    const active = typeof document !== "undefined" ? document.activeElement : null;
+    if (active && typeof active.blur === "function" && active !== document.body) active.blur();
+  }, [question.question]);
+
   return (
     <div style={{ width: "100%", maxWidth: 420 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -2016,7 +2165,11 @@ function QuestionCard({ question, startedAt, now, onAnswer }) {
       <div style={{ display: "grid", gridTemplateColumns: isTF ? "1fr 1fr" : "1fr 1fr", gap: 10 }}>
         {question.options.map((opt, i) => (
           <button
-            key={i}
+            // Keyed by text so React does not reuse the same four DOM
+            // nodes across questions and park focus on one slot.
+            key={`${i}:${opt}`}
+            type="button"
+            className="csl-answer"
             disabled={remaining === 0 || picked !== null}
             onClick={() => { setPicked(i); onAnswer(i); }}
             style={{
@@ -2862,36 +3015,43 @@ const StatCell = React.memo(function StatCell({ label, value, big }) {
 /**
  * The five rounds and where the room has got to. Rounds the host has
  * released are lit; the next one up is outlined; the rest are dim.
+ *
+ * Deliberately does NOT name a mission per round: each participant is
+ * dealt the five missions in their own order, so "Round 3" is a
+ * different mission for different people in the room.
  */
 const RoundTimeline = React.memo(function RoundTimeline({ releasedRound }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: `repeat(${ROUND_COUNT}, 1fr)`, gap: 6 }}>
-      {ROUND_GAMES.map((gameId, i) => {
-        const released = i <= releasedRound;
-        const next = i === releasedRound + 1;
-        const color = released ? COLORS.green : next ? COLORS.yellow : COLORS.line;
-        return (
-          <div
-            key={gameId}
-            style={{
-              background: released ? COLORS.green + "14" : COLORS.surfaceRaised,
-              border: `1px solid ${color}`,
-              borderRadius: 8, padding: "8px 6px", textAlign: "center", minWidth: 0,
-            }}
-          >
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, color }}>
-              ROUND {i + 1}
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${ROUND_COUNT}, 1fr)`, gap: 6 }}>
+        {Array.from({ length: ROUND_COUNT }, (_, i) => {
+          const released = i <= releasedRound;
+          const next = i === releasedRound + 1;
+          const color = released ? COLORS.green : next ? COLORS.yellow : COLORS.line;
+          return (
+            <div
+              key={i}
+              style={{
+                background: released ? COLORS.green + "14" : COLORS.surfaceRaised,
+                border: `1px solid ${color}`,
+                borderRadius: 8, padding: "9px 6px", textAlign: "center", minWidth: 0,
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, color }}>
+                ROUND {i + 1}
+              </div>
+              <div style={{ fontSize: 11, color: released ? COLORS.ink : COLORS.muted, marginTop: 3 }}>
+                {released ? "released" : next ? "next up" : "locked"}
+              </div>
             </div>
-            <div style={{
-              fontSize: 11, color: released ? COLORS.ink : COLORS.muted, marginTop: 3,
-              lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis",
-            }}>
-              {ROUND_MISSION_NAMES[gameId] || gameId}
-            </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11.5, color: COLORS.muted, marginTop: 7, lineHeight: 1.5 }}>
+        Each participant is dealt the five missions in their own order, so Round {Math.max(1, releasedRound + 1)} is
+        a different mission for different people.
+      </div>
+    </>
   );
 });
 

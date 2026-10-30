@@ -336,6 +336,16 @@ export function createInput(element, opts = {}) {
       state.lookDY += Number(dy) || 0;
     },
 
+    /**
+     * Pinch-to-zoom from the touch pad, in the same units and sign as a
+     * mouse wheel's deltaY — positive zooms OUT. Feeding both into one
+     * channel means a game implements zoom once and gets desktop wheel
+     * and phone pinch for free.
+     */
+    addZoom(delta) {
+      state.wheel = (state.wheel || 0) + (Number(delta) || 0);
+    },
+
     /** Touch-look pad reports a tap that was not a drag. */
     registerTap,
 

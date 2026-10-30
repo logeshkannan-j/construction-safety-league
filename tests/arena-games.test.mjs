@@ -31,10 +31,8 @@ function section(title) {
 
 // The correct option id for each escape-room area.
 const ESCAPE_CORRECT = {
-  basement: "lit",
   electrical: "isolate",
   ppe: "full",
-  chemical: "decanted",
   fire: "co2",
   signage: "dontuse",
   alarm: "raise",
@@ -158,6 +156,63 @@ for (const [path, id, title] of GAMES) {
   check(`${id}: mobile action buttons are declared`, record.buttons.length > 0);
   check(`${id}: every action button has a label and an action`,
     record.buttons.every((b) => b.label && b.action), JSON.stringify(record.buttons));
+}
+
+/* ================================================================ *
+ *  Zoom — every game, desktop wheel AND phone pinch
+ * ================================================================ */
+
+section("Zoom works in all five games");
+
+{
+  for (const [path, id] of GAMES) {
+    const { instance, record } = await boot(path);
+    const input = instance.input;
+    runFrames(10);
+
+    // Both the wheel and a pinch arrive through the same channel, so
+    // testing addZoom proves the touch path too.
+    check(`${id}: the input object accepts a pinch`, typeof input.addZoom === "function");
+
+    const cam = instance.__test?.camera || null;
+    // Capture whatever "how close am I" means for this game: a
+    // first-person/cab game narrows its FOV, an orbit game pulls in.
+    const before = {
+      fov: instance.__test?.zoomFov?.() ?? null,
+      distance: instance.__test?.camDistance?.() ?? null,
+    };
+
+    input.addZoom(-600);        // a firm zoom IN
+    runFrames(40);
+
+    const after = {
+      fov: instance.__test?.zoomFov?.() ?? null,
+      distance: instance.__test?.camDistance?.() ?? null,
+    };
+
+    const movedFov = before.fov !== null && after.fov !== null && after.fov < before.fov - 0.5;
+    const movedDist = before.distance !== null && after.distance !== null
+      && after.distance < before.distance - 0.5;
+
+    check(`${id}: zooming in actually moves the view closer`, movedFov || movedDist,
+      `fov ${before.fov}→${after.fov}  distance ${before.distance}→${after.distance}`);
+
+    // Every game must advertise zoom on BOTH control lists, or players
+    // on a phone will never discover it.
+    const mod = (await import(`${SRC}/games/${path}/index.js`));
+    const meta = mod.default || mod;
+    const hasDesktopZoom = (meta.desktopControls || []).some(([, d]) => /zoom/i.test(d));
+    const hasMobileZoom = (meta.mobileControls || []).some(([k, d]) => /zoom|pinch/i.test(k + d));
+    check(`${id}: zoom is documented for desktop`, hasDesktopZoom);
+    check(`${id}: zoom is documented for mobile`, hasMobileZoom);
+
+    // And a ZOOM action button exists for thumbs.
+    check(`${id}: there is a ZOOM action button`,
+      record.buttons.some((b) => /zoom/i.test(b.label)) || /zoom/i.test(JSON.stringify(record.hud.keyHints || [])),
+      JSON.stringify(record.buttons.map((b) => b.label)));
+
+    instance.dispose();
+  }
 }
 
 /* ================================================================ *
@@ -632,8 +687,8 @@ section("Safety Escape Challenge — escape the building");
   const { state, controller, interactables, doors } = instance.__test;
 
   runFrames(10);
-  check("there are 7 areas to clear", interactables.length === 7, `${interactables.length}`);
-  check("there are 7 doors", doors.length === 7, `${doors.length}`);
+  check("there are 5 areas to clear", interactables.length === 5, `${interactables.length}`);
+  check("there are 5 doors", doors.length === 5, `${doors.length}`);
   check("every door starts locked", doors.every((d) => d.locked));
 
   // Movement works inside the building.
@@ -688,7 +743,7 @@ section("Safety Escape Challenge — escape the building");
     solved += 1;
   }
 
-  check("six areas are solved by decision", solved === 6, `${solved}/6`);
+  check("four areas are solved by decision", solved === 4, `${solved}/4`);
 
   /* ---- the plant room is played out: carry an extinguisher to the fire ---- */
   {
@@ -735,10 +790,10 @@ section("Safety Escape Challenge — escape the building");
     runFrames(180);
     check("sustained discharge puts the fire out", fire.out === true);
     check("the flames are gone from the scene", fire.flames.visible === false);
-    check("putting the fire out clears the plant room", state.solved === 7, `${state.solved}`);
+    check("putting the fire out clears the plant room", state.solved === 5, `${state.solved}`);
   }
 
-  check("all 7 areas end up cleared", state.solved === 7, `${state.solved}/7`);
+  check("all 5 areas end up cleared", state.solved === 5, `${state.solved}/5`);
   check("solving an area unlocks its door", doors.every((d) => !d.locked),
     `${doors.filter((d) => d.locked).length} still locked`);
   check("the only mistake was the deliberate wrong extinguisher", state.mistakes === 1, `${state.mistakes}`);
@@ -776,9 +831,9 @@ section("Safety Escape Challenge — escape the building");
     JSON.stringify(result && { completed: result.completed, escaped: result.stats?.escaped }));
   if (result) {
     check("escaping scores the escape bonus", result.score > 1500, `${result.score}`);
-    // 7 areas cleared, 1 mistake -> 100 * (7/7) * (7/8).
+    // 5 areas cleared, 1 mistake -> 100 * (5/5) * (5/6).
     check("the rating reflects the one wrong extinguisher, not a perfect run",
-      result.performance === Math.round(100 * (7 / 8)), `${result.performance}`);
+      result.performance === Math.round(100 * (5 / 6)), `${result.performance}`);
     check("the rating is below a perfect run", result.performance < 100, `${result.performance}`);
     check("the escape result is under the ceiling", result.score <= 12000, `${result.score}`);
   }
@@ -791,82 +846,94 @@ section("Safety Escape Challenge — escape the building");
  *  Game 5 — command the incident
  * ================================================================ */
 
-section("Emergency Response Commander — command the incident");
+section("Emergency Response Commander — an activity, not a menu");
 {
   const { instance, record } = await boot("emergencyCommander");
-  const { state, scenario, crowd, currentOptions, beginDecision, OBSERVE_MS } = instance.__test;
+  const {
+    state, scenario, crowd, STATIONS, STATION_COUNT,
+    actOnStation, enterHazard, nextRequiredPhase, stationMarkers,
+  } = instance.__test;
 
-  check("a scenario was selected", !!scenario?.steps?.length, scenario?.id);
-  check("the scenario has all 8 response steps", scenario.steps.length === 8, `${scenario.steps.length}`);
-  check("every step has exactly one best option",
-    scenario.steps.every((s) => s.options.filter((o) => o.correct).length === 1));
-  check("every option explains itself", scenario.steps.every((s) => s.options.every((o) => !!o.feedback)));
-
-  // The brief shows first, then the first decision opens on a timer.
-  runFrames(5);
-  check("the incident brief is shown first", record.dialogs[0]?.eyebrow === "INCIDENT BRIEF");
-
-  // Advance past the brief delay.
-  await new Promise((resolve) => setTimeout(resolve, 3500));
   runFrames(5);
 
-  // Each step now opens with an observation beat: the camera zooms onto
-  // the scene and the question is deliberately NOT asked yet.
-  check("the step opens by showing the scene, not the question",
-    state.observing === true && state.dialogOpen === false,
-    `observing=${state.observing} dialogOpen=${state.dialogOpen}`);
-  check("the observation beat is a real pause to look", OBSERVE_MS >= 4000, `${OBSERVE_MS}ms`);
-  check("the HUD tells the player to look at the scene",
-    (record.hud.objective || "").includes("LOOK AT THE SCENE"), record.hud.objective);
+  check("a scenario was selected", !!scenario, scenario?.id);
+  check("the response is eight stations", STATION_COUNT === 8, `${STATION_COUNT}`);
+  check("every station is a real object in the world",
+    STATIONS.every((s) => stationMarkers.has(s.id)),
+    STATIONS.filter((s) => !stationMarkers.has(s.id)).map((s) => s.id).join(","));
+  check("every station names the action it performs",
+    STATIONS.every((s) => s.action && s.label && s.prompt && s.lesson));
 
-  // Skip the wait rather than sleeping through eight of them.
-  beginDecision();
-  runFrames(5);
-  check("the question opens after the observation beat",
-    state.dialogOpen === true && state.observing === false);
+  // THE defining property of this rewrite: nothing is chosen from a list.
+  check("no decision dialog with options is ever opened",
+    (record.dialogs || []).every((d) => !(d.options || []).length),
+    JSON.stringify((record.dialogs || []).map((d) => (d.options || []).length)));
 
-  const casualtyStart = state.casualty;
-  let decided = 0;
-  for (let step = 0; step < scenario.steps.length; step++) {
-    // Wait for the step to open (a 1.4s beat, then the observation
-    // beat), then skip straight to its question.
-    for (let wait = 0; wait < 60 && !state.dialogOpen && !state.observing; wait++) {
-      await new Promise((resolve) => setTimeout(resolve, 60));
-      runFrames(4);
-    }
-    if (state.observing) { beginDecision(); runFrames(3); }
-    if (!state.dialogOpen) break;
-    const options = currentOptions();
-    const best = options.find((o) => o.correct);
-    if (!best) break;
-    record.dialog.onPick(best.id);
-    decided += 1;
-    runFrames(4);
+  check("the HUD lists the eight actions as tasks",
+    (record.hud.tasks || []).length === 8, `${(record.hud.tasks || []).length}`);
+  check("the HUD tells the player what to find next",
+    /find the/i.test(record.hud.prompt?.text || ""), record.hud.prompt?.text);
+
+  // --- walking into the hazard is available, and always wrong ---
+  const controlBefore = state.control;
+  enterHazard();
+  runFrames(2);
+  check("the player CAN walk into the hazard", state.hazardEntries === 1);
+  check("walking into the hazard costs heavily", state.score < 0, `${state.score}`);
+  check("walking into the hazard costs scene control", state.control < controlBefore,
+    `${controlBefore} -> ${state.control}`);
+  check("it does not count as completing anything", state.doneStations.size === 0);
+
+  // --- acting out of order works, but costs control ---
+  const outOfOrder = STATIONS[5];
+  check("the next required station is the first one", nextRequiredPhase() === 0);
+  const ctrl2 = state.control;
+  actOnStation(outOfOrder);
+  runFrames(2);
+  check("an out-of-order action still gets done", state.doneStations.has(outOfOrder.id));
+  check("an out-of-order action is counted as such", state.outOfSequence === 1);
+  check("an out-of-order action costs control", state.control < ctrl2 + outOfOrder.effects.control,
+    `${ctrl2} -> ${state.control}`);
+
+  // --- now work the rest in sequence ---
+  for (const s of STATIONS) {
+    if (state.doneStations.has(s.id)) continue;
+    const before = state.doneStations.size;
+    actOnStation(s);
+    runFrames(2);
+    check(`"${s.action}" is performed by acting on the ${s.label}`,
+      state.doneStations.size === before + 1 && state.doneStations.has(s.id));
   }
 
-  check("all 8 steps can be decided", decided === 8, `${decided}/8`);
-  check("best decisions were counted", state.best === 8, `${state.best}`);
-  check("no decision clocks were missed", state.timeouts === 0, `${state.timeouts}`);
-  check("the alarm was raised during the response", state.alarmRaised === true);
-  check("the area was isolated", state.isolated === true);
-  check("the emergency services were called", state.servicesCalled === true);
-  check("the casualty's condition did not fall", state.casualty >= casualtyStart,
-    `${casualtyStart} → ${state.casualty}`);
+  check("all eight actions were taken", state.doneStations.size === STATION_COUNT);
+  check("seven of the eight were in sequence", state.best === 7, `${state.best}`);
 
-  // The workforce should actually walk to the muster point. They start
-  // spread across the site, so this is tens of seconds of walking.
+  // --- the world actually reacted to what was done ---
+  check("raising the alarm set the alarm flag", state.alarmRaised === true);
+  check("isolating set the isolation flag", state.isolated === true);
+  check("ordering the evacuation started it", state.evacuating === true);
+  check("calling 999 dispatched the ambulance", state.servicesCalled === true);
+  check("manning the gate was recorded", state.gateManned === true);
+
+  // The workforce physically walks to the muster point.
   runFrames(2400);
   const arrived = crowd.filter((p) => p.arrived).length;
   check("the workforce evacuates to the muster point", arrived > crowd.length / 2,
     `${arrived}/${crowd.length} arrived`);
 
-  runFrames(10);
+  // The close-out fires on a real 1.6s beat so the player sees the
+  // scene settle, so this needs real time, not just frames.
+  await new Promise((r) => setTimeout(r, 2200));
+  runFrames(30);
+
   const result = record.finished;
-  check("deciding every step completes the response", !!result && result.completed === true);
+  check("taking every action completes the response", !!result && result.completed === true);
   if (result) {
-    check("a textbook response saves the casualty", (result.stats?.casualties || 0) === 0,
-      JSON.stringify(result.stats));
-    check("a textbook response rates highly", result.performance >= 85, `${result.performance}`);
+    check("the debrief calls out walking into the hazard",
+      (result.lessons || []).some((l) => /commander/i.test(l)),
+      JSON.stringify(result.lessons));
+    check("the rating is not perfect after a hazard entry", result.performance < 100,
+      `${result.performance}`);
     check("the response score is under the ceiling", result.score <= 12000, `${result.score}`);
   }
 

@@ -104,29 +104,43 @@ one Firebase database and therefore one game.
 ## One session: five rounds
 
 A participant enters the game code, submits their details **once**, and plays five
-rounds. Each round is a 3D mission, then one quiz question, then one Safety
+rounds. Each round is a 3D mission, then three quiz questions, then one Safety
 Millionaire question:
 
 ```
-ROUND 1   Safety Mission      →  quiz Q1  →  millionaire Q1
-ROUND 2   Tower Crane         →  quiz Q2  →  millionaire Q2
-ROUND 3   Spot the Hazards    →  quiz Q3  →  millionaire Q3
-ROUND 4   Safety Escape       →  quiz Q4  →  millionaire Q4
-ROUND 5   Emergency Response  →  quiz Q5  →  millionaire Q5
-                                 ─────────────────────────
-                       5 missions + 5 quiz + 5 finale = 15 items
+ROUND 1   a 3D mission  →  3 × quiz  →  1 × millionaire
+ROUND 2   a 3D mission  →  3 × quiz  →  1 × millionaire
+ROUND 3   a 3D mission  →  3 × quiz  →  1 × millionaire
+ROUND 4   a 3D mission  →  3 × quiz  →  1 × millionaire
+ROUND 5   a 3D mission  →  3 × quiz  →  1 × millionaire
+                          ──────────────────────────
+               5 missions + 15 quiz + 5 finale = 25 items
 ```
+
+**You choose how many quiz questions each round holds** — 1, 2, 3 or 4 — in
+Admin → *How participants play* → **What each round contains**. The 3D mission and the
+finale question are always one each, so the session is 5 × (2 + your number) items.
+Changing it affects people who join from then on; anyone already playing keeps the
+paper they were dealt.
+
+**Everybody plays all five missions, but not in the same order.** The missions are
+dealt to each participant in their own sequence, so Round 3 is the crane for one
+person and the escape for the person next to them.
 
 **The host releases each round.** Nobody can start until Admin presses *Start Round 1*,
 and nobody runs ahead: finishing a round puts a participant back on a waiting screen
 until the host releases the next one. Inside a round everyone works at their own
 speed, because a 3D mission takes a different amount of time for everyone.
 
-- The ten written questions come from a construction-safety bank covering working
+- The twenty written questions come from a construction-safety bank covering working
   at height, scaffolding, electrical, PPE, excavation, lifting, crane and hoist,
   fire, housekeeping, confined space, emergency response and material handling.
-- Each participant gets their **own** shuffled paper — a different topic each round,
-  the finale ascending through the tiers, and the answer options shuffled too.
+- Each participant gets their **own** shuffled paper — their own mission order, a
+  different topic each round, their own question at each finale tier, and the answer
+  options shuffled too. Across 300 participants that is 111 different mission orders,
+  300 different quiz papers and 237 different finale papers.
+- The finale still climbs Bronze → Diamond, because escalating stakes is the point of
+  the format. The **questions** at each tier vary instead.
 - Closing the page and coming back resumes the **same** round with the **same**
   questions and the **same** score. No duplicate participants, no re-shuffle.
 - The 3D missions, the quiz and the finale are scored separately and combined into
@@ -157,15 +171,20 @@ the tower crane's counterweight.
 - **Spot the Hazards** — a ground-level walk-round of the compound. Five real
   hazards; for each one, choose the control that removes the risk rather than the
   sign that warns people about it.
-- **Safety Escape Challenge** — work out of a building through seven areas. Pick
-  an extinguisher off the rack, carry it to the fire and discharge it; then open
-  the final exit and walk into the marked assembly area to finish.
-- **Emergency Response Commander** — command a live incident through the eight
-  steps of a site emergency. Each step takes you to the scene and zooms in first;
-  the question only opens once you have seen what is happening.
+- **Safety Escape Challenge** — work out of a bright, white-walled fitted-out floor
+  through five areas. Pick an extinguisher off the rack, carry it to the fire and
+  discharge it; then open the final exit and walk into the marked assembly area to
+  finish.
+- **Emergency Response Commander** — an activity, not a quiz. The eight steps of a
+  real response are eight objects you have to find on the site and use: the
+  break-glass call point, the intake panel, the muster marker, the cone stack, the
+  first-aid post, the radio, the vehicle gate. Order matters. The incident itself is
+  clickable, and walking into it is always wrong.
 
 They work on phones with a real virtual joystick and touch camera, on tablets, and
-on desktop with WASD and the mouse.
+on desktop with WASD and the mouse. **Every mission zooms** — the mouse wheel or a
+two-finger pinch, plus a ZOOM button for thumbs. The walking missions narrow the
+lens; the overhead missions pull the camera in.
 
 Scores feed a persistent Arena leaderboard (daily, weekly, all-time, overall and
 per game) under the same player identity the quiz uses, and the admin panel has a
@@ -181,7 +200,7 @@ device testing checklist are in **[ARENA.md](ARENA.md)**.
 ```bash
 npm install
 npm run dev
-npm test     # 412 tests: the 3D games, the question bank, rounds, scoring,
+npm test     # 495 tests: the 3D games, the question bank, rounds, scoring,
              # rules, and that the app actually renders
 ```
 

@@ -66,22 +66,64 @@ function noise(ctx, w, h, count, colors, size = 3) {
   }
 }
 
+/**
+ * The site ground — by far the most-looked-at surface in four of the
+ * five missions, and previously a flat wash with four bezier tyre
+ * tracks. Now built in layers: damp and dry patches, compacted hardcore,
+ * loose stone, ruts with a highlight on one edge so they read as
+ * depressions, and puddle stains.
+ */
 function dirtTexture(repeat, aniso) {
-  return canvasTexture("dirt", 256, 256, (ctx, w, h) => {
+  return canvasTexture("dirt", 512, 512, (ctx, w, h) => {
     ctx.fillStyle = "#9c8a6a";
     ctx.fillRect(0, 0, w, h);
-    noise(ctx, w, h, 2600, ["#8d7c5e", "#a3906f", "#ab9a79", "#85765a", "#b4a383"], 4);
-    noise(ctx, w, h, 300, ["#6f6350", "#c3b494"], 7);
-    // Faint tyre tracks so the ground does not read as a flat plane.
-    ctx.globalAlpha = 0.18;
-    ctx.strokeStyle = "#6a5f4b";
-    ctx.lineWidth = 10;
-    for (let i = 0; i < 4; i++) {
+
+    // Broad damp / dry patches, so the ground is not one flat colour.
+    for (let i = 0; i < 16; i++) {
+      const cx = (i * 137) % w;
+      const cy = (i * 223) % h;
+      const r = 50 + ((i * 29) % 90);
+      const patch = ctx.createRadialGradient(cx, cy, 4, cx, cy, r);
+      const dark = i % 2 === 0;
+      patch.addColorStop(0, dark ? "rgba(108,96,74,0.5)" : "rgba(186,172,142,0.42)");
+      patch.addColorStop(1, "rgba(156,138,106,0)");
+      ctx.fillStyle = patch;
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+
+    // Compacted fines, then loose stone on top.
+    noise(ctx, w, h, 9000, ["#8d7c5e", "#a3906f", "#ab9a79", "#85765a", "#b4a383"], 3);
+    noise(ctx, w, h, 1400, ["#6f6350", "#c3b494", "#7a6d57"], 5);
+    noise(ctx, w, h, 420, ["#d6cbb2", "#5f5745"], 8);
+
+    // Plant ruts. A dark trough with a lighter lip on one side reads as
+    // a depression rather than a painted line.
+    for (let i = 0; i < 7; i++) {
+      const y = 24 + i * 70;
+      ctx.globalAlpha = 0.24;
+      ctx.strokeStyle = "#6a5f4b";
+      ctx.lineWidth = 16;
       ctx.beginPath();
-      const y = 30 + i * 62;
       ctx.moveTo(0, y);
-      ctx.bezierCurveTo(80, y + 18, 170, y - 20, 256, y + 6);
+      ctx.bezierCurveTo(150, y + 30, 330, y - 34, 512, y + 10);
       ctx.stroke();
+
+      ctx.globalAlpha = 0.16;
+      ctx.strokeStyle = "#c0b093";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, y - 9);
+      ctx.bezierCurveTo(150, y + 21, 330, y - 43, 512, y + 1);
+      ctx.stroke();
+    }
+
+    // Tread marks across the ruts.
+    ctx.globalAlpha = 0.13;
+    ctx.fillStyle = "#574f3f";
+    for (let i = 0; i < 90; i++) {
+      const x = (i * 71) % w;
+      const y = 24 + ((i * 37) % 480);
+      ctx.fillRect(x, y, 9, 3);
     }
     ctx.globalAlpha = 1;
   }, { repeat, aniso });
@@ -91,13 +133,49 @@ function concreteTexture(repeat, aniso) {
   return canvasTexture("concrete", 256, 256, (ctx, w, h) => {
     ctx.fillStyle = "#b4b2ab";
     ctx.fillRect(0, 0, w, h);
-    noise(ctx, w, h, 2000, ["#a9a7a0", "#bebcb5", "#9d9b95", "#c5c3bc"], 4);
-    // Form-work seams.
-    ctx.strokeStyle = "#8f8d87";
-    ctx.lineWidth = 2;
-    [0, 128].forEach((x) => { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); });
-    [0, 128].forEach((y) => { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); });
-    noise(ctx, w, h, 120, ["#7e7c77"], 2);
+    noise(ctx, w, h, 2600, ["#a9a7a0", "#bebcb5", "#9d9b95", "#c5c3bc"], 4);
+
+    // Shutter panel joints, with a shadow line on one side so the seam
+    // has depth instead of being a drawn stripe.
+    [0, 128].forEach((x) => {
+      ctx.strokeStyle = "#8f8d87";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      ctx.strokeStyle = "#c9c7c0";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x + 2, 0); ctx.lineTo(x + 2, h); ctx.stroke();
+    });
+    [0, 128].forEach((y) => {
+      ctx.strokeStyle = "#8f8d87";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      ctx.strokeStyle = "#c9c7c0";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, y + 2); ctx.lineTo(w, y + 2); ctx.stroke();
+    });
+
+    // Tie-bolt holes at the panel corners — the detail that says
+    // "this was cast against formwork".
+    ctx.fillStyle = "#8a8882";
+    [[64, 64], [192, 64], [64, 192], [192, 192]].forEach(([tx, ty]) => {
+      ctx.beginPath();
+      ctx.arc(tx, ty, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Pour lines and staining.
+    ctx.globalAlpha = 0.1;
+    ctx.strokeStyle = "#7e7c77";
+    ctx.lineWidth = 5;
+    for (let i = 0; i < 4; i++) {
+      const y = 20 + i * 64;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.bezierCurveTo(70, y + 5, 170, y - 4, 256, y + 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    noise(ctx, w, h, 160, ["#7e7c77"], 2);
   }, { repeat, aniso });
 }
 
@@ -249,6 +327,46 @@ export function brandPlateTexture() {
   });
 }
 
+/**
+ * Painted plasterboard. Used for the escape building's interior, which
+ * is deliberately white: a dark interior reads as atmospheric on a
+ * desktop monitor and as an unplayable smear on a phone outdoors.
+ */
+function plasterTexture(repeat, aniso, { tint = "#F4F5F6" } = {}) {
+  return canvasTexture(`plaster:${tint}`, 256, 256, (ctx, w, h) => {
+    ctx.fillStyle = tint;
+    ctx.fillRect(0, 0, w, h);
+    // Faint roller texture, so a big white wall is not a dead flat fill.
+    noise(ctx, w, h, 260, ["#ffffff", "#EDEEF0", "#E6E8EA"], 2);
+    // Board joints every half metre or so.
+    ctx.strokeStyle = "#E2E4E7";
+    ctx.lineWidth = 2;
+    for (let i = 1; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo((w / 4) * i, 0);
+      ctx.lineTo((w / 4) * i, h);
+      ctx.stroke();
+    }
+  }, { repeat, aniso });
+}
+
+/** Light power-floated screed, for the same interior. */
+function screedTexture(repeat, aniso) {
+  return canvasTexture("screed", 256, 256, (ctx, w, h) => {
+    ctx.fillStyle = "#DCDFE2";
+    ctx.fillRect(0, 0, w, h);
+    noise(ctx, w, h, 420, ["#E6E9EC", "#D2D6DA", "#C8CDD2"], 3);
+    // Trowel swirls.
+    ctx.strokeStyle = "#D5D9DD";
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 7; i++) {
+      ctx.beginPath();
+      ctx.arc((i * 61) % w, (i * 97) % h, 26 + (i % 4) * 9, 0, Math.PI * 1.4);
+      ctx.stroke();
+    }
+  }, { repeat, aniso });
+}
+
 /** Tall window-grid texture for the finished tower's curtain walling. */
 function curtainWallTexture(floors, repeatY) {
   return canvasTexture(`curtain:${floors}`, 256, 512, (ctx, w, h) => {
@@ -304,6 +422,12 @@ export function createMaterials(cfg) {
     brand: L({ map: brandTexture() }),
     brandDark: L({ map: brandTexture({ dark: true }) }),
     brandPlate: L({ map: brandPlateTexture() }),
+
+    // White interior finishes — the escape building's palette.
+    plaster: L({ map: plasterTexture([2, 1], aniso) }),
+    plasterCeiling: L({ map: plasterTexture([3, 3], aniso, { tint: "#FAFBFC" }) }),
+    screed: L({ map: screedTexture([5, 5], aniso) }),
+    skirting: L({ color: 0xdfe3e7 }),
     curtainWall: P({ map: curtainWallTexture(19, 10), shininess: 70, specular: 0x55646f }),
 
     steel: P({ color: 0x9aa3ab, shininess: 42, specular: 0x4a5056 }),

@@ -23,7 +23,23 @@ const {
   ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS,
   QUIZ_COUNT, MILLIONAIRE_COUNT, TOTAL_QUESTIONS, TOTAL_ITEMS,
   GAME_POINTS_PER_ROUND, NOT_RELEASED,
+  QUIZ_PER_ROUND, MQ_PER_ROUND, QUIZ_PER_ROUND_OPTIONS,
+  quizPerRoundOf, currentQuestion, totalItems, itemsPerRound, clampQuizPerRound,
 } = session;
+
+/** Plays every MCQ in the current round, then the finale question. */
+function playRound(s, { now }) {
+  let out = s;
+  let guard = 0;
+  while (out.stage === STAGES.QUIZ && guard++ < 12) {
+    const q = currentQuestion(out);
+    out = answerQuestion(out, { section: "quiz", pickedIndex: q.correct, now: now() }).session;
+    out = advanceQuestion(out, { now: now() });
+  }
+  const mq = currentQuestion(out);
+  out = answerQuestion(out, { section: "mq", pickedIndex: mq.correct, now: now() }).session;
+  return advanceQuestion(out, { now: now() });
+}
 
 let pass = 0;
 let fail = 0;
@@ -79,10 +95,17 @@ check("the bank is not the old seeded question set",
 section("Round structure");
 
 check(`a session is ${ROUND_COUNT} rounds`, ROUND_COUNT === 5, `${ROUND_COUNT}`);
-check("one quiz and one finale question per round",
-  QUIZ_COUNT === ROUND_COUNT && MILLIONAIRE_COUNT === ROUND_COUNT);
-check(`a session is ${ROUND_COUNT} x 3 = 15 items`,
-  TOTAL_ITEMS === 15 && TOTAL_QUESTIONS === 10, `${TOTAL_ITEMS} items / ${TOTAL_QUESTIONS} questions`);
+check(`a round is 1 mission + ${QUIZ_PER_ROUND} quiz + ${MQ_PER_ROUND} finale`,
+  QUIZ_COUNT === ROUND_COUNT * QUIZ_PER_ROUND && MILLIONAIRE_COUNT === ROUND_COUNT * MQ_PER_ROUND);
+check(`a session is ${ROUND_COUNT} x ${itemsPerRound()} = ${TOTAL_ITEMS} items`,
+  TOTAL_ITEMS === ROUND_COUNT * (1 + QUIZ_PER_ROUND + MQ_PER_ROUND),
+  `${TOTAL_ITEMS} items / ${TOTAL_QUESTIONS} questions`);
+check("the default round is 1 mission + 3 quiz + 1 finale",
+  QUIZ_PER_ROUND === 3 && MQ_PER_ROUND === 1, `${QUIZ_PER_ROUND} + ${MQ_PER_ROUND}`);
+check("the host can choose the MCQs per round",
+  QUIZ_PER_ROUND_OPTIONS.length > 1 && QUIZ_PER_ROUND_OPTIONS.includes(QUIZ_PER_ROUND));
+check("an out-of-range choice is clamped rather than accepted",
+  clampQuizPerRound(99) <= 4 && clampQuizPerRound(0) >= 1 && clampQuizPerRound("x") >= 1);
 
 // The round list must name real Arena games, or a round would load nothing.
 check("every round names a real Arena game",
@@ -103,20 +126,24 @@ section("Session draw");
 {
   const d = createSessionDescriptor();
   check(`the descriptor has ${ROUND_COUNT} rounds`, d.rounds.length === ROUND_COUNT, `${d.rounds.length}`);
-  check("each round carries a mission, a quiz id and a finale id",
-    d.rounds.every((r) => r.gameId && r.quiz?.id && r.mq?.id));
-  check("the rounds are in mission order",
-    d.rounds.map((r) => r.gameId).join(",") === ROUND_GAMES.join(","));
+  check("each round carries a mission, its quiz ids and a finale id",
+    d.rounds.every((r) => r.gameId && Array.isArray(r.quiz)
+      && r.quiz.length === QUIZ_PER_ROUND && r.quiz.every((q) => q.id) && r.mq?.id));
+  check("the rounds use all five missions, each exactly once",
+    new Set(d.rounds.map((r) => r.gameId)).size === ROUND_COUNT
+    && d.rounds.every((r) => ROUND_GAMES.includes(r.gameId)),
+    d.rounds.map((r) => r.gameId).join(","));
 
-  const quizIds = d.rounds.map((r) => r.quiz.id);
+  const quizIds = d.rounds.flatMap((r) => r.quiz.map((q) => q.id));
   const mqIds = d.rounds.map((r) => r.mq.id);
   check("no quiz question repeats in a session", new Set(quizIds).size === quizIds.length);
   check("no finale question repeats in a session", new Set(mqIds).size === mqIds.length);
 
   const { rounds } = hydrateSession({ v: SESSION_VERSION, descriptor: d });
-  const topics = rounds.map((r) => r.quiz.topic);
-  check(`the ${ROUND_COUNT} quiz questions come from ${ROUND_COUNT} different topics`,
-    new Set(topics).size === ROUND_COUNT, topics.join(", "));
+  const topics = rounds.flatMap((r) => r.quiz.map((q) => q.topic));
+  check("the quiz questions are spread across many topics",
+    new Set(topics).size >= Math.min(10, topics.length),
+    `${new Set(topics).size} topics across ${topics.length} questions`);
 
   const tiers = rounds.map((r) => r.millionaire.tier);
   const ascending = tiers.every((t, i) =>
@@ -127,23 +154,157 @@ section("Session draw");
   check("the descriptor is small enough to store per player", bytes < 2000, `${bytes} bytes`);
 }
 
+/* ============ the host owns the shape of a round ============ */
+
+section("The admin can change the pattern");
+
+{
+  for (const n of QUIZ_PER_ROUND_OPTIONS) {
+    const s = createSession({ now: 0, quizPerRound: n });
+    const { rounds } = hydrateSession(s);
+    check(`${n} MCQ per round: every round holds exactly ${n}`,
+      rounds.every((r) => r.quiz.length === n),
+      rounds.map((r) => r.quiz.length).join(","));
+    check(`${n} MCQ per round: the session is ${ROUND_COUNT * (2 + n)} items`,
+      totalItems(n) === ROUND_COUNT * (1 + n + MQ_PER_ROUND), `${totalItems(n)}`);
+    check(`${n} MCQ per round: the session validates`, isSessionValid(s));
+    check(`${n} MCQ per round: the choice is stored on the paper`,
+      quizPerRoundOf(s) === n, `${quizPerRoundOf(s)}`);
+
+    // And it actually plays through at that length.
+    let x = releaseRound(s, { releasedRound: 0, now: 1 }).session;
+    x = completeGame3d(x, { score: 0, maxScore: 12000 }, { now: 2 }).session;
+    let answered = 0;
+    let clock = 10;
+    while (x.stage === STAGES.QUIZ && answered < 10) {
+      x = answerQuestion(x, { section: "quiz", pickedIndex: currentQuestion(x).correct, now: (clock += 5) }).session;
+      x = advanceQuestion(x, { now: (clock += 5) });
+      answered += 1;
+    }
+    check(`${n} MCQ per round: exactly ${n} were asked before the finale`,
+      answered === n && x.stage === STAGES.MILLIONAIRE, `${answered} asked, stage=${x.stage}`);
+  }
+
+  // Changing the setting must NOT reshape a paper already in play — the
+  // count is baked into the descriptor when the participant joins.
+  const joined = createSession({ now: 0, quizPerRound: 2 });
+  check("a paper already dealt keeps its own shape",
+    quizPerRoundOf(joined) === 2 && hydrateSession(joined).rounds.every((r) => r.quiz.length === 2));
+}
+
 /* ====================== variety between participants ====================== */
 
 section("Variety");
 
 {
   const draws = Array.from({ length: 40 }, () => createSessionDescriptor());
-  const signatures = new Set(draws.map((d) => d.rounds.map((r) => r.quiz.id).join(",")));
+  const signatures = new Set(draws.map((d) => d.rounds.flatMap((r) => r.quiz.map((q) => q.id)).join(",")));
   check("40 participants get many different papers", signatures.size > 20, `${signatures.size}/40 distinct`);
+
+  /* ---- shuffle quality, measured rather than assumed ----
+   *
+   * Every one of these started out broken: the missions were dealt in a
+   * fixed order, and Platinum and Diamond had one question each, so the
+   * last two rounds were identical for every participant at every event.
+   */
+  const big = Array.from({ length: 200 }, () => createSessionDescriptor());
+
+  const missionOrders = new Set(big.map((d) => d.rounds.map((r) => r.gameId).join(",")));
+  check("the mission order genuinely varies between participants",
+    missionOrders.size > 40, `only ${missionOrders.size} distinct orders in 200 draws`);
+
+  const finalePapers = new Set(big.map((d) => d.rounds.map((r) => r.mq.id).join(",")));
+  check("the finale paper genuinely varies between participants",
+    finalePapers.size > 100, `only ${finalePapers.size} distinct finale papers in 200 draws`);
+
+  // No single question may dominate. A tier with only one question in the
+  // bank shows up here instantly as a 100% frequency.
+  const freq = {};
+  big.forEach((d) => d.rounds.forEach((r) => { freq[r.mq.id] = (freq[r.mq.id] || 0) + 1; }));
+  const worst = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+  check("no finale question appears in more than 60% of papers",
+    worst[1] / big.length <= 0.6, `${worst[0]} appears in ${Math.round((worst[1] / big.length) * 100)}%`);
+
+  // Each mission must be able to land in any round, not just its own.
+  const roundsSeenPerMission = {};
+  big.forEach((d) => d.rounds.forEach((r, i) => {
+    (roundsSeenPerMission[r.gameId] ||= new Set()).add(i);
+  }));
+  check("every mission can appear in any of the five rounds",
+    Object.values(roundsSeenPerMission).every((set) => set.size === ROUND_COUNT),
+    Object.entries(roundsSeenPerMission).map(([g, set]) => `${g}:${set.size}`).join(" "));
 
   // The correct answer must not settle into one slot.
   const slots = new Set();
   draws.forEach((d) => {
     const { rounds } = hydrateSession({ v: SESSION_VERSION, descriptor: d });
-    rounds.forEach((r) => { slots.add(r.quiz.correct); slots.add(r.millionaire.correct); });
+    rounds.forEach((r) => { r.quiz.forEach((q) => slots.add(q.correct)); slots.add(r.millionaire.correct); });
   });
   check("the correct answer lands in every option slot across draws",
     slots.size === 4, `slots seen: ${[...slots].sort().join(",")}`);
+}
+
+/* ============ the answer must not be guessable ============ */
+
+section("The answer is not findable without knowing it");
+
+{
+  // 1. Position. If the correct answer favours a slot, players learn to
+  //    pick that slot. Over 2000 questions every slot must be close to
+  //    25%, and this is what "it is always option A" would fail.
+  const slots = [0, 0, 0, 0];
+  for (let i = 0; i < 200; i++) {
+    const { rounds } = hydrateSession({ v: SESSION_VERSION, descriptor: createSessionDescriptor() });
+    rounds.forEach((r) => { slots[r.quiz.correct] += 1; slots[r.millionaire.correct] += 1; });
+  }
+  const total = slots.reduce((a, b) => a + b, 0);
+  const share = slots.map((n) => n / total);
+  check("the correct answer is spread evenly across A/B/C/D",
+    share.every((s) => s > 0.18 && s < 0.32),
+    share.map((s, i) => `${"ABCD"[i]}:${Math.round(s * 100)}%`).join(" "));
+  check("no slot is starved of correct answers", slots.every((n) => n > 0));
+
+  // 2. Length. "The longest option is the answer" is the oldest trick in
+  //    multiple choice, and this bank failed it badly: 82% of correct
+  //    answers were the longest option, so a player who knew nothing
+  //    could score 82% by always picking the longest line.
+  //
+  //    BOTH directions have to be checked. Over-correcting until the
+  //    answer is never the longest just hands players the inverse rule.
+  //    Pure chance with four options is 25% each way.
+  let longest = 0;
+  let shortest = 0;
+  let counted = 0;
+  for (let i = 0; i < 120; i++) {
+    const { rounds } = hydrateSession({ v: SESSION_VERSION, descriptor: createSessionDescriptor() });
+    rounds.forEach((r) => {
+      [...r.quiz, r.millionaire].forEach((q) => {
+        counted += 1;
+        const lengths = q.options.map((o) => o.length);
+        if (lengths[q.correct] === Math.max(...lengths)) longest += 1;
+        if (lengths[q.correct] === Math.min(...lengths)) shortest += 1;
+      });
+    });
+  }
+  const longPct = Math.round((longest / counted) * 100);
+  const shortPct = Math.round((shortest / counted) * 100);
+  check("'always pick the longest option' does not beat guessing",
+    longest / counted < 0.42, `${longPct}% of correct answers were longest (chance 25%)`);
+  check("'never pick the longest option' does not beat guessing either",
+    longest / counted > 0.04, `only ${longPct}% were longest — the inverse rule now works`);
+  check("'always pick the shortest option' does not beat guessing",
+    shortest / counted < 0.42, `${shortPct}% of correct answers were shortest (chance 25%)`);
+
+  // 3. Shape. The shuffled question must carry NOTHING that marks the
+  //    answer beyond the `correct` index the UI never renders.
+  const { rounds } = hydrateSession({ v: SESSION_VERSION, descriptor: createSessionDescriptor() });
+  const q = rounds[0].quiz[0];
+  const leaky = Object.keys(q).filter((k) =>
+    /answer|isCorrect|right|solution/i.test(k) && k !== "correct");
+  check("a question carries no extra field that marks the answer",
+    leaky.length === 0, leaky.join(", "));
+  check("options are plain strings with no marker objects",
+    q.options.every((o) => typeof o === "string"));
 }
 
 /* ====================== option remapping ====================== */
@@ -249,10 +410,17 @@ section("Host-released rounds");
   // Finish round 1 and come back to waiting.
   s = completeGame3d(s, { score: 6000, maxScore: 12000, completed: true }, { now: 30 }).session;
   check("finishing the mission moves to the round's quiz question", s.stage === STAGES.QUIZ);
-  s = answerQuestion(s, { section: "quiz", pickedIndex: currentRound(s).quiz.correct, now: 31 }).session;
-  s = advanceQuestion(s, { now: 32 });
-  check("the quiz question leads to the finale question", s.stage === STAGES.MILLIONAIRE);
-  s = answerQuestion(s, { section: "mq", pickedIndex: currentRound(s).millionaire.correct, now: 33 }).session;
+  // Work through every MCQ in the round, then the finale.
+  check(`the round holds ${QUIZ_PER_ROUND} MCQs`,
+    currentRound(s).quiz.length === QUIZ_PER_ROUND, `${currentRound(s).quiz.length}`);
+  for (let step = 0; step < QUIZ_PER_ROUND; step++) {
+    check(`MCQ ${step + 1} of the round is on screen`,
+      s.stage === STAGES.QUIZ && s.quizStep === step, `stage=${s.stage} step=${s.quizStep}`);
+    s = answerQuestion(s, { section: "quiz", pickedIndex: currentQuestion(s).correct, now: 31 }).session;
+    s = advanceQuestion(s, { now: 32 });
+  }
+  check("the last MCQ leads to the finale question", s.stage === STAGES.MILLIONAIRE);
+  s = answerQuestion(s, { section: "mq", pickedIndex: currentQuestion(s).correct, now: 33 }).session;
   s = advanceQuestion(s, { now: 34 });
   check("the finale question ends the round, back to waiting",
     s.stage === STAGES.ROUND_DONE && s.roundIndex === 0);
@@ -278,15 +446,13 @@ section("A full session");
 
   for (let round = 0; round < ROUND_COUNT; round++) {
     s = releaseRound(s, { releasedRound: round, now: tick() }).session;
-    check(`round ${round + 1} opens on mission "${ROUND_GAMES[round]}"`,
+    check(`round ${round + 1} opens on one of the five missions`,
       s.stage === STAGES.GAME3D && s.roundIndex === round
-      && currentRound(s).gameId === ROUND_GAMES[round]);
+      && ROUND_GAMES.includes(currentRound(s).gameId),
+      currentRound(s)?.gameId);
 
     s = completeGame3d(s, { score: 12000, maxScore: 12000, completed: true, accuracy: 100 }, { now: tick() }).session;
-    s = answerQuestion(s, { section: "quiz", pickedIndex: currentRound(s).quiz.correct, now: tick() }).session;
-    s = advanceQuestion(s, { now: tick() });
-    s = answerQuestion(s, { section: "mq", pickedIndex: currentRound(s).millionaire.correct, now: tick() }).session;
-    s = advanceQuestion(s, { now: tick() });
+    s = playRound(s, { now: tick });
   }
 
   check("the session ends after the last round", s.stage === STAGES.DONE);
@@ -294,7 +460,9 @@ section("A full session");
   const summary = sessionSummary(s);
   check("all five missions were played", summary.gamesPlayed === ROUND_COUNT);
   check("all five missions were completed", summary.gamesCompleted === ROUND_COUNT);
-  check("every quiz question was answered correctly", summary.quizCorrect === ROUND_COUNT);
+  check("every quiz question was answered correctly",
+    summary.quizCorrect === ROUND_COUNT * QUIZ_PER_ROUND,
+    `${summary.quizCorrect}/${ROUND_COUNT * QUIZ_PER_ROUND}`);
   check("every finale question was answered correctly", summary.mqCorrect === ROUND_COUNT);
   check("accuracy is 100%", summary.accuracy === 100);
 
@@ -327,7 +495,7 @@ section("No double scoring");
   check("the mission score did not change", sectionTotals(again.session).game3d === GAME_POINTS_PER_ROUND);
 
   s = first.session;
-  const correct = currentRound(s).quiz.correct;
+  const correct = currentQuestion(s).correct;
   const a1 = answerQuestion(s, { section: "quiz", pickedIndex: correct, now: 4 });
   const a2 = answerQuestion(a1.session, { section: "quiz", pickedIndex: correct, now: 5 });
   check("the first answer counts", a1.changed);
@@ -362,10 +530,8 @@ section("The participant record end to end");
   // Play one full round.
   let s = releaseRound(joined.session, { releasedRound: 0, now: 100 }).session;
   s = completeGame3d(s, { score: 9000, maxScore: 12000, completed: true }, { now: 200 }).session;
-  s = answerQuestion(s, { section: "quiz", pickedIndex: currentRound(s).quiz.correct, now: 250 }).session;
-  s = advanceQuestion(s, { now: 260 });
-  s = answerQuestion(s, { section: "mq", pickedIndex: currentRound(s).millionaire.correct, now: 300 }).session;
-  s = advanceQuestion(s, { now: 310 });
+  let clk = 250;
+  s = playRound(s, { now: () => (clk += 10) });
 
   const totals = sectionTotals(s);
   const stored = {
@@ -412,7 +578,7 @@ section("Question timers");
   t = releaseRound(t, { releasedRound: 0, now: 0 }).session;
   t = completeGame3d(t, { score: 0, maxScore: 12000 }, { now: 0 }).session;
   const scored = answerQuestion({ ...t, stageStartedAt: 0 }, {
-    section: "quiz", pickedIndex: currentRound(t).quiz.correct, now: 0,
+    section: "quiz", pickedIndex: currentQuestion(t).correct, now: 0,
   });
   check("answering instantly from timestamp 0 scores full value", scored.result.speedMark === 100);
 }

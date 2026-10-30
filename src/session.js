@@ -5,10 +5,12 @@
  *  one session made of five rounds. The host releases each round; inside
  *  a released round the participant plays at their own speed:
  *
- *      ROUND n:  3D mission n  →  1 quiz question  →  1 finale question
+ *      ROUND n:  3D mission  →  3 × MCQ  →  1 finale question
  *
- *  Five rounds × three items = 15 items, and the five rounds use the
- *  five different 3D missions in order.
+ *  Five rounds × five items = 25 items by default. The MCQs per round
+ *  are set by the host (QUIZ_PER_ROUND / the game's `quizPerRound`),
+ *  and the five rounds use the five different 3D missions, dealt to
+ *  each participant in their own order.
  *
  *  Everything here is a pure function over plain data, for two reasons:
  *
@@ -66,11 +68,34 @@ export const ROUND_MISSION_BLURBS = {
   "emergency-commander": "Take command of a live site emergency",
 };
 
-/** One quiz question and one finale question per round. */
-export const QUIZ_COUNT = ROUND_COUNT;
-export const MILLIONAIRE_COUNT = ROUND_COUNT;
+/**
+ * The shape of one round:
+ *
+ *     1 × 3D mission  →  QUIZ_PER_ROUND × MCQ  →  MQ_PER_ROUND × finale
+ *
+ * The host can change the MCQ count per round from the admin panel
+ * (see `quizPerRound` on the game record). Whatever is chosen when a
+ * participant JOINS is baked into their descriptor, so changing it
+ * mid-event never reshapes a paper somebody is already sitting.
+ */
+export const QUIZ_PER_ROUND = 3;
+export const MQ_PER_ROUND = 1;
+
+/** What the admin is allowed to pick. */
+export const QUIZ_PER_ROUND_OPTIONS = [1, 2, 3, 4];
+
+export const QUIZ_COUNT = ROUND_COUNT * QUIZ_PER_ROUND;
+export const MILLIONAIRE_COUNT = ROUND_COUNT * MQ_PER_ROUND;
 export const TOTAL_QUESTIONS = QUIZ_COUNT + MILLIONAIRE_COUNT;
-export const TOTAL_ITEMS = ROUND_COUNT * 3;
+export const TOTAL_ITEMS = ROUND_COUNT * (1 + QUIZ_PER_ROUND + MQ_PER_ROUND);
+
+/** Items in a round for a given per-round quiz count. */
+export function itemsPerRound(quizPerRound = QUIZ_PER_ROUND) {
+  return 1 + quizPerRound + MQ_PER_ROUND;
+}
+export function totalItems(quizPerRound = QUIZ_PER_ROUND) {
+  return ROUND_COUNT * itemsPerRound(quizPerRound);
+}
 
 /**
  * Every 3D mission is scored out of 12,000 in the Arena, which would
@@ -201,33 +226,74 @@ export function createLivePaper({ quizCount = 10, mqCount = 5 } = {}) {
 
 /**
  * Draws a fresh paper and pairs it with the five missions, so round n
- * holds mission n, one quiz question and one finale question.
+ * holds one mission, one quiz question and one finale question.
+ *
+ * EVERYTHING that can vary between two people sitting next to each other
+ * does vary:
+ *
+ *   - which of the five missions each round opens with (shuffled)
+ *   - which five of the twelve topics the quiz questions come from
+ *   - which question is drawn from each topic and each tier
+ *   - the option order inside every question
+ *
+ * The one thing deliberately NOT shuffled is the finale's stake order:
+ * Bronze through Diamond always climbs, because escalating stakes is the
+ * whole point of the format. The questions at each tier vary instead,
+ * which is why the bank needs several questions per tier.
  */
-export function createSessionDescriptor() {
-  const quiz = drawQuiz();
-  const mq = drawMillionaire();
+export function createSessionDescriptor({ quizPerRound = QUIZ_PER_ROUND } = {}) {
+  const perRound = clampQuizPerRound(quizPerRound);
+  const quiz = drawQuiz(ROUND_COUNT * perRound);
+  const mq = drawMillionaire(ROUND_COUNT * MQ_PER_ROUND);
+  // Previously this was ROUND_GAMES in fixed order, so every participant
+  // played the five missions in exactly the same sequence, every event.
+  const missions = shuffle(ROUND_GAMES);
 
-  const rounds = ROUND_GAMES.map((gameId, i) => ({
+  const rounds = missions.map((gameId, i) => ({
     gameId,
-    quiz: { id: quiz[i].id, perm: permutationFor(quiz[i].options.length) },
+    // An ARRAY now: a round holds several MCQs, then its finale question.
+    quiz: quiz
+      .slice(i * perRound, (i + 1) * perRound)
+      .map((q) => ({ id: q.id, perm: permutationFor(q.options.length) })),
     mq: { id: mq[i].id, perm: permutationFor(mq[i].options.length) },
   }));
 
-  return { v: SESSION_VERSION, rounds };
+  // `qpr` is stored so a session stays readable even if the admin
+  // changes the setting while this participant is part-way through.
+  return { v: SESSION_VERSION, qpr: perRound, rounds };
+}
+
+export function clampQuizPerRound(n) {
+  const v = Math.round(Number(n) || QUIZ_PER_ROUND);
+  return Math.max(1, Math.min(QUIZ_PER_ROUND_OPTIONS[QUIZ_PER_ROUND_OPTIONS.length - 1], v));
 }
 
 /** The session block stored on a player record when they join. */
-export function createSession({ now = Date.now() } = {}) {
+export function createSession({ now = Date.now(), quizPerRound = QUIZ_PER_ROUND } = {}) {
   return {
     v: SESSION_VERSION,
-    descriptor: createSessionDescriptor(),
+    descriptor: createSessionDescriptor({ quizPerRound }),
     roundIndex: 0,
+    // Which MCQ within the current round, 0-based.
+    quizStep: 0,
     stage: STAGES.LOCKED,
     startedAt: now,
     stageStartedAt: now,
-    answers: { quiz: {}, mq: {} },  // both keyed by round index
+    // quiz answers are keyed "round:step"; mq answers by round index.
+    answers: { quiz: {}, mq: {} },
     games: {},                      // 3D result, keyed by round index
   };
+}
+
+/** How many MCQs each round of THIS session holds. */
+export function quizPerRoundOf(session) {
+  const n = session?.descriptor?.qpr;
+  return clampQuizPerRound(Number.isFinite(n) ? n : QUIZ_PER_ROUND);
+}
+
+/** The key an MCQ answer is stored under. */
+export function quizKey(roundIndex, step) {
+  return `${roundIndex}:${step}`;
 }
 
 /* --------------------------- reading one back --------------------------- */
@@ -241,16 +307,24 @@ export function hydrateSession(session) {
   const rounds = session?.descriptor?.rounds;
   if (!Array.isArray(rounds)) return { rounds: [], quiz: [], millionaire: [] };
 
-  const built = rounds.map((round, index) => ({
-    index,
-    gameId: round.gameId,
-    quiz: applyPermutation(quizQuestionById(round.quiz?.id), round.quiz?.perm),
-    millionaire: applyPermutation(millionaireQuestionById(round.mq?.id), round.mq?.perm),
-  }));
+  const built = rounds.map((round, index) => {
+    // A round's quiz is an ARRAY. Tolerate the single-object shape so a
+    // descriptor written by an older build still reads rather than
+    // throwing — isSessionValid decides whether to keep it.
+    const list = Array.isArray(round.quiz) ? round.quiz : [round.quiz].filter(Boolean);
+    return {
+      index,
+      gameId: round.gameId,
+      quiz: list
+        .map((entry) => applyPermutation(quizQuestionById(entry?.id), entry?.perm))
+        .filter(Boolean),
+      millionaire: applyPermutation(millionaireQuestionById(round.mq?.id), round.mq?.perm),
+    };
+  });
 
   return {
     rounds: built,
-    quiz: built.map((r) => r.quiz).filter(Boolean),
+    quiz: built.flatMap((r) => r.quiz),
     millionaire: built.map((r) => r.millionaire).filter(Boolean),
   };
 }
@@ -258,9 +332,14 @@ export function hydrateSession(session) {
 /** True when the stored session is usable by this build. */
 export function isSessionValid(session) {
   if (!session || session.v !== SESSION_VERSION) return false;
+  const perRound = quizPerRoundOf(session);
   const { rounds } = hydrateSession(session);
   return rounds.length === ROUND_COUNT
-    && rounds.every((r) => r.quiz && r.millionaire && ROUND_GAMES.includes(r.gameId));
+    && rounds.every((r) =>
+      Array.isArray(r.quiz)
+      && r.quiz.length === perRound
+      && r.millionaire
+      && ROUND_GAMES.includes(r.gameId));
 }
 
 /* ------------------------------ scoring ------------------------------ */
@@ -355,12 +434,16 @@ export function releaseRound(session, { releasedRound, now = Date.now() } = {}) 
 export function answerQuestion(session, { section, pickedIndex, now = Date.now() }) {
   const key = section === "mq" ? "mq" : "quiz";
   const index = session.roundIndex;
+  const step = session.quizStep || 0;
   const { rounds } = hydrateSession(session);
   const round = rounds[index];
-  const question = key === "mq" ? round?.millionaire : round?.quiz;
+  const question = key === "mq" ? round?.millionaire : round?.quiz?.[step];
   if (!question) return { session, result: null, changed: false };
 
-  const existing = session.answers?.[key]?.[index];
+  // Finale answers are keyed by round; MCQ answers by round AND step,
+  // because a round now holds several of them.
+  const answerKey = key === "mq" ? index : quizKey(index, step);
+  const existing = session.answers?.[key]?.[answerKey];
   if (existing !== undefined) {
     return { session, result: existing, changed: false };
   }
@@ -373,7 +456,7 @@ export function answerQuestion(session, { section, pickedIndex, now = Date.now()
 
   const answers = {
     ...session.answers,
-    [key]: { ...(session.answers?.[key] || {}), [index]: { ...result, answeredAt: now } },
+    [key]: { ...(session.answers?.[key] || {}), [answerKey]: { ...result, answeredAt: now } },
   };
 
   return { session: { ...session, answers }, result, changed: true };
@@ -387,7 +470,12 @@ export function answerQuestion(session, { section, pickedIndex, now = Date.now()
  */
 export function advanceQuestion(session, { now = Date.now() } = {}) {
   if (session.stage === STAGES.QUIZ) {
-    return { ...session, stage: STAGES.MILLIONAIRE, stageStartedAt: now };
+    // Work through this round's MCQs before the finale question.
+    const nextStep = (session.quizStep || 0) + 1;
+    if (nextStep < quizPerRoundOf(session)) {
+      return { ...session, quizStep: nextStep, stageStartedAt: now };
+    }
+    return { ...session, stage: STAGES.MILLIONAIRE, quizStep: 0, stageStartedAt: now };
   }
   if (session.stage === STAGES.MILLIONAIRE) {
     const isLast = session.roundIndex + 1 >= ROUND_COUNT;
@@ -411,7 +499,7 @@ export function advanceQuestion(session, { now = Date.now() } = {}) {
 export function completeGame3d(session, result, { now = Date.now() } = {}) {
   const index = session.roundIndex;
   if (session.games?.[index]) {
-    return { session: { ...session, stage: STAGES.QUIZ, stageStartedAt: now }, changed: false };
+    return { session: { ...session, stage: STAGES.QUIZ, quizStep: 0, stageStartedAt: now }, changed: false };
   }
   const entry = {
     points: game3dPoints(result),
@@ -429,6 +517,7 @@ export function completeGame3d(session, result, { now = Date.now() } = {}) {
       ...session,
       games: { ...(session.games || {}), [index]: entry },
       stage: STAGES.QUIZ,
+      quizStep: 0,
       stageStartedAt: now,
     },
     changed: true,
@@ -438,7 +527,7 @@ export function completeGame3d(session, result, { now = Date.now() } = {}) {
 export function skipGame3d(session, { now = Date.now() } = {}) {
   const index = session.roundIndex;
   if (session.games?.[index]) {
-    return { ...session, stage: STAGES.QUIZ, stageStartedAt: now };
+    return { ...session, stage: STAGES.QUIZ, quizStep: 0, stageStartedAt: now };
   }
   return {
     ...session,
@@ -451,6 +540,7 @@ export function skipGame3d(session, { now = Date.now() } = {}) {
       },
     },
     stage: STAGES.QUIZ,
+    quizStep: 0,
     stageStartedAt: now,
   };
 }
@@ -462,23 +552,35 @@ export function currentRound(session) {
   return rounds[session?.roundIndex] || null;
 }
 
+/** The exact question on screen right now, MCQ step included. */
+export function currentQuestion(session) {
+  const round = currentRound(session);
+  if (!round) return null;
+  if (session?.stage === STAGES.MILLIONAIRE) return round.millionaire;
+  return round.quiz?.[session?.quizStep || 0] || null;
+}
+
 export function sessionProgress(session) {
+  const perRound = quizPerRoundOf(session);
   const quizAnswered = Object.keys(session?.answers?.quiz || {}).length;
   const mqAnswered = Object.keys(session?.answers?.mq || {}).length;
   const gamesDone = Object.keys(session?.games || {}).length;
   const done = gamesDone + quizAnswered + mqAnswered;
+  const total = totalItems(perRound);
   return {
     roundIndex: session?.roundIndex ?? 0,
     roundNumber: (session?.roundIndex ?? 0) + 1,
     roundCount: ROUND_COUNT,
+    quizStep: session?.quizStep || 0,
+    quizPerRound: perRound,
     quizAnswered,
     mqAnswered,
     gamesDone,
     answered: quizAnswered + mqAnswered,
-    totalQuestions: TOTAL_QUESTIONS,
+    totalQuestions: ROUND_COUNT * (perRound + MQ_PER_ROUND),
     itemsDone: done,
-    totalItems: TOTAL_ITEMS,
-    percent: Math.round((done / TOTAL_ITEMS) * 100),
+    totalItems: total,
+    percent: total ? Math.round((done / total) * 100) : 0,
   };
 }
 
@@ -496,13 +598,13 @@ export function sessionSummary(session) {
     totals,
     quizCorrect,
     quizAnswered: Object.keys(quizAnswers).length,
-    quizTotal: QUIZ_COUNT,
+    quizTotal: ROUND_COUNT * quizPerRoundOf(session),
     mqCorrect,
     mqAnswered: Object.keys(mqAnswers).length,
-    mqTotal: MILLIONAIRE_COUNT,
+    mqTotal: ROUND_COUNT * MQ_PER_ROUND,
     correctTotal: quizCorrect + mqCorrect,
-    questionTotal: TOTAL_QUESTIONS,
-    accuracy: Math.round(((quizCorrect + mqCorrect) / TOTAL_QUESTIONS) * 100),
+    questionTotal: ROUND_COUNT * (quizPerRoundOf(session) + MQ_PER_ROUND),
+    accuracy: Math.round(((quizCorrect + mqCorrect) / Math.max(1, ROUND_COUNT * (quizPerRoundOf(session) + MQ_PER_ROUND))) * 100),
     gamesCompleted: Object.values(games).filter((g) => g?.completed).length,
     gamesPlayed: Object.keys(games).length,
     gameTotal: ROUND_COUNT,

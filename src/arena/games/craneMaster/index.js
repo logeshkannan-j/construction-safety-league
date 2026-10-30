@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------ */
 
 import * as THREE from "three";
-import { createStage, addDaylight, addSky } from "../../engine/gfx.js";
+import { createStage, addDaylight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import {
   createMaterials, createGeometries, box, cylinder,
@@ -68,7 +68,8 @@ export const meta = {
     ["Space", "Attach the load / release the load"],
     ["X", "EMERGENCY STOP — kills all motion"],
     ["C", "Switch between cab view and site view"],
-    ["Mouse drag", "Orbit the camera · wheel to zoom"],
+    ["Mouse drag", "Orbit the camera"],
+    ["Wheel / Z", "Zoom — dollies in site view, narrows the lens in the cab"],
     ["Esc", "Pause"],
   ],
   mobileControls: [
@@ -79,6 +80,7 @@ export const meta = {
     ["E-STOP", "Stops everything immediately"],
     ["VIEW", "Cab view or site view"],
     ["Drag screen", "Orbit the camera"],
+    ["Pinch / ZOOM", "Zoom in on the load or the landing"],
   ],
 };
 
@@ -407,15 +409,23 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       Space: "attachRelease",
       KeyX: "estop",
       KeyC: "camera",
+      KeyZ: "zoom",
       Escape: "pause",
     },
   });
   input.setSensitivity(settings.lookSensitivity ?? 1);
 
+  // In the CAB the camera cannot pull back — you are sitting in it — so
+  // zooming there narrows the lens, which is exactly what an operator
+  // does when checking a landing 40 m away. In site view the wheel still
+  // dollies the orbit camera, as before.
+  const cabZoom = createZoom(camera, input, { baseFov: camera.fov, minFov: 20 });
+
   api.buttons([
     { id: "attach", label: "ATTACH", action: "attachRelease", mode: "tap", color: "#FFC629", primary: true },
     { id: "estop", label: "E-STOP", action: "estop", mode: "tap", color: "#EA4F4F" },
     { id: "camera", label: "VIEW", action: "camera", mode: "tap", color: "#59B7FF" },
+    { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
   ]);
 
   /* ------------------------------ camera ------------------------------ */
@@ -432,8 +442,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     cam.yaw -= look.dx * 0.004;
     cam.pitch -= look.dy * 0.003;
     cam.pitch = Math.max(-1.25, Math.min(0.35, cam.pitch));
-    const wheel = input.consumeWheel();
-    if (wheel) cam.distance = Math.max(14, Math.min(90, cam.distance + wheel * 0.03));
+    // Site view dollies the orbit camera; cab view narrows the lens.
+    // Both are fed by the wheel on desktop and pinch on a phone.
+    if (state.cabView) {
+      cabZoom.update(dt);
+    } else {
+      // Read the wheel FIRST — cabZoom.update() also consumes it, and if
+      // it ran first the orbit camera would never see a single notch.
+      const wheel = input.consumeWheel();
+      if (wheel) cam.distance = Math.max(14, Math.min(90, cam.distance + wheel * 0.03));
+      // Still update, so a lens narrowed in the cab eases back out here.
+      cabZoom.reset();
+      cabZoom.update(dt);
+    }
 
     // Follow whatever matters right now: the load if we have one, the
     // hook if we do not.
@@ -969,6 +990,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       },
       { id: "estop", label: "E-STOP", action: "estop", mode: "tap", color: "#EA4F4F" },
       { id: "camera", label: state.cabView ? "SITE" : "CAB", action: "camera", mode: "tap", color: "#59B7FF" },
+      { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
     ]);
   }
 
@@ -1020,6 +1042,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       }
       if (input.wasPressed("camera")) {
         state.cabView = !state.cabView;
+        // Leaving the cab must not leave a narrow lens behind.
+        cabZoom.reset();
+        sfx.click();
+      }
+      if (input.wasPressed("zoom")) {
+        if (state.cabView) {
+          cabZoom.toggle();
+        } else {
+          // Site view: jump between a wide survey and a close look.
+          cam.distance = cam.distance > 36 ? 18 : 60;
+        }
         sfx.click();
       }
       if (input.wasPressed("attachRelease")) tryAttachRelease();
@@ -1077,7 +1110,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
-    __test: { state, lifts, hookWorldPosition, loadWorldPosition, safeWorkingLoad, CRANE },
+    __test: {
+      state, lifts, hookWorldPosition, loadWorldPosition, safeWorkingLoad, CRANE,
+      zoomFov: () => camera.fov,
+      camDistance: () => cam.distance,
+    },
   };
 }
 

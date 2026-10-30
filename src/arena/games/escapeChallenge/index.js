@@ -1,10 +1,14 @@
 /* ------------------------------------------------------------------ *
  *  GAME 4 — SAFETY ESCAPE CHALLENGE
  *
- *  A seven-area escape room inside an unfinished building. Each area
+ *  A five-area escape route through a newly fitted-out floor. Each area
  *  holds one real safety decision; get it right and the door to the
  *  next area unlocks. Get it wrong and you lose score AND clock, and
  *  the game tells you exactly what would have happened to you.
+ *
+ *  The interior is deliberately WHITE and brightly lit. The original
+ *  near-black scheme looked atmospheric on a desktop monitor and was
+ *  unplayable on a phone in daylight.
  *
  *  Uses the same first-person controller as the Safety Mission
  *  Simulator, so it plays identically with WASD + mouse or with the
@@ -12,7 +16,7 @@
  * ------------------------------------------------------------------ */
 
 import * as THREE from "three";
-import { createStage, addIndoorLight, addSky } from "../../engine/gfx.js";
+import { createStage, addIndoorLight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
 import {
@@ -33,10 +37,10 @@ export const meta = {
 
   briefing: {
     role:
-      "You are alone in an unfinished building when the fire alarm sounds. The power has failed, " +
-      "smoke is building at ceiling level, and the way out runs through seven areas.",
+      "You are alone in a newly fitted-out floor of Casagrand Aira when the fire alarm sounds. " +
+      "The way out runs through five areas, and each one holds a decision.",
     objectives: [
-      "Work through the building: basement, electrical room, construction floor, stores, plant room, scaffold access, exit lobby.",
+      "Work through the building: electrical room, construction floor, plant room, scaffold access, exit lobby.",
       "In each area, find the interactive point and make the right safety decision.",
       "A correct decision unlocks the door to the next area.",
       "A wrong decision costs you score and 25 seconds of a clock you cannot afford.",
@@ -51,7 +55,6 @@ export const meta = {
       { label: "Time remaining", value: "+3 / second" },
     ],
     tips: [
-      "The nearest door is almost never the escape route. The signed one is.",
       "Isolate the circuit you need, not the whole building — emergency lighting runs on it too.",
       "Extinguisher class matters more than extinguisher size — and you have to carry it there yourself.",
       "You are not safe when you are outside. You are safe when you are at the muster point.",
@@ -65,6 +68,7 @@ export const meta = {
     ["Mouse", "Look around (click once to capture the mouse)"],
     ["Shift", "Run"],
     ["E", "Interact — decision point, door, extinguisher, or discharge it"],
+    ["Wheel / Z", "Zoom in to read a sign or a tag from across the room"],
     ["Esc", "Pause"],
   ],
   mobileControls: [
@@ -72,6 +76,7 @@ export const meta = {
     ["Drag right", "Look around while moving"],
     ["INTERACT", "Use a decision point, door or extinguisher"],
     ["RUN", "Hold to move faster"],
+    ["Pinch / ZOOM", "Zoom in to read a sign or a tag"],
     ["Pause", "Top-right of the HUD"],
   ],
 };
@@ -84,14 +89,16 @@ const WALL_THICK = 0.3;
 
 // Each area is a rectangle. Doors sit in the +x wall and lead to the
 // next area, so the building reads as a route rather than a maze.
+// Five areas, laid end to end so the building reads as a route out.
+// (The old "Basement" and "Stores" rooms were removed — see puzzles.js
+// for why. The remaining five are renumbered and shifted up to start
+// at the origin.)
 const ROOMS = [
-  { key: "basement", x0: -6, x1: 10, z0: -6, z1: 6, floor: 0, label: "Basement" },
-  { key: "electrical", x0: 12, x1: 26, z0: -5, z1: 5, floor: 0, label: "Electrical room" },
-  { key: "ppe", x0: 28, x1: 46, z0: -8, z1: 8, floor: 0, label: "Construction floor" },
-  { key: "chemical", x0: 48, x1: 62, z0: -5, z1: 5, floor: 0, label: "Stores" },
-  { key: "fire", x0: 64, x1: 78, z0: -5, z1: 5, floor: 0, label: "Plant room" },
-  { key: "signage", x0: 80, x1: 98, z0: -8, z1: 8, floor: 0, label: "Scaffold access" },
-  { key: "alarm", x0: 100, x1: 114, z0: -5, z1: 5, floor: 0, label: "Exit lobby" },
+  { key: "electrical", x0: -6, x1: 8, z0: -5, z1: 5, floor: 0, label: "Electrical room" },
+  { key: "ppe", x0: 10, x1: 28, z0: -8, z1: 8, floor: 0, label: "Construction floor" },
+  { key: "fire", x0: 30, x1: 44, z0: -5, z1: 5, floor: 0, label: "Plant room" },
+  { key: "signage", x0: 46, x1: 64, z0: -8, z1: 8, floor: 0, label: "Scaffold access" },
+  { key: "alarm", x0: 66, x1: 80, z0: -5, z1: 5, floor: 0, label: "Exit lobby" },
 ];
 
 /* ============================== the game ============================== */
@@ -112,22 +119,30 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* --------------------------- environment --------------------------- */
 
-  // A dull overcast sky is only visible through the final exit, which
-  // makes the way out read as light at the end.
-  addSky(scene, cfg, { top: "#2A3A45", bottom: "#6E7F86", fogColor: "#3A464E" });
-  addIndoorLight(scene, cfg, { color: 0xffe0b8, intensity: 0.75 });
+  // A bright, white-walled building. The old scheme was near-black with
+  // heavy fog, which read as atmospheric on a desktop monitor and as an
+  // unplayable dark smear on a phone in daylight — you could not see the
+  // walls, let alone the extinguisher rack.
+  //
+  // White plasterboard, bright daylight through the openings, and only a
+  // light haze: everything the player has to find is now legible.
+  addSky(scene, cfg, { top: "#BFD6E8", bottom: "#F2F5F7", fogColor: "#E8EDF1" });
+  addIndoorLight(scene, cfg, { color: 0xfff6e8, intensity: 1.45 });
   scene.add(buildGround(mat, 320));
   if (scene.fog) {
-    // Smoke haze: close fog makes the building feel enclosed and raises
-    // the pressure without costing a single draw call.
-    scene.fog.near = 6;
-    scene.fog.far = 42;
-    scene.fog.color = new THREE.Color("#39434A");
+    // Enough haze to give depth, not enough to hide an exit sign.
+    scene.fog.near = 22;
+    scene.fog.far = 110;
+    scene.fog.color = new THREE.Color("#E8EDF1");
   }
+
+  // A soft fill from above so the white surfaces do not go flat grey in
+  // the corners, and a cool bounce from below to keep them clean.
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xcdd8e0, 1.05));
 
   /* ----------------------------- geometry ----------------------------- */
 
-  function addWall(x, z, w, d, { material = mat.concrete, height = WALL_HEIGHT, solid = true } = {}) {
+  function addWall(x, z, w, d, { material = mat.plaster, height = WALL_HEIGHT, solid = true } = {}) {
     const wall = box(geo, material, w, height, d, x, height / 2, z);
     scene.add(wall);
     if (solid) colliders.push(collider(x, height / 2, z, w, height, d));
@@ -163,16 +178,28 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const centreZ = (room.z0 + room.z1) / 2;
 
     // Floor slab.
-    const floorMesh = box(geo, mat.concreteSlab,
+    const floorMesh = box(geo, mat.screed,
       room.x1 - room.x0, 0.3, room.z1 - room.z0,
       (room.x0 + room.x1) / 2, -0.15, centreZ);
     scene.add(floorMesh);
 
     // Ceiling, so the space feels like a room.
-    const ceiling = box(geo, mat.concreteDark,
+    const ceiling = box(geo, mat.plasterCeiling,
       room.x1 - room.x0, 0.3, room.z1 - room.z0,
       (room.x0 + room.x1) / 2, WALL_HEIGHT + 0.15, centreZ);
     scene.add(ceiling);
+
+    // Skirting, and a strip light down the middle of each room. Both are
+    // what stop a white box from reading as an empty white box.
+    [room.z0, room.z1].forEach((wz) => {
+      scene.add(box(geo, mat.skirting, room.x1 - room.x0, 0.12, 0.06,
+        (room.x0 + room.x1) / 2, 0.06, wz + (wz === room.z0 ? 0.18 : -0.18), { shadow: false }));
+    });
+    const lightRuns = Math.max(1, Math.round((room.x1 - room.x0) / 7));
+    for (let i = 0; i < lightRuns; i++) {
+      const lx = room.x0 + ((i + 0.5) * (room.x1 - room.x0)) / lightRuns;
+      scene.add(box(geo, mat.white, 2.6, 0.08, 0.22, lx, WALL_HEIGHT - 0.08, centreZ, { shadow: false }));
+    }
 
     // North and south walls (full length).
     wallWithGaps("x", room.z0, room.x0, room.x1, []);
@@ -231,8 +258,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const doorCollider = collider(room.doorAt.x, 1.25, room.doorAt.z, WALL_THICK + 0.1, 2.5, DOOR_WIDTH);
     colliders.push(doorCollider);
 
-    // Exit sign above every door, which is also the escape-route clue
-    // the basement puzzle asks about.
+    // Exit sign above every door, so the signed route is always the one
+    // the player can see from anywhere in the room.
     const sign = buildSign(geo, mat, {
       text: isFinal ? "Final exit" : "Exit",
       kind: "emergency",
@@ -304,41 +331,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     return item;
   }
 
-  /* ---- Area 1: basement ---- */
-  {
-    const room = roomByKey("basement");
-    // Two decoy openings: one obstructed, one a dead powered shutter.
-    addWall(room.x0 + 4, room.z0 + 0.1, 2.0, 0.34, { material: mat.steelDark, height: 2.6 });
-    const drums = buildMaterialPallet(geo, mat, { type: "bags", rows: 3 });
-    drums.position.set(room.x0 + 4, 0, room.z0 + 1.1);
-    scene.add(drums);
-    colliders.push(collider(room.x0 + 4, 0.6, room.z0 + 1.1, 2, 1.4, 1.4));
-
-    const shutter = box(geo, mat.galv, 3.2, 2.8, 0.2, room.x0 + 4, 1.4, room.z1 - 0.1);
-    scene.add(shutter);
-    for (let i = 0; i < 8; i++) {
-      scene.add(box(geo, mat.steelDark, 3.2, 0.06, 0.24, room.x0 + 4, 0.3 + i * 0.33, room.z1 - 0.1, { shadow: false }));
-    }
-    const shutterSign = buildSign(geo, mat, { text: "Powered shutter no exit", kind: "prohibition", height: 2.4, width: 0.8, post: false });
-    shutterSign.position.set(room.x0 + 6.4, 0, room.z1 - 0.26);
-    scene.add(shutterSign);
-
-    scene.add((() => { const p = buildPuddle(geo, mat, { radius: 2.0 }); p.position.set(room.x0 + 2.5, 0, 2.6); return p; })());
-    const debris = buildDebris(geo, mat, { spread: 3, count: 12 });
-    debris.position.set(room.x0 + 7, 0, -3);
-    scene.add(debris);
-    const cable = buildCableRun(geo, mat, { length: 8, damaged: false, onGround: true });
-    cable.position.set(2, 0, 0.5);
-    scene.add(cable);
-
-    addInteractable({
-      key: "basement",
-      position: { x: room.x1 - 3.2, z: room.centreZ },
-      label: "Choose your escape route",
-    });
-  }
-
-  /* ---- Area 2: electrical room ---- */
+  /* ---- Area 1: electrical room ---- */
   {
     const room = roomByKey("electrical");
     const main = buildElectricalPanel(geo, mat, { unsafe: false, height: 2.0 });
@@ -370,7 +363,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
   }
 
-  /* ---- Area 3: construction floor ---- */
+  /* ---- Area 2: construction floor ---- */
   {
     const room = roomByKey("ppe");
     const station = buildPPEStation(geo, mat);
@@ -408,50 +401,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
   }
 
-  /* ---- Area 4: stores ---- */
-  {
-    const room = roomByKey("chemical");
-    // The unlabelled bottle on a bench — the actual hazard.
-    const bench = box(geo, mat.timberDark, 2.4, 0.1, 0.8, room.x0 + 3.4, 0.9, room.z0 + 1.2);
-    scene.add(bench);
-    [[-1.1], [1.1]].forEach(([ox]) => {
-      scene.add(box(geo, mat.timberDark, 0.1, 0.9, 0.7, room.x0 + 3.4 + ox, 0.45, room.z0 + 1.2));
-    });
-    const bottle = cylinder(geo, mat.white, 0.1, 0.32, room.x0 + 3.4, 1.11, room.z0 + 1.2);
-    scene.add(bottle);
-    scene.add(cylinder(geo, mat.orange, 0.055, 0.1, room.x0 + 3.4, 1.32, room.z0 + 1.2, { low: true, shadow: false }));
-
-    // Bunded drums.
-    scene.add(box(geo, mat.steelDark, 3.0, 0.22, 1.8, room.x1 - 3.2, 0.11, room.z0 + 1.4));
-    [0, 1, 2].forEach((i) => {
-      scene.add(cylinder(geo, mat.blue, 0.28, 0.9, room.x1 - 4.2 + i * 1.0, 0.67, room.z0 + 1.4));
-    });
-
-    // Flammables cabinet.
-    const cabinet = box(geo, mat.yellow, 1.1, 1.8, 0.6, room.x0 + 7.5, 0.9, room.z1 - 0.9);
-    scene.add(cabinet);
-    colliders.push(collider(room.x0 + 7.5, 0.9, room.z1 - 0.9, 1.1, 1.8, 0.6));
-    const flamSign = buildSign(geo, mat, { text: "Flammable keep locked", kind: "warning", height: 1.9, width: 0.6, post: false });
-    flamSign.position.set(room.x0 + 7.5, 0, room.z1 - 1.22);
-    flamSign.rotation.y = Math.PI;
-    scene.add(flamSign);
-
-    // Eyewash station.
-    const eyewash = box(geo, mat.green, 0.6, 0.5, 0.3, room.x1 - 2.0, 1.4, room.z1 - 0.9);
-    scene.add(eyewash);
-    const ewSign = buildSign(geo, mat, { text: "Eyewash", kind: "emergency", height: 2.0, width: 0.5, post: false });
-    ewSign.position.set(room.x1 - 2.0, 0, room.z1 - 1.12);
-    ewSign.rotation.y = Math.PI;
-    scene.add(ewSign);
-
-    addInteractable({
-      key: "chemical",
-      position: { x: room.x0 + 3.4, z: room.z0 + 2.8 },
-      label: "Inspect the chemical store",
-    });
-  }
-
-  /* ---- Area 5: plant room ---- */
+  /* ---- Area 3: plant room ---- */
   {
     const room = roomByKey("fire");
     // Switchgear on fire, blocking the route.
@@ -526,7 +476,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
   }
 
-  /* ---- Area 6: scaffold access ---- */
+  /* ---- Area 4: scaffold access ---- */
   {
     const room = roomByKey("signage");
     const scaffold = buildScaffold(geo, mat, {
@@ -563,7 +513,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
   }
 
-  /* ---- Area 7: exit lobby ---- */
+  /* ---- Area 5: exit lobby ---- */
   {
     const room = roomByKey("alarm");
     // Break-glass call point beside the final door.
@@ -647,9 +597,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const input = createInput(container, {
     pointerLock: !mobile,
     onPause: () => api.requestPause(),
+    keymap: { KeyZ: "zoom" },
   });
   input.setSensitivity(settings.lookSensitivity ?? 1);
   input.setInvertY(!!settings.invertY);
+
+  // Wheel on desktop, pinch on a phone, Z or the ZOOM button to toggle.
+  // A first-person camera narrows its lens rather than pulling back,
+  // because pulling back would put the camera inside a wall.
+  const zoom = createZoom(camera, input, { baseFov: camera.fov, minFov: 26 });
 
   const controller = createFirstPerson(camera, input, {
     colliders,
@@ -663,6 +619,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   api.buttons([
     { id: "interact", label: "USE", action: "interact", mode: "tap", color: "#9B7CF2", primary: true },
     { id: "run", label: "RUN", action: "run", mode: "hold", color: "#33C481" },
+    { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#59B7FF" },
   ]);
 
   /* ============================ game state ============================ */
@@ -1063,6 +1020,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   stage.start((dt) => {
     if (state.paused) return;
 
+    // Zoom eases every frame, including while a dialog is open, so the
+    // lens never snaps when control comes back.
+    zoom.update(dt);
+
     if (!state.finished) {
       state.remainingMs -= dt * 1000;
       if (state.remainingMs <= 0) {
@@ -1073,6 +1034,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     if (!state.dialogOpen && !state.finished) {
       controller.update(dt);
+      if (input.wasPressed("zoom")) { zoom.toggle(); sfx.click(); }
       state.target = findTarget();
       if (state.target && input.wasPressed("interact")) {
         if (state.target.kind === "puzzle") openPuzzle(state.target.item);
@@ -1173,6 +1135,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
+      zoomFov: () => camera.fov,
       state, controller, interactables, doors, rooms,
       get fire() { return fire; },
       get finishZone() { return finishZone; },

@@ -8,39 +8,24 @@
  *  and never dramatises a dangerous action as heroic.
  * ------------------------------------------------------------------ */
 
-export const PUZZLES = {
-  basement: {
-    area: "Basement",
-    eyebrow: "AREA 1 OF 7 — BASEMENT",
-    title: "Three ways out of the basement. Which is the escape route?",
-    subtitle:
-      "The lights are out and there is smoke at ceiling level. You can see three openings from here.",
-    options: [
-      {
-        id: "lit",
-        label: "The opening under the illuminated green running-man sign",
-        desc: "A maintained exit sign, and the floor beyond is clear",
-        correct: true,
-        feedback: "Correct. A maintained, illuminated exit sign marks a protected escape route that stays usable in a power failure.",
-      },
-      {
-        id: "nearest",
-        label: "The nearest opening — it is only a few steps away",
-        desc: "No signage, and there are cable drums stacked across it",
-        feedback: "That route is obstructed and unsigned. The nearest door is not the escape route; the signed one is.",
-      },
-      {
-        id: "shutter",
-        label: "The roller shutter you came in through",
-        desc: "Power is out, so it cannot be raised",
-        feedback: "A powered shutter is not an escape route. In a power failure it becomes a wall.",
-      },
-    ],
-  },
+/* ------------------------------------------------------------------ *
+ *  FIVE areas, each teaching something the other four do not.
+ *
+ *  Two were removed because they were not pulling their weight:
+ *
+ *   - "Basement" asked which of three openings was the escape route,
+ *     which is the same judgement the scaffold tag and the alarm areas
+ *     already cover, and it was the weakest of the three.
+ *   - "Stores" asked the player to spot the one wrong thing in a room.
+ *     That is now the entire mechanic of Game 3, Spot the Hazards, so
+ *     keeping it here made two of the five missions feel like the same
+ *     game.
+ * ------------------------------------------------------------------ */
 
+export const PUZZLES = {
   electrical: {
     area: "Electrical room",
-    eyebrow: "AREA 2 OF 7 — ELECTRICAL ROOM",
+    eyebrow: "AREA 1 OF 5 — ELECTRICAL ROOM",
     title: "The door ahead is powered and the frame is live. How do you make it safe?",
     subtitle:
       "There is a distribution board, a local isolator for the door circuit, and an emergency lighting inverter.",
@@ -78,7 +63,7 @@ export const PUZZLES = {
 
   ppe: {
     area: "Construction floor",
-    eyebrow: "AREA 3 OF 7 — CONSTRUCTION FLOOR",
+    eyebrow: "AREA 2 OF 5 — CONSTRUCTION FLOOR",
     title: "Beyond this door is an open floor with overhead work. What do you take from the PPE store?",
     subtitle:
       "You must cross an unfinished floor with a leading edge, and there is a crane lifting above it.",
@@ -114,44 +99,9 @@ export const PUZZLES = {
     ],
   },
 
-  chemical: {
-    area: "Storage room",
-    eyebrow: "AREA 4 OF 7 — STORES",
-    title: "Something in this store is dangerously wrong. What is it?",
-    subtitle:
-      "Decanted solvent in an unlabelled drinks bottle, a bunded pallet of oil drums, a locked flammables cabinet, and an eyewash station.",
-    options: [
-      {
-        id: "decanted",
-        label: "Solvent decanted into an unlabelled drinks bottle",
-        desc: "No label, no hazard warning, and it looks like something you would drink",
-        correct: true,
-        feedback: "Correct. Decanting a hazardous substance into an unlabelled food or drink container has killed people. It must be in a labelled, correct container.",
-      },
-      {
-        id: "bunded",
-        label: "The oil drums on a bunded pallet",
-        desc: "Drums stored in a spill-containment bund",
-        feedback: "That is correct practice — a bund contains a leak rather than letting it reach a drain.",
-      },
-      {
-        id: "cabinet",
-        label: "The flammables cabinet being locked",
-        desc: "A yellow cabinet with a padlock",
-        feedback: "Locking a flammables cabinet is correct. It limits access and contains a fire.",
-      },
-      {
-        id: "eyewash",
-        label: "The eyewash station by the door",
-        desc: "Sealed bottles on a wall bracket",
-        feedback: "An eyewash station near chemical storage is exactly what should be there.",
-      },
-    ],
-  },
-
   fire: {
     area: "Plant room",
-    eyebrow: "AREA 5 OF 7 — PLANT ROOM",
+    eyebrow: "AREA 3 OF 5 — PLANT ROOM",
     title: "A switchgear cabinet is alight and blocking the route. Which extinguisher?",
     subtitle:
       "On the wall: water, foam, CO2 and a wet chemical extinguisher. The fire is small and the route beyond is clear.",
@@ -189,7 +139,7 @@ export const PUZZLES = {
 
   signage: {
     area: "Scaffold area",
-    eyebrow: "AREA 6 OF 7 — SCAFFOLD ACCESS",
+    eyebrow: "AREA 4 OF 5 — SCAFFOLD ACCESS",
     title: "The scaffold tag at the access point is red. What does that mean you do?",
     subtitle:
       "A red scaffold tag hangs at the foot of the ladder. The route through the scaffold is the short way to the exit.",
@@ -227,7 +177,7 @@ export const PUZZLES = {
 
   alarm: {
     area: "Exit lobby",
-    eyebrow: "AREA 7 OF 7 — EXIT LOBBY",
+    eyebrow: "AREA 5 OF 5 — EXIT LOBBY",
     title: "You can see the final exit. What do you do before you go through it?",
     subtitle:
       "There is a break-glass call point beside the door, a fire extinguisher, and the signed muster point is across the yard.",
@@ -273,4 +223,4 @@ export const SCORING = {
   timeBonusPerSecond: 3,
 };
 
-export const AREA_ORDER = ["basement", "electrical", "ppe", "chemical", "fire", "signage", "alarm"];
+export const AREA_ORDER = ["electrical", "ppe", "fire", "signage", "alarm"];

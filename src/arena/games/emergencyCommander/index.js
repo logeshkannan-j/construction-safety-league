@@ -1,22 +1,31 @@
 /* ------------------------------------------------------------------ *
  *  GAME 5 — EMERGENCY RESPONSE COMMANDER
  *
- *  You are the emergency response team leader. An incident unfolds on a
- *  live site and you command the response through the eight steps of a
- *  real site emergency: identify, assess, raise the alarm, isolate,
- *  respond, evacuate, call the emergency services, close out.
+ *  An ACTIVITY, not a quiz. There is no list of options anywhere in
+ *  this game. The eight steps of a site emergency response are eight
+ *  real objects on the site, and the player has to FIND each one and
+ *  act on it:
  *
- *  Every decision is on its own clock, and every choice moves three
- *  live meters — the casualty's condition, your control of the scene,
- *  and how much of the workforce is accounted for. The 3D scene reacts:
- *  the fire grows, workers stream to the muster point, the ambulance
- *  arrives at the gate you nominated.
+ *      the command post · the break-glass call point · the intake panel
+ *      the muster marker · the cone stack · the first-aid post
+ *      the site radio · the vehicle gate
  *
- *  The game never rewards an untrained rescue.
+ *  Order matters, because the order is what saves people. Acting out of
+ *  sequence still helps but costs scene control.
+ *
+ *  The incident itself is clickable too, and acting on it is always
+ *  wrong — the game has to offer the chance to walk into the hazard, or
+ *  refusing to walk into it is not a decision.
+ *
+ *  Every action moves three live meters (the casualty's condition,
+ *  scene control, people accounted for) and the 3D scene reacts: the
+ *  siren sounds, the fire drops back when the supply is isolated, the
+ *  workforce walks to the muster point, cones appear around the
+ *  incident, the ambulance arrives at the gate.
  * ------------------------------------------------------------------ */
 
 import * as THREE from "three";
-import { createStage, addDaylight, addSky } from "../../engine/gfx.js";
+import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import {
   createMaterials, createGeometries, box, cylinder,
@@ -27,6 +36,9 @@ import {
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PHASES, SCORING, pickScenario } from "./scenarios.js";
+import {
+  STATIONS, STATION_COUNT, STATION_SCORING, HAZARD_ENTRY, stationById,
+} from "./stations.js";
 
 /* ============================== metadata ============================== */
 
@@ -36,44 +48,46 @@ export const meta = {
 
   briefing: {
     role:
-      "You are the site emergency response team leader. When the alert comes in, every decision is " +
-      "yours — and every one of them is on the clock.",
+      "You are the site emergency response team leader. Nobody is going to offer you a list of " +
+      "options — you have to look around the site, find what you need, and use it.",
     objectives: [
-      "Work the eight steps in order: identify, assess, alarm, isolate, respond, evacuate, call, close out.",
-      "Each step opens by taking you to the scene. Watch what is happening — the question is about what you were just shown.",
-      "The decision clock only starts once the question opens, so the look is free. Let it expire and the decision is made for you, badly.",
-      "Watch the three meters: casualty condition, scene control, and evacuation accounted for.",
-      "Keep the casualty alive and the scene under control.",
-      "Never commit untrained people into the hazard. That is always the wrong answer.",
+      "Find and act on the eight things that make up a response. They are real objects on the site.",
+      "Take command first, from somewhere you can see the incident and are not in it.",
+      "Then: the call point, the intake panel, the muster marker, the cones, the first-aid post, the radio, the gate.",
+      "Order matters. Out of order still helps, but you lose control of the scene.",
+      "Watch the three meters: casualty condition, scene control, and people accounted for.",
+      "Do NOT go into the incident yourself. You can — the game lets you — and it is always wrong.",
     ],
     scoring: [
-      { label: "Best decision", value: "+250" },
-      { label: "Acceptable but not best", value: "+120" },
-      { label: "Wrong decision", value: "-120 to -150" },
-      { label: "Decision clock expired", value: "-150" },
+      { label: "Right action, right order", value: "+320" },
+      { label: "Right action, out of order", value: "+120 and -10 control" },
+      { label: "Walking into the hazard", value: "-400" },
+      { label: "All eight actions taken", value: "+600" },
       { label: "Casualty survives", value: "+500" },
       { label: "Scene brought under control", value: "+300" },
     ],
     tips: [
+      "Look for the beacons. Every station you still need has one above it.",
       "A commander who enters the hazard stops being a commander.",
       "Raise the alarm before you do anything clever. It is the only thing that moves everybody at once.",
-      "Call the emergency services with what you know now, and update them later. Never delay the call to improve it.",
       "Isolate from outside the hazard. Never send a person in to make it safe.",
-      "Preserve the scene. The investigation is how the next person does not get hurt.",
-      "Use the observation beat. Drag to look around and wheel to zoom before the question opens.",
+      "Call the emergency services with what you know now, and update them later.",
+      "Press 1 to 8 to swing the camera to each station if you cannot find one.",
     ],
   },
 
   desktopControls: [
-    ["Click", "Choose a decision option"],
-    ["1 – 4", "Choose option A to D"],
-    ["Mouse drag", "Look around the incident"],
-    ["Wheel", "Zoom in on the scene"],
+    ["Click", "Act on whatever you clicked — a station, or the hazard"],
+    ["1 – 8", "Swing the camera to a station you cannot find"],
+    ["Mouse drag", "Look around the site"],
+    ["Wheel / Z", "Zoom in on the scene"],
+    ["B", "Re-read the incident brief"],
     ["Esc", "Pause"],
   ],
   mobileControls: [
-    ["Tap", "Choose a decision option"],
-    ["Drag", "Look around the incident"],
+    ["Tap", "Act on a station — the beacons show which are left"],
+    ["Drag", "Look around the site"],
+    ["Pinch / ZOOM", "Zoom in"],
     ["BRIEF", "Re-read the incident brief"],
     ["Pause", "Top-right of the HUD"],
   ],
@@ -82,20 +96,6 @@ export const meta = {
 const BUILDING = { x: -8, z: 6, width: 20, depth: 15, floors: 4, floorHeight: 3.4 };
 const MUSTER = { x: 30, z: 26 };
 const GATE = { x: 34, z: -28 };
-
-/**
- * How long the camera holds on the scene before the question opens.
- * The decision clock does not start until this has elapsed, so this is
- * free time to actually look at what is happening.
- */
-const OBSERVE_MS = 5000;
-
-/**
- * Decision windows were tight enough that players were answering on
- * instinct rather than on what they could see. Every step's own limit
- * is multiplied by this.
- */
-const DECISION_TIME_MULTIPLIER = 1.6;
 
 /* ============================== the game ============================== */
 
@@ -168,6 +168,162 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const gateSign = buildSign(geo, mat, { text: "Emergency vehicle access", kind: "info", height: 2.4, width: 1.2 });
   gateSign.position.set(GATE.x, 0, GATE.z + 3);
   scene.add(gateSign);
+
+  /* ======================= the command stations ======================= *
+   *
+   * Eight real objects the player has to FIND and act on. These are the
+   * game — there is no list of options anywhere in it.
+   * ==================================================================== */
+
+  const stationMarkers = new Map();
+  const pickTargets = [];
+  const cordonCones = [];
+
+  /** A clickable station: the object, a halo and a floating label. */
+  function addStation(station, object, anchor, { accent = 0xffc629 } = {}) {
+    scene.add(object);
+
+    const halo = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.9, 1.9, 0.08, 20),
+      new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.3, depthWrite: false })
+    );
+    halo.position.set(anchor.x, 0.06, anchor.z);
+    scene.add(halo);
+
+    // A generous invisible box is the actual tap target — on a phone
+    // nobody can hit a call point with a thumb.
+    const hit = new THREE.Mesh(
+      new THREE.BoxGeometry(3.2, 4.2, 3.2),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    hit.position.set(anchor.x, 2.1, anchor.z);
+    hit.userData.stationId = station.id;
+    scene.add(hit);
+    pickTargets.push(hit);
+
+    const beacon = new THREE.Mesh(
+      new THREE.ConeGeometry(0.42, 1.1, 8),
+      new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.9, depthWrite: false })
+    );
+    beacon.rotation.x = Math.PI;
+    beacon.position.set(anchor.x, 4.6, anchor.z);
+    scene.add(beacon);
+
+    stationMarkers.set(station.id, {
+      station, object, halo, beacon, hit,
+      anchor: new THREE.Vector3(anchor.x, 1, anchor.z),
+    });
+  }
+
+  function markStationDone(id) {
+    const m = stationMarkers.get(id);
+    if (!m) return;
+    m.halo.material.color.setHex(0x33c481);
+    m.halo.material.opacity = 0.18;
+    m.beacon.visible = false;
+  }
+
+  // --- 0. command post: a board and a radio mast, well clear of it all ---
+  const COMMAND = { x: -26, z: 24 };
+  {
+    const post = new THREE.Group();
+    post.add(box(geo, mat.white, 2.4, 1.6, 0.14, 0, 1.5, 0));
+    post.add(box(geo, mat.orange, 2.4, 0.3, 0.17, 0, 2.15, 0));
+    [-1.0, 1.0].forEach((ox) => post.add(cylinder(geo, mat.galv, 0.06, 1.5, ox, 0.75, 0)));
+    post.add(box(geo, mat.steelDark, 1.2, 0.08, 0.8, 0, 0.9, 0.5));
+    post.position.set(COMMAND.x, 0, COMMAND.z);
+    addStation(STATIONS[0], post, COMMAND, { accent: 0x59b7ff });
+  }
+
+  // --- 1. break-glass call point, on the end of the office hut ---
+  const CALLPOINT = { x: -30, z: -4 };
+  {
+    const cp = new THREE.Group();
+    cp.add(box(geo, mat.red, 0.46, 0.46, 0.16, 0, 1.45, 0));
+    cp.add(box(geo, mat.white, 0.3, 0.3, 0.03, 0, 1.45, 0.1, { shadow: false }));
+    cp.add(cylinder(geo, mat.galv, 0.05, 1.45, 0, 0.72, 0, { low: true }));
+    const sign = buildSign(geo, mat, { text: "Fire alarm call point", kind: "warning", height: 2.1, width: 0.6, post: false });
+    sign.position.set(0, 0, 0.1);
+    cp.add(sign);
+    cp.position.set(CALLPOINT.x, 0, CALLPOINT.z);
+    addStation(STATIONS[1], cp, CALLPOINT, { accent: 0xea4f4f });
+  }
+
+  // --- 2. site intake / isolation panel, by the compound gate ---
+  const INTAKE = { x: -30, z: 10 };
+  {
+    const panel = buildElectricalPanel(geo, mat, { unsafe: false, height: 1.9 });
+    panel.position.set(INTAKE.x, 0, INTAKE.z);
+    addStation(STATIONS[2], panel, INTAKE, { accent: 0xffc629 });
+  }
+
+  // --- 3. the muster point (the marker already exists) ---
+  {
+    const flag = new THREE.Group();
+    flag.add(cylinder(geo, mat.galv, 0.06, 3.2, 0, 1.6, 0));
+    flag.add(box(geo, mat.green, 1.1, 0.7, 0.04, 0.55, 2.9, 0, { shadow: false }));
+    flag.position.set(MUSTER.x, 0, MUSTER.z + 4);
+    addStation(STATIONS[3], flag, { x: MUSTER.x, z: MUSTER.z + 4 }, { accent: 0x33c481 });
+  }
+
+  // --- 4. the cordon: a stack of cones you deploy around the incident ---
+  const CONE_STACK = { x: -20, z: -2 };
+  {
+    const stack = new THREE.Group();
+    [0, 1, 2, 3].forEach((i) => {
+      const cone = buildCone(geo, mat, { height: 0.6 });
+      cone.position.set(0, i * 0.14, 0);
+      stack.add(cone);
+    });
+    stack.position.set(CONE_STACK.x, 0, CONE_STACK.z);
+    addStation(STATIONS[4], stack, CONE_STACK, { accent: 0xff5a1f });
+
+    // The deployed cordon, hidden until the player places it.
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      const cone = buildCone(geo, mat, { height: 0.6 });
+      cone.visible = false;
+      cordonCones.push({ cone, angle: a });
+      scene.add(cone);
+    }
+  }
+
+  function revealCordon() {
+    const r = 7.5;
+    cordonCones.forEach(({ cone, angle }) => {
+      cone.position.set(
+        incident.position.x + Math.cos(angle) * r,
+        0,
+        incident.position.z + Math.sin(angle) * r
+      );
+      cone.visible = true;
+    });
+  }
+
+  // --- 5. first-aid post ---
+  const FIRSTAID = { x: -26, z: 16 };
+  {
+    const fa = new THREE.Group();
+    fa.add(box(geo, mat.white, 1.4, 1.8, 1.0, 0, 0.9, 0));
+    fa.add(box(geo, mat.green, 0.9, 0.22, 0.04, 0, 1.35, 0.52, { shadow: false }));
+    fa.add(box(geo, mat.green, 0.22, 0.9, 0.04, 0, 1.35, 0.52, { shadow: false }));
+    fa.position.set(FIRSTAID.x, 0, FIRSTAID.z);
+    addStation(STATIONS[5], fa, FIRSTAID, { accent: 0x33c481 });
+  }
+
+  // --- 6. the site radio at the command post ---
+  const RADIO = { x: -22, z: 24 };
+  {
+    const r = new THREE.Group();
+    r.add(box(geo, mat.steelDark, 0.8, 0.6, 0.6, 0, 0.9, 0));
+    r.add(cylinder(geo, mat.galv, 0.03, 2.4, 0.3, 2.1, 0, { low: true, shadow: false }));
+    r.add(box(geo, mat.yellow, 0.5, 0.18, 0.04, 0, 1.05, 0.31, { shadow: false }));
+    r.position.set(RADIO.x, 0, RADIO.z);
+    addStation(STATIONS[6], r, RADIO, { accent: 0x9b7cf2 });
+  }
+
+  // --- 7. the emergency vehicle gate ---
+  addStation(STATIONS[7], new THREE.Group(), { x: GATE.x, z: GATE.z + 3 }, { accent: 0x59b7ff });
 
   /* ------------------------- the incident scene ------------------------- */
 
@@ -391,22 +547,37 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     isolated: false,
     evacuating: false,
     servicesCalled: false,
+    gateManned: false,
     finished: false,
     paused: false,
     disposed: false,
-    dialogOpen: false,
     briefOpen: false,
-    decisionEndsAt: 0,
-    decisionLength: 0,
-    // The "look at the scene" beat that runs before each question.
-    observing: false,
-    observeEndsAt: 0,
-    lastCountdownBeep: 0,
+    // Which command stations have been acted on, and how well.
+    doneStations: new Set(),
+    stepIndex: 0,
+    best: 0,
+    outOfSequence: 0,
+    hazardEntries: 0,
     consequence: null,
     consequenceUntil: 0,
     lessons: [],
     fireIntensity: 1,
   };
+
+  /* ---- the trap: the incident itself is clickable ----
+   * The decision NOT to walk into the hazard is the central lesson, so
+   * the game has to make walking into it genuinely available.
+   */
+  {
+    const hit = new THREE.Mesh(
+      new THREE.BoxGeometry(9, 8, 9),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    hit.position.set(incident.position.x, incident.position.y + 3, incident.position.z);
+    hit.userData.hazardEntry = true;
+    scene.add(hit);
+    pickTargets.push(hit);
+  }
 
   /* ------------------------------- input ------------------------------- */
 
@@ -417,12 +588,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       Escape: "pause",
       Digit1: "opt1", Digit2: "opt2", Digit3: "opt3", Digit4: "opt4",
       KeyB: "brief",
+      KeyZ: "zoom",
     },
   });
   input.setSensitivity(settings.lookSensitivity ?? 1);
 
   api.buttons([
     { id: "brief", label: "BRIEF", action: "brief", mode: "tap", color: "#59B7FF", primary: true },
+    { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
   ]);
 
   /* ------------------------------ camera ------------------------------ */
@@ -443,10 +616,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const wheel = input.consumeWheel();
     if (wheel) cam.distance = Math.max(10, Math.min(70, cam.distance + wheel * 0.03));
 
-    // While observing, ease the camera in towards the subject. The
-    // player can still drag and wheel — this only moves the baseline.
-    if (state.observing && cam.observeDistance) {
-      cam.distance += (cam.observeDistance - cam.distance) * Math.min(1, dt * 1.4);
+    // After acting on a station the camera eases in on it, so the
+    // player sees the consequence of what they just did.
+    if (cam.observeDistance) {
+      cam.distance += (cam.observeDistance - cam.distance) * Math.min(1, dt * 1.1);
+      if (Math.abs(cam.distance - cam.observeDistance) < 0.4) cam.observeDistance = 0;
     }
 
     cam.target.lerp(cam.desired, Math.min(1, dt * 2.2));
@@ -459,29 +633,16 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     camera.lookAt(cam.target);
   }
 
-  // The camera moves to whatever the current step is about, and then
-  // pushes IN while the player is observing it, so the thing they are
-  // about to be asked about is unmistakably on screen.
-  function frameForPhase(phase) {
-    if (phase === 2 || phase === 5) {
-      cam.desired.set(MUSTER.x, 1, MUSTER.z);
-      cam.distance = 34;
-      cam.observeDistance = 19;
-    } else if (phase === 6) {
-      cam.desired.set(GATE.x, 1, GATE.z);
-      cam.distance = 30;
-      cam.observeDistance = 17;
-    } else {
-      cam.desired.copy(incident.position);
-      cam.distance = scenario.scene === "fall" ? 22 : 24;
-      cam.observeDistance = scenario.scene === "fall" ? 11 : 12;
-    }
+  /** Swings the camera to whatever was just acted on. */
+  function frameForStation(station) {
+    const marker = stationMarkers.get(station?.id);
+    if (!marker) return;
+    cam.desired.copy(marker.anchor);
+    cam.observeDistance = 15;
   }
 
-  /* ---------------------------- the step machine ---------------------------- */
+  /* -------------------------- the station activity -------------------------- */
 
-  let currentStep = null;
-  let currentOptions = [];
   // Pending beats between decisions. Tracked so dispose() can cancel
   // them — otherwise leaving the game mid-incident would fire a dialog
   // into a torn-down shell.
@@ -505,76 +666,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     return Math.max(0, Math.min(100, value));
   }
 
-  /**
-   * Every step now runs in two beats:
+  /* ===================== the activity: command stations =====================
    *
-   *   1. OBSERVE — the camera flies in and zooms onto whatever the step
-   *      is about, with a short "look at the scene" countdown and no
-   *      question on screen. You are supposed to see the incident.
-   *   2. DECIDE — the question opens, based on what you were just shown.
+   * The response is COMMANDED BY DOING. Each ICS step is a real object
+   * on the site that the player finds and acts on — the call point, the
+   * intake panel, the muster marker, the cones, the first-aid post, the
+   * radio, the gate. Nothing is chosen from a list.
    *
-   * The decision clock does not start until beat 2, so the observation
-   * time is genuinely free.
-   */
-  function openStep() {
-    if (state.finished) return;
-    const step = scenario.steps[state.stepIndex];
-    if (!step) {
-      finish(true);
-      return;
-    }
-    currentStep = step;
-    currentOptions = step.options;
-    frameForPhase(step.phase);
-
-    // Beat 1: observe.
-    state.observing = true;
-    state.dialogOpen = false;
-    state.briefOpen = false;
-    state.observeEndsAt = stage.elapsed * 1000 + OBSERVE_MS;
-    sfx.radio();
-    api.toast(step.title, "warn");
-    if (step.subtitle) api.toast(step.subtitle, "info");
-
-    later(() => {
-      if (state.finished || state.disposed) return;
-      beginDecision();
-    }, OBSERVE_MS);
-  }
-
-  function beginDecision() {
-    if (!currentStep || state.finished) return;
-    state.observing = false;
-
-    const limit = currentStep.timeLimitMs * DECISION_TIME_MULTIPLIER * difficulty.timeScale;
-    state.decisionLength = limit;
-    state.decisionEndsAt = stage.elapsed * 1000 + limit;
-    state.dialogOpen = true;
-    state.lastCountdownBeep = 0;
-    sfx.decisionOpen();
-    renderDialog();
-  }
-
-  function renderDialog() {
-    if (!currentStep) return;
-    const remaining = Math.max(0, state.decisionEndsAt - stage.elapsed * 1000);
-    api.dialog({
-      eyebrow: `STEP ${currentStep.phase + 1} OF 8 — ${PHASES[currentStep.phase].toUpperCase()}`,
-      title: currentStep.title,
-      subtitle: currentStep.subtitle,
-      tone: "danger",
-      timerMs: remaining,
-      timerPercent: (remaining / Math.max(1, state.decisionLength)) * 100,
-      options: currentOptions.map((option, i) => ({
-        id: option.id,
-        label: option.label,
-        desc: difficulty.hints ? option.desc : undefined,
-        badge: String.fromCharCode(65 + i),
-      })),
-      footer: `Decision clock running. Casualty ${Math.round(state.casualty)}% · Control ${Math.round(state.control)}%`,
-      onPick: (id) => resolveStep(id),
-    });
-  }
+   * The incident itself is clickable too, and acting on it is always
+   * wrong: the game has to offer the chance to walk into the hazard, or
+   * refusing to is not a decision.
+   * ======================================================================= */
 
   function applyEffects(effects) {
     if (!effects) return;
@@ -583,92 +685,105 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     state.evacuation = clampMeter(state.evacuation + (effects.evacuation || 0));
   }
 
-  function resolveStep(optionId) {
-    if (!currentStep) return;
-    const option = currentOptions.find((o) => o.id === optionId) || null;
-    const phase = currentStep.phase;
+  function nextRequiredPhase() {
+    for (const s of STATIONS) {
+      if (!state.doneStations.has(s.id)) return s.phase;
+    }
+    return STATION_COUNT;
+  }
 
-    if (!option) {
-      // Timed out: the worst available option is what happens by default.
-      const worst = [...currentOptions].sort((a, b) => (a.points || 0) - (b.points || 0))[0];
-      state.timeouts += 1;
-      state.score += SCORING.timeout;
-      applyEffects(worst?.effects);
-      state.lessons.push(`Step ${phase + 1}: no decision was made in time. In an emergency, a slow decision is a decision.`);
-      sfx.wrong();
-      api.toast("Decision clock expired — the situation decided for you.", "bad", SCORING.timeout);
-      advance(phase, false);
+  function actOnStation(station) {
+    if (state.finished || !station) return;
+    if (state.doneStations.has(station.id)) {
+      api.toast(`${station.label} — already done.`, "info");
       return;
     }
 
-    state.score += option.points || 0;
-    applyEffects(option.effects);
-    state.decisions.push({ phase, optionId, correct: !!option.correct, points: option.points || 0 });
+    const required = nextRequiredPhase();
+    const inSequence = station.phase === required;
 
-    if (option.correct) {
+    state.doneStations.add(station.id);
+    state.stepIndex = state.doneStations.size;
+    applyEffects(station.effects);
+
+    if (inSequence) {
       state.best += 1;
+      state.score += STATION_SCORING.inSequence;
       sfx.correct();
-      api.toast(option.feedback, "good", option.points);
-    } else if ((option.points || 0) > 0) {
-      state.acceptable += 1;
-      sfx.click();
-      api.toast(option.feedback, "warn", option.points);
-      state.lessons.push(option.feedback);
+      api.toast(station.done, "good", STATION_SCORING.inSequence);
     } else {
-      state.wrong += 1;
-      sfx.wrong();
-      api.toast(option.feedback, "bad", option.points);
-      state.lessons.push(option.feedback);
-      if (option.consequence) {
-        state.consequence = option.consequence;
-        state.consequenceUntil = stage.elapsed + 3;
-        sfx.alarm();
-      }
+      state.outOfSequence += 1;
+      state.score += STATION_SCORING.outOfSequence;
+      // Doing the right thing late still helps, but control suffers.
+      state.control = clampMeter(state.control - 10);
+      sfx.click();
+      api.toast(`${station.done} — but out of order.`, "warn", STATION_SCORING.outOfSequence);
+      state.lessons.push(
+        `${station.label}: done out of sequence. ${station.lesson}`
+      );
     }
 
-    advance(phase, !!option.correct);
-  }
-
-  // Phase side effects on the 3D scene.
-  function advance(phase, wasCorrect) {
-    if (phase === 2) {
+    // The scene reacts to what was actually done.
+    if (station.id === "alarm") {
       state.alarmRaised = true;
-      state.evacuating = true;
-      sfx.alarm();
+      sfx.siren();
     }
-    if (phase === 3 && wasCorrect) {
+    if (station.id === "isolate") {
       state.isolated = true;
-      cordonGroup.visible = true;
+      state.fireIntensity = Math.min(state.fireIntensity, 1.4);
     }
-    if (phase === 4 && wasCorrect && scenario.scene === "fire") {
-      // A defensive strategy stops the fire growing out of control.
-      state.fireIntensity = Math.min(state.fireIntensity, 1.5);
+    if (station.id === "evacuate") {
+      state.evacuating = true;
+      sfx.radio();
     }
-    if (phase === 6 && wasCorrect) {
+    if (station.id === "cordon") {
+      revealCordon();
+    }
+    if (station.id === "services") {
       state.servicesCalled = true;
       ambulance.visible = true;
-      // You hear it before you see it come through the gate.
       sfx.ambulance();
     }
-
-    state.stepIndex += 1;
-    state.dialogOpen = false;
-    api.dialog(null);
-
-    if (state.stepIndex >= scenario.steps.length) {
-      finish(true);
-      return;
+    if (station.id === "meet") {
+      state.gateManned = true;
     }
-    // A short beat between decisions so the player sees the scene react.
-    later(() => {
-      if (!state.finished) openStep();
-    }, 1400);
+
+    markStationDone(station.id);
+    frameForStation(station);
+    pushHud();
+
+    if (state.doneStations.size >= STATION_COUNT) {
+      later(() => { if (!state.finished) finish(true); }, 1600);
+    }
   }
+
+  function enterHazard() {
+    if (state.finished) return;
+    state.hazardEntries += 1;
+    state.score += STATION_SCORING.hazardEntry;
+    applyEffects(HAZARD_ENTRY.effects);
+    state.consequence = "You are inside the incident.";
+    state.consequenceUntil = stage.elapsed + 2.6;
+    state.lessons.push(HAZARD_ENTRY.feedback);
+    sfx.wrong();
+    sfx.alarm();
+    api.toast(HAZARD_ENTRY.feedback, "bad", STATION_SCORING.hazardEntry);
+    pushHud();
+  }
+
+  /** Clicking something that is not a station at all. */
+  function wrongTarget(label) {
+    if (state.finished) return;
+    state.score += STATION_SCORING.wrongTarget;
+    sfx.locked();
+    api.toast(`${label} is not part of the response right now.`, "warn", STATION_SCORING.wrongTarget);
+  }
+
 
   function showBrief() {
     // The brief can be re-read at any time, including mid-decision — but
     // the decision clock keeps running, so reading it costs you time.
-    const interrupting = state.dialogOpen && currentStep;
+    const interrupting = false;
     // Stops the decision dialog's periodic timer re-render from
     // immediately painting over the brief.
     state.briefOpen = true;
@@ -683,8 +798,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       footer: `Alert: ${scenario.alert}`,
       onDismiss: () => {
         state.briefOpen = false;
-        if (interrupting && !state.finished) renderDialog();
-        else api.dialog(null);
+        api.dialog(null);
       },
     });
   }
@@ -696,21 +810,26 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     state.finished = true;
     api.dialog(null);
 
-    const total = scenario.steps.length;
+    const total = STATION_COUNT;
     const remainingSeconds = Math.max(0, Math.floor(state.remainingMs / 1000));
     const casualtySurvived = state.casualty >= 35;
     const controlled = state.control >= 60;
 
-    const survivalBonus = casualtySurvived ? SCORING.casualtySurvived : 0;
-    const controlBonus = controlled ? SCORING.siteControlled : 0;
-    const completionBonus = completed ? SCORING.completion : 0;
-    const timeBonus = completed ? remainingSeconds * SCORING.timeBonusPerSecond : 0;
+    const survivalBonus = casualtySurvived ? STATION_SCORING.casualtySurvived : 0;
+    const controlBonus = controlled ? STATION_SCORING.siteControlled : 0;
+    const completionBonus = completed ? STATION_SCORING.allStations : 0;
+    const timeBonus = completed ? remainingSeconds * STATION_SCORING.timeBonusPerSecond : 0;
 
     const raw = state.score + survivalBonus + controlBonus + completionBonus + timeBonus;
     const score = Math.max(0, Math.round(raw * difficulty.scoreScale));
 
-    // Performance weights the decisions most heavily, then the outcome.
-    const decisionScore = total ? (state.best + state.acceptable * 0.5) / total : 0;
+    // Performance weights the actions most heavily, then the outcome.
+    // Walking into the hazard is subtracted directly: it is the one
+    // thing a commander must never do.
+    const actionScore = total
+      ? Math.max(0, (state.best + state.outOfSequence * 0.4 - state.hazardEntries) / total)
+      : 0;
+    const decisionScore = actionScore;
     const performance = Math.round(
       decisionScore * 60 + (state.casualty / 100) * 25 + (state.control / 100) * 15
     );
@@ -764,20 +883,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   let hudAccumulator = 0;
 
   function pushHud() {
-    const step = scenario.steps[state.stepIndex];
+    const nextPhase = nextRequiredPhase();
+    const nextStation = STATIONS[nextPhase] || null;
     api.hud({
       controlScheme: "command",
       objective: state.finished
         ? "Incident closed out"
-        : state.observing && step
-          ? `LOOK AT THE SCENE — ${PHASES[step.phase]}`
-          : step
-            ? `${PHASES[step.phase]} — step ${step.phase + 1} of 8`
-            : scenario.title,
+        : nextStation
+          ? `${PHASES[nextStation.phase] || "Respond"} — ${nextStation.prompt}`
+          : scenario.title,
       score: Math.max(0, state.score),
       timeMs: state.remainingMs,
-      progress: (state.stepIndex / scenario.steps.length) * 100,
-      progressLabel: `${state.stepIndex} of ${scenario.steps.length} steps decided`,
+      progress: (state.doneStations.size / STATION_COUNT) * 100,
+      progressLabel: `${state.doneStations.size} of ${STATION_COUNT} actions taken`,
       danger: true,
       flashDanger: state.consequence !== null && stage.elapsed < state.consequenceUntil,
       readoutsTitle: "INCIDENT",
@@ -792,24 +910,27 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         { label: "SCENE CONTROL", value: state.control, color: "#FFC629", warnBelow: 30 },
         { label: "ACCOUNTED FOR", value: state.evacuation, color: "#33C481", warnBelow: 20 },
       ],
-      tasks: PHASES.map((label, index) => ({
-        id: label,
-        label,
-        done: index < state.stepIndex,
+      tasks: STATIONS.map((s) => ({
+        id: s.id,
+        label: `${s.action} — ${s.label}`,
+        done: state.doneStations.has(s.id),
       })),
-      prompt: state.observing
-        ? {
-            text: `Watch what is happening — the question opens in ${Math.max(0, Math.ceil((state.observeEndsAt - stage.elapsed * 1000) / 1000))}s`,
-            tone: "normal",
-            key: "",
-          }
-        : null,
-      tasksTitle: "RESPONSE STEPS",
+      prompt: state.finished
+        ? null
+        : {
+            text: nextStation
+              ? `Find the ${nextStation.label} and ${nextStation.action.toLowerCase()}`
+              : "Hand over to the emergency services",
+            tone: "good",
+            key: mobile ? "Tap" : "Click",
+          },
+      tasksTitle: "THE RESPONSE",
+      crosshair: "idle",
       keyHints: mobile ? [] : [
-        { key: "1-4", label: "Decide" },
+        { key: "Click", label: "Act on it" },
+        { key: "1-8", label: "Find station" },
         { key: "Drag", label: "Look" },
-        { key: "B", label: "Brief" },
-        { key: "Esc", label: "Pause" },
+        { key: "Z", label: "Zoom" },
       ],
     });
   }
@@ -823,7 +944,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   sfx.siren();
   showBrief();
   later(() => {
-    if (!state.finished) { api.dialog(null); openStep(); }
+    if (state.finished) return;
+    api.dialog(null);
+    frameForStation(STATIONS[0]);
+    api.toast("Take command. Find the command post and work the response.", "warn");
   }, 3400);
 
   stage.start((dt) => {
@@ -837,47 +961,41 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       }
     }
 
-    // Decision clock.
-    if (state.dialogOpen && currentStep && !state.finished) {
-      const remaining = state.decisionEndsAt - stage.elapsed * 1000;
-      // An audible countdown over the last five seconds, so the clock is
-      // something you hear rather than something you have to watch.
-      if (remaining > 0 && remaining <= 5000) {
-        const second = Math.ceil(remaining / 1000);
-        if (second !== state.lastCountdownBeep) {
-          state.lastCountdownBeep = second;
-          sfx.countdown();
-        }
-      }
-      if (remaining <= 0) {
-        resolveStep(null);
-      } else if (!state.briefOpen) {
-        // Re-render the dialog a few times a second so the timer bar moves.
-        hudAccumulator += dt;
-        if (hudAccumulator > 0.2) {
-          hudAccumulator = 0;
-          renderDialog();
-          pushHud();
-        }
-      }
-    } else {
-      hudAccumulator += dt;
-      if (hudAccumulator > 0.14) {
-        hudAccumulator = 0;
-        pushHud();
+    hudAccumulator += dt;
+    if (hudAccumulator > 0.14) {
+      hudAccumulator = 0;
+      pushHud();
+    }
+
+    /* ----- acting on the world ----- */
+    if (!state.finished && !state.briefOpen && input.wasPressed("tap")) {
+      const hit = screenRaycast(camera, input.state.ndc, pickTargets, 400);
+      if (hit) {
+        const asStation = findTagged(hit.object, "stationId");
+        const asHazard = findTagged(hit.object, "hazardEntry");
+        if (asStation) actOnStation(stationById(asStation.userData.stationId));
+        else if (asHazard) enterHazard();
       }
     }
 
-    // Keyboard shortcuts for the options.
-    if (state.dialogOpen && currentStep) {
-      for (let i = 0; i < 4; i++) {
-        if (input.wasPressed(`opt${i + 1}`) && currentOptions[i]) {
-          resolveStep(currentOptions[i].id);
-          break;
-        }
+    // Number keys jump the camera to a station, for desktop players who
+    // would rather not hunt for the cone stack.
+    for (let i = 0; i < 8; i++) {
+      if (input.wasPressed(`opt${i + 1}`) && STATIONS[i]) {
+        frameForStation(STATIONS[i]);
+        api.toast(`${STATIONS[i].label} — ${STATIONS[i].prompt}`, "info");
       }
-    } else if (input.wasPressed("brief")) {
-      showBrief();
+    }
+
+    if (input.wasPressed("brief")) showBrief();
+
+    // ZOOM snaps between a wide view of the whole site and a close look
+    // at whatever the current step is about. Wheel and pinch still give
+    // fine control; this is the one-tap version for a phone.
+    if (input.wasPressed("zoom")) {
+      const close = cam.observeDistance || 14;
+      cam.distance = cam.distance > close + 6 ? close : 36;
+      sfx.click();
     }
 
     if (state.consequence && stage.elapsed > state.consequenceUntil) state.consequence = null;
@@ -995,13 +1113,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
+      camDistance: () => cam.distance,
       state, scenario, crowd,
-      currentStep: () => currentStep,
-      currentOptions: () => currentOptions,
-      // Lets the headless test skip the 5-second observation beat
-      // rather than sleeping through eight of them.
-      beginDecision,
-      OBSERVE_MS,
+      STATIONS, STATION_COUNT,
+      actOnStation, enterHazard, nextRequiredPhase,
+      stationMarkers,
     },
   };
 }

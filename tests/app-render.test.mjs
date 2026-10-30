@@ -181,6 +181,35 @@ if (!denied) {
 check("NO React errors after unlocking admin", reactErrors.length === 0,
   reactErrors.slice(0, 2).join(" | "));
 
+if (!denied) {
+  /* ---- the live-vs-integrated confusion ----
+   *
+   * The question list is LIVE EVENT mode's paper. In an integrated
+   * session it is ignored entirely, and saying nothing about that led
+   * straight to "I see 15 questions and no 3D missions — why?".
+   */
+  check("the question list says it is the live event paper",
+    text.includes("Live event questions"), text.slice(0, 200));
+  check("the question list says live event mode has no 3D missions",
+    /Live event.*no 3D missions|no 3D missions/i.test(text));
+  check("the admin can deal a fresh paper themselves",
+    text.includes("Reshuffle"), "no reshuffle control found");
+
+  // Whichever mode is active, exactly one of these explanations shows.
+  const saysIgnored = text.includes("Not in use right now");
+  const saysNo3d = text.includes("Live event mode has no 3D missions");
+  check("the panel explains which mode the list belongs to", saysIgnored || saysNo3d,
+    `ignored=${saysIgnored} no3d=${saysNo3d}`);
+
+  // And if the host has not released a round, say so loudly — an
+  // integrated session does nothing at all until they do.
+  if (text.includes("Round") && text.includes("Not started")) {
+    check("an unstarted session tells the host to start Round 1",
+      text.includes("Nothing has started yet") && text.includes("Start Round 1"),
+      "no start-round prompt");
+  }
+}
+
 // This is the exact failure mode that shipped: a hook below an early
 // return only blows up on the SECOND render, once the PIN is accepted.
 check("no hook-order violation in the admin panel",

@@ -12,7 +12,7 @@
  * ------------------------------------------------------------------ */
 
 import * as THREE from "three";
-import { createStage, addDaylight, addSky } from "../../engine/gfx.js";
+import { createStage, addDaylight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createFirstPerson, ladderVolume } from "../../engine/fpsController.js";
 import {
@@ -67,12 +67,14 @@ export const meta = {
     ["Space", "Jump"],
     ["C", "Crouch"],
     ["E", "Inspect and report the hazard you are standing at"],
+    ["Wheel / Z", "Zoom in to look closer across the site"],
     ["Esc", "Pause the mission"],
   ],
   mobileControls: [
     ["Joystick", "Walk — bottom-left of the screen, full 360° analogue"],
     ["Drag right", "Look around, at the same time as moving"],
     ["INSPECT", "Report the hazard you are standing at"],
+    ["Pinch / ZOOM", "Zoom in to look closer"],
     ["RUN", "Hold to move faster"],
     ["JUMP", "Jump"],
     ["Pause", "Top-right of the HUD"],
@@ -645,9 +647,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const input = createInput(container, {
     pointerLock: !mobile,
     onPause: () => api.requestPause(),
+    keymap: { KeyZ: "zoom" },
   });
   input.setSensitivity(settings.lookSensitivity ?? 1);
   input.setInvertY(!!settings.invertY);
+
+  // Wheel on desktop, pinch on a phone, Z or the ZOOM button to toggle.
+  // A first-person camera narrows its lens rather than pulling back,
+  // because pulling back would put the camera inside a wall.
+  const zoom = createZoom(camera, input, { baseFov: camera.fov, minFov: 26 });
 
   const controller = createFirstPerson(camera, input, {
     colliders,
@@ -703,6 +711,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     { id: "inspect", label: "INSPECT", action: "interact", mode: "tap", color: "#FFC629", primary: true },
     { id: "run", label: "RUN", action: "run", mode: "hold", color: "#33C481" },
     { id: "jump", label: "JUMP", action: "jump", mode: "tap", color: "#59B7FF" },
+    { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
   ]);
 
   /* ---------------------------- interaction ---------------------------- */
@@ -955,6 +964,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   stage.start((dt) => {
     if (state.paused) return;
 
+    // Zoom eases every frame, including while a dialog is open, so the
+    // lens never snaps when control comes back.
+    zoom.update(dt);
+
     if (!state.finished) {
       state.remainingMs -= dt * 1000;
       if (state.remainingMs <= 0) {
@@ -965,6 +978,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     if (!state.dialogOpen && !state.finished) {
       controller.update(dt);
+      if (input.wasPressed("zoom")) { zoom.toggle(); sfx.click(); }
       setTarget(findTarget());
       if (state.target && input.wasPressed("interact")) {
         openIdentifyDialog(state.target);
@@ -1028,7 +1042,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Test seam used by tests/arena-games.test.mjs to drive a real
     // playthrough headlessly. Nothing in the app reads this.
-    __test: { state, controller, hazards, scene, colliders },
+    __test: {
+      state, controller, hazards, scene, colliders,
+      zoomFov: () => camera.fov,
+    },
   };
 }
 

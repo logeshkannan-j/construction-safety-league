@@ -7,9 +7,10 @@ import {
 import { COLORS, inputStyle, btnStyle, linkBtnStyle } from "./theme.js";
 import {
   STAGES, QUIZ_SECONDS, MILLIONAIRE_SECONDS, ROUND_COUNT, NOT_RELEASED,
-  TOTAL_ITEMS, ROUND_GAMES, ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS,
+  ROUND_GAMES, ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS,
   createSession, isSessionValid, hydrateSession, answerQuestion,
   advanceQuestion, releaseRound, completeGame3d, skipGame3d, currentRound,
+  currentQuestion, quizPerRoundOf, totalItems, itemsPerRound, MQ_PER_ROUND,
   sectionTotals, sessionSummary, sessionProgress, questionRemainingMs,
 } from "./session.js";
 
@@ -22,7 +23,7 @@ const GameShell = lazy(() => import("./arena/ui/GameShell.jsx"));
  *
  *  One game code, one set of details, five rounds:
  *
- *      ROUND n:  3D mission n  →  1 quiz question  →  1 finale question
+ *      ROUND n:  3D mission  →  3 × MCQ  →  1 finale question
  *
  *  The host releases each round (game.releasedRound); between rounds the
  *  participant waits. Inside a round they work at their own speed.
@@ -79,11 +80,15 @@ export default function SoloSession({
   const stage = session?.stage || STAGES.LOCKED;
   const isFinale = stage === STAGES.MILLIONAIRE;
   const sectionKey = isFinale ? "mq" : "quiz";
-  // Both sections are keyed by the round, so there is one index, not two.
   const index = session?.roundIndex || 0;
+  const quizStep = session?.quizStep || 0;
+  const perRound = valid ? quizPerRoundOf(session) : 1;
   const round = valid ? questions.rounds[index] : null;
-  const question = (isFinale ? round?.millionaire : round?.quiz) || null;
-  const answered = session?.answers?.[sectionKey]?.[index];
+  // A round holds several MCQs, so the question depends on the step.
+  const question = valid ? currentQuestion(session) : null;
+  // MCQ answers are keyed "round:step"; finale answers by round.
+  const answerKey = isFinale ? index : `${index}:${quizStep}`;
+  const answered = session?.answers?.[sectionKey]?.[answerKey];
   const remainingMs = questionRemainingMs(session, now);
 
   const submit = useCallback((pickedIndex) => {
@@ -102,7 +107,7 @@ export default function SoloSession({
   useEffect(() => {
     if (!question || answered !== undefined) return;
     if (remainingMs > 0) return;
-    const key = `${sectionKey}:${index}`;
+    const key = `${sectionKey}:${answerKey}`;
     if (timedOutRef.current.has(key)) return;
     timedOutRef.current.add(key);
     submit(-1);
@@ -113,6 +118,25 @@ export default function SoloSession({
     setLifelineView({ audience: false, hint: false });
     persist(advanceQuestion(session, { now: Date.now() + serverOffset }));
   }, [persist, serverOffset, session]);
+
+  /* --------------------------- focus hygiene --------------------------- */
+
+  /**
+   * Clears focus whenever the question changes.
+   *
+   * Without this the answer is given away. React keys the option
+   * buttons by index, so advancing to the next question REUSES the same
+   * DOM nodes — and whatever was focused (the option you just tapped,
+   * or the CONTINUE button that took its place) keeps focus. The focus
+   * ring then sits on the same slot on every single question, which
+   * reads exactly like "the cursor is pointing at the answer".
+   */
+  useEffect(() => {
+    const active = typeof document !== "undefined" ? document.activeElement : null;
+    if (active && typeof active.blur === "function" && active !== document.body) {
+      active.blur();
+    }
+  }, [session?.roundIndex, session?.stage, reveal]);
 
   /* ------------------------- host-released rounds ------------------------- */
 
@@ -247,7 +271,9 @@ export default function SoloSession({
         me={me}
         connected={connected}
         progress={progress}
-        label={`Round ${index + 1} of ${ROUND_COUNT} · ${isFinale ? "Safety Millionaire" : "Safety Quiz"}`}
+        label={isFinale
+          ? `Round ${index + 1} of ${ROUND_COUNT} · Safety Millionaire`
+          : `Round ${index + 1} of ${ROUND_COUNT} · Question ${quizStep + 1} of ${perRound}`}
       />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "18px 0" }}>
@@ -329,7 +355,14 @@ export default function SoloSession({
                   const isOut = isFinale && eliminated.includes(i);
                   return (
                     <button
-                      key={i}
+                      // Keyed by the OPTION TEXT, not the index. Keying
+                      // by index makes React reuse the same four DOM
+                      // nodes for every question, which is how focus
+                      // (and therefore the focus ring) ends up parked on
+                      // the same slot question after question.
+                      key={`${index}:${option}`}
+                      type="button"
+                      className="csl-answer"
                       disabled={isOut || remainingSeconds === 0}
                       onClick={() => submit(i)}
                       style={{
@@ -370,6 +403,7 @@ export default function SoloSession({
               isLast={isFinale && index === ROUND_COUNT - 1}
               endsRound={isFinale}
               roundNumber={index + 1}
+              moreInRound={!isFinale && quizStep + 1 < perRound}
             />
           )}
         </div>
@@ -446,9 +480,9 @@ function RoundWaiting({ me, connected, session, roundIndex, justFinishedRound, o
                   Welcome, {me.name}
                 </h1>
                 <p style={{ color: COLORS.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
-                  {ROUND_COUNT} rounds. Each one is a 3D mission, then a quiz question, then a
-                  Safety Millionaire question — {TOTAL_ITEMS} items scored into one result. Your
-                  questions are already dealt and they are yours alone.
+                  {ROUND_COUNT} rounds. Each one is a 3D mission, then {quizPerRoundOf(session)} quiz
+                  questions, then a Safety Millionaire question — {totalItems(quizPerRoundOf(session))} items
+                  scored into one result. Your questions are already dealt and they are yours alone.
                 </p>
               </>
             ) : (
@@ -458,7 +492,7 @@ function RoundWaiting({ me, connected, session, roundIndex, justFinishedRound, o
                   Round {(justFinishedRound ?? 0) + 1} complete
                 </h1>
                 <p style={{ color: COLORS.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
-                  {totals.total} points so far, across {progress.itemsDone} of {TOTAL_ITEMS} items.
+                  {totals.total} points so far, across {progress.itemsDone} of {totalItems(quizPerRoundOf(session))} items.
                 </p>
               </>
             )}
@@ -489,7 +523,7 @@ function RoundWaiting({ me, connected, session, roundIndex, justFinishedRound, o
               </span>
             </div>
             <div style={{ display: "flex", gap: 14, marginTop: 12, fontSize: 12, color: COLORS.muted }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Target size={13} color={COLORS.green} /> 1 quiz question</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Target size={13} color={COLORS.green} /> {quizPerRoundOf(session)} quiz questions</span>
               <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Gem size={13} color={COLORS.purple} /> 1 finale question</span>
             </div>
           </div>
@@ -546,7 +580,7 @@ function EmbeddedGame({ gameId, roundNumber, me, onComplete, onSkip }) {
   );
 }
 
-function QuestionReveal({ question, result, isFinale, onNext, isLast, endsRound, roundNumber }) {
+function QuestionReveal({ question, result, isFinale, onNext, isLast, endsRound, roundNumber, moreInRound }) {
   const correct = !!result.correct;
   const noAnswer = result.pickedIndex === undefined || result.pickedIndex < 0;
   return (
@@ -579,7 +613,13 @@ function QuestionReveal({ question, result, isFinale, onNext, isLast, endsRound,
       </div>
 
       <button style={btnStyle(isFinale ? COLORS.purple : COLORS.yellow)} onClick={onNext}>
-        {isLast ? "SEE MY RESULT" : endsRound ? `FINISH ROUND ${roundNumber}` : "NEXT QUESTION"}
+        {isLast
+          ? "SEE MY RESULT"
+          : endsRound
+            ? `FINISH ROUND ${roundNumber}`
+            : moreInRound
+              ? "NEXT QUESTION"
+              : "ON TO THE FINALE"}
         <ChevronRight size={16} style={{ verticalAlign: -3, marginLeft: 4 }} />
       </button>
     </div>

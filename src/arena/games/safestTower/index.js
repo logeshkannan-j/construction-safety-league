@@ -66,7 +66,7 @@ export const meta = {
 
   desktopControls: [
     ["Mouse drag", "Orbit the compound"],
-    ["Wheel", "Zoom in and out"],
+    ["Wheel / Z", "Zoom in and out"],
     ["Click", "Inspect a hazard"],
     ["1 – 4", "Answer the open question"],
     ["Tab", "Jump to the next unsolved hazard"],
@@ -74,7 +74,7 @@ export const meta = {
   ],
   mobileControls: [
     ["Drag", "Orbit the compound"],
-    ["Pinch", "Zoom"],
+    ["Pinch / ZOOM", "Zoom in on a hazard"],
     ["Tap", "Inspect a hazard"],
     ["Tap an answer", "Choose the control"],
     ["NEXT", "Jump to the next unsolved hazard"],
@@ -399,6 +399,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       Escape: "pause",
       Tab: "next",
       Digit1: "answer1", Digit2: "answer2", Digit3: "answer3", Digit4: "answer4",
+      KeyZ: "zoom",
     },
   });
   input.setSensitivity(settings.lookSensitivity ?? 1);
@@ -618,6 +619,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     api.buttons([
       { id: "next", label: "NEXT", action: "next", mode: "tap", color: "#FFC629", primary: true },
+      { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#59B7FF" },
     ]);
   }
 
@@ -639,6 +641,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     if (!state.finished) {
       if (input.wasPressed("tap")) handleTap();
       if (input.wasPressed("next")) nextUnsolved();
+      if (input.wasPressed("zoom")) {
+        cam.distance = cam.distance > 24 ? 13 : 40;
+        sfx.click();
+      }
       if (state.openHazard) {
         [1, 2, 3, 4].forEach((n) => {
           if (input.wasPressed(`answer${n}`)) answer(state.openHazard, n - 1);
@@ -696,6 +702,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
+      camDistance: () => cam.distance,
       state, hazards, hazardById, inspect, answer, nextUnsolved,
       HAZARD_COUNT,
     },

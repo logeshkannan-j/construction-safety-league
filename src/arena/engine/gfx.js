@@ -394,17 +394,68 @@ export function addIndoorLight(scene, cfg, { color = 0xffe6bd, intensity = 0.9 }
  * canvas texture — far cheaper on a phone than a cubemap or a shader
  * sky, and it reads as a real sky at these camera angles.
  */
-export function addSky(scene, cfg, { top = "#2C6FA8", bottom = "#CFE3F2", fogColor = "#C2D8E8" } = {}) {
+export function addSky(scene, cfg, {
+  top = "#2C6FA8", bottom = "#CFE3F2", fogColor = "#C2D8E8",
+  clouds = true, sun = true,
+} = {}) {
+  // A 32px-wide strip gave a clean gradient and nothing else — every
+  // mission's sky was a flat wash. This paints a real sky: banded haze
+  // towards the horizon, a soft sun bloom and layered cloud. It is one
+  // canvas, drawn once per scene, so it costs nothing per frame.
+  const W = clouds ? 512 : 32;
   const canvas = document.createElement("canvas");
-  canvas.width = 32;
+  canvas.width = W;
   canvas.height = 256;
   const g = canvas.getContext("2d");
   const grad = g.createLinearGradient(0, 0, 0, 256);
   grad.addColorStop(0, top);
-  grad.addColorStop(0.55, bottom);
+  grad.addColorStop(0.42, blendHex(top, bottom, 0.55));
+  grad.addColorStop(0.72, bottom);
   grad.addColorStop(1, bottom);
   g.fillStyle = grad;
-  g.fillRect(0, 0, 32, 256);
+  g.fillRect(0, 0, W, 256);
+
+  if (clouds) {
+    // Sun bloom, low and to one side so the shadows have a story.
+    if (sun) {
+      const sx = W * 0.68;
+      const sy = 64;
+      const halo = g.createRadialGradient(sx, sy, 2, sx, sy, 120);
+      halo.addColorStop(0, "rgba(255,252,240,0.95)");
+      halo.addColorStop(0.18, "rgba(255,246,219,0.45)");
+      halo.addColorStop(1, "rgba(255,246,219,0)");
+      g.fillStyle = halo;
+      g.fillRect(sx - 130, sy - 130, 260, 260);
+    }
+
+    // Two cloud layers: soft high cloud, then brighter cumulus below.
+    const puff = (cx, cy, r, alpha) => {
+      const c = g.createRadialGradient(cx, cy, r * 0.1, cx, cy, r);
+      c.addColorStop(0, `rgba(255,255,255,${alpha})`);
+      c.addColorStop(0.6, `rgba(255,255,255,${alpha * 0.45})`);
+      c.addColorStop(1, "rgba(255,255,255,0)");
+      g.fillStyle = c;
+      g.fillRect(cx - r, cy - r, r * 2, r * 2);
+    };
+    // Deterministic placement — the sky must not flicker between plays.
+    for (let i = 0; i < 26; i++) {
+      const cx = ((i * 97) % W);
+      const cy = 30 + ((i * 53) % 90);
+      puff(cx, cy, 26 + ((i * 17) % 34), 0.30);
+    }
+    for (let i = 0; i < 16; i++) {
+      const cx = ((i * 151) % W);
+      const cy = 86 + ((i * 41) % 54);
+      puff(cx, cy, 34 + ((i * 23) % 40), 0.50);
+    }
+
+    // Horizon haze band, which is what makes distance read as distance.
+    const haze = g.createLinearGradient(0, 150, 0, 256);
+    haze.addColorStop(0, "rgba(255,255,255,0)");
+    haze.addColorStop(1, hexToRgba(fogColor, 0.9));
+    g.fillStyle = haze;
+    g.fillRect(0, 150, W, 106);
+  }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -412,7 +463,7 @@ export function addSky(scene, cfg, { top = "#2C6FA8", bottom = "#CFE3F2", fogCol
   texture.minFilter = THREE.LinearFilter;
 
   const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(cfg.drawDistance * 0.92, 16, 10),
+    new THREE.SphereGeometry(cfg.drawDistance * 0.92, clouds ? 32 : 16, clouds ? 18 : 10),
     new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide, depthWrite: false, fog: false })
   );
   sphere.name = "sky";
@@ -422,6 +473,94 @@ export function addSky(scene, cfg, { top = "#2C6FA8", bottom = "#CFE3F2", fogCol
     scene.fog = new THREE.Fog(new THREE.Color(fogColor), cfg.drawDistance * 0.35, cfg.drawDistance * 0.85);
   }
   return sphere;
+}
+
+/* ------------------------------ zooming ------------------------------ */
+
+/**
+ * Field-of-view zoom for the first-person and cab views, driven by the
+ * mouse wheel on desktop and pinch on a phone (both arrive through
+ * input.consumeWheel()).
+ *
+ * The orbit games zoom by pulling the camera in and out; a first-person
+ * camera cannot do that without walking through walls, so it narrows the
+ * lens instead — which is also what "look closer at that thing across
+ * the site" actually means.
+ *
+ * Returns an object with update(dt) to call each frame, plus toggle()
+ * and reset() for an on-screen ZOOM button.
+ */
+export function createZoom(camera, input, {
+  baseFov = camera.fov,
+  minFov = 22,
+  step = 0.055,
+  // How far the toggle button jumps, as a fraction of the full range.
+  toggleTo = 0.75,
+  onChange = null,
+} = {}) {
+  let targetFov = baseFov;
+  let currentFov = baseFov;
+
+  function clamp(v) {
+    return Math.max(minFov, Math.min(baseFov, v));
+  }
+
+  return {
+    get fov() { return currentFov; },
+    /** 0 = no zoom, 1 = fully zoomed in. */
+    get amount() {
+      return baseFov === minFov ? 0 : (baseFov - currentFov) / (baseFov - minFov);
+    },
+    get zoomed() { return currentFov < baseFov - 0.5; },
+
+    update(dt) {
+      const wheel = input.consumeWheel();
+      if (wheel) targetFov = clamp(targetFov + wheel * step);
+
+      if (Math.abs(currentFov - targetFov) > 0.01) {
+        // Ease rather than snap: a hard FOV jump is nauseating.
+        currentFov += (targetFov - currentFov) * Math.min(1, dt * 9);
+        camera.fov = currentFov;
+        camera.updateProjectionMatrix();
+        onChange?.(this.amount);
+      }
+    },
+
+    toggle() {
+      const zoomedFov = baseFov - (baseFov - minFov) * toggleTo;
+      targetFov = this.zoomed ? baseFov : zoomedFov;
+    },
+
+    reset() { targetFov = baseFov; },
+
+    /** Lets a game widen the base FOV when it switches view. */
+    setBaseFov(fov) {
+      baseFov = fov;
+      targetFov = clamp(targetFov);
+    },
+  };
+}
+
+/* ---------------------------- colour maths ---------------------------- */
+
+function parseHex(hex) {
+  const h = String(hex).replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const n = parseInt(full, 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+/** Mixes two hex colours; t = 0 gives `a`, t = 1 gives `b`. */
+function blendHex(a, b, t) {
+  const x = parseHex(a);
+  const y = parseHex(b);
+  const mix = (p, q) => Math.round(p + (q - p) * t);
+  return `rgb(${mix(x.r, y.r)}, ${mix(x.g, y.g)}, ${mix(x.b, y.b)})`;
+}
+
+function hexToRgba(hex, alpha) {
+  const { r, g, b } = parseHex(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 /* --------------------------- misc helpers --------------------------- */

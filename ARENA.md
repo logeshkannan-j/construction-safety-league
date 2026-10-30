@@ -14,9 +14,10 @@ A participant enters the game code, submits their details once, and plays five r
 ROUND n:  3D mission n  →  1 quiz question  →  1 Safety Millionaire question
 ```
 
-Five rounds x three items = **15 items**, and the five rounds use the five different 3D missions in
-order. **There is no second sign-in** — the missions, both question types and the leaderboard all
-run against the same participant record and the same game code.
+Five rounds x five items = **25 items** by default (the host sets the quiz count), and the five rounds use the five different 3D missions —
+**dealt in a different order to each participant**. **There is no second sign-in**: the missions,
+both question types and the leaderboard all run against the same participant record and the same
+game code.
 
 ### The host releases each round
 
@@ -82,9 +83,13 @@ session.descriptor = {
 }
 ```
 
+- The **mission order is shuffled per participant**, so Round 3 is the crane for one person and
+  the escape for the person sitting next to them.
 - 5 general questions, drawn **one per topic** across 5 of the 12 topics, so a participant never
   gets two questions on the same subject while other subjects go unasked.
-- 5 finale questions, one per tier, always ordered lowest stake first.
+- 5 finale questions, one per tier, always ordered lowest stake first — the stakes climb because
+  that is the format, but **which** question appears at each tier varies, which needs several
+  questions per tier in the bank (there are now 3–4, originally 1 at the top two tiers).
 - Option order is shuffled per question, and `correct` is remapped so it follows its answer text.
 - Because the descriptor is stored, **a refresh rebuilds the identical paper** and resumes in the
   same round at the same stage with the same score. It does not re-shuffle and does not create a
@@ -386,7 +391,7 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 412 assertions with no browser required, across four suites.
+`npm test` runs 495 assertions with no browser required, across four suites.
 
 ### `tests/arena-games.test.mjs` — the 3D games, actually played (212 assertions)
 
@@ -484,7 +489,7 @@ React at all.
 
 ### Bugs these tests caught
 
-Eight of these tests exist because they found real faults:
+Nine of these tests exist because they found real faults:
 
 1. **Tower Crane Master was unfinishable.** The hook's lower limit was computed from the slab just
    *below* the load's current height, so a load travelling at height could only ever descend to the
@@ -516,6 +521,16 @@ Eight of these tests exist because they found real faults:
    React rejects that outright and tears down the whole tree. It only fires on the **second**
    render — the moment the PIN is accepted — which is why the build passed, all three other suites
    passed, and it still reached the user. `tests/app-render.test.mjs` exists because of this one.
+
+9. **The shuffle was barely shuffling.** Measured across 200 participants, the five missions
+   were dealt in **one** order — the same order, every participant, every event — because the
+   descriptor built its rounds straight from `ROUND_GAMES` without shuffling. Worse, the finale
+   bank had only **one question each** at Platinum and Diamond, so rounds 4 and 5 were the *same
+   two questions* for everybody who ever played. Fixed by shuffling the mission order per
+   participant and taking the finale bank from 8 questions to 18 (3–4 per tier). The same
+   measurement now reports 111 distinct mission orders and 237 distinct finale papers per 300
+   participants, with no single finale question above 35%. The tests now assert those
+   distributions rather than just asserting that a shuffle function was called.
 
 Two smaller ones: the player could walk out of the site through the open gateway, and
 `stageStartedAt || now` broke on a timestamp of `0`.

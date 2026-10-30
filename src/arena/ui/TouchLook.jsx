@@ -22,13 +22,32 @@ export default function TouchLook({ input, sensitivity = 1, children, showHint =
   const pointerIdRef = useRef(null);
   const lastRef = useRef({ x: 0, y: 0 });
   const movedRef = useRef(0);
+  // Every live finger on the pad, so a second one can start a pinch.
+  const pointsRef = useRef(new Map());
+  const pinchRef = useRef(null);
   const [hintVisible, setHintVisible] = useState(showHint);
 
   const release = useCallback(() => {
     pointerIdRef.current = null;
   }, []);
 
+  function spread() {
+    const pts = [...pointsRef.current.values()];
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  }
+
   function onPointerDown(e) {
+    pointsRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // Second finger down: switch from looking to pinch-zooming.
+    if (pointsRef.current.size === 2) {
+      pinchRef.current = spread();
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      e.preventDefault();
+      return;
+    }
+
     if (pointerIdRef.current !== null) return;
     pointerIdRef.current = e.pointerId;
     lastRef.current = { x: e.clientX, y: e.clientY };
@@ -39,6 +58,26 @@ export default function TouchLook({ input, sensitivity = 1, children, showHint =
   }
 
   function onPointerMove(e) {
+    if (pointsRef.current.has(e.pointerId)) {
+      pointsRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    // Pinching: feed the change in finger spread to the same zoom
+    // channel the desktop mouse wheel uses, so a game only implements
+    // zoom once and gets both.
+    if (pointsRef.current.size >= 2 && pinchRef.current !== null) {
+      const now = spread();
+      const delta = now - pinchRef.current;
+      if (Math.abs(delta) > 0.5) {
+        // Spreading fingers apart zooms IN, which is the universal
+        // convention — hence the sign flip against wheel deltaY.
+        input?.addZoom?.(-delta * 2.2);
+        pinchRef.current = now;
+      }
+      e.preventDefault();
+      return;
+    }
+
     if (pointerIdRef.current !== e.pointerId) return;
     const dx = e.clientX - lastRef.current.x;
     const dy = e.clientY - lastRef.current.y;
@@ -51,11 +90,20 @@ export default function TouchLook({ input, sensitivity = 1, children, showHint =
   }
 
   function onPointerUp(e) {
-    if (pointerIdRef.current !== e.pointerId) return;
+    pointsRef.current.delete(e.pointerId);
+    if (pointsRef.current.size < 2) pinchRef.current = null;
+
+    if (pointerIdRef.current !== e.pointerId) {
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      return;
+    }
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     // A finger that barely moved is a tap on the world, not a camera
     // drag — that is how the build game places components on a phone.
-    if (movedRef.current < 14) input?.registerTap?.(e.clientX, e.clientY);
+    // A finger that was part of a pinch is never a tap.
+    if (movedRef.current < 14 && pinchRef.current === null && pointsRef.current.size === 0) {
+      input?.registerTap?.(e.clientX, e.clientY);
+    }
     release();
     e.preventDefault();
   }
