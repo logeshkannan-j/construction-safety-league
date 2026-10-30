@@ -1,6 +1,168 @@
 {
   "rules": {
     ".read": true,
-    ".write": true
+
+    "game": {
+      ".write": true
+    },
+
+    "questions": {
+      ".write": true
+    },
+
+    "players": {
+      ".write": true,
+      "$playerId": {
+        ".write": true
+      }
+    },
+
+    "misc": {
+      ".write": true,
+      "$key": {
+        ".write": true
+      }
+    },
+
+    "arena": {
+      "runs": {
+        "$playerId": {
+          ".indexOn": "createdAt",
+          "$runId": {
+            ".write": "!data.exists() && newData.exists() && newData.child('runId').val() === $runId && newData.child('playerId').val() === $playerId",
+
+            ".validate": "newData.hasChildren(['runId', 'playerId', 'gameId', 'score', 'completed', 'accuracy', 'timeTakenMs', 'createdAt'])",
+
+            "runId": { ".validate": "newData.isString() && newData.val().length <= 64" },
+            "playerId": { ".validate": "newData.isString() && newData.val().length <= 64" },
+            "playerName": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "gameName": { ".validate": "newData.isString() && newData.val().length <= 60" },
+
+            "gameId": {
+              ".validate": "newData.val() === 'safety-mission' || newData.val() === 'crane-master' || newData.val() === 'safest-tower' || newData.val() === 'escape-challenge' || newData.val() === 'emergency-commander'"
+            },
+
+            "difficulty": {
+              ".validate": "newData.val() === 'easy' || newData.val() === 'normal' || newData.val() === 'hard'"
+            },
+
+            "score": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 12000"
+            },
+
+            "accuracy": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100"
+            },
+
+            "performance": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100"
+            },
+
+            "timeTakenMs": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 7200000"
+            },
+
+            "completed": { ".validate": "newData.isBoolean()" },
+            "rating": { ".validate": "newData.isString() && newData.val().length <= 24" },
+
+            "createdAt": {
+              ".validate": "newData.isNumber() && newData.val() <= now + 300000 && newData.val() >= now - 600000"
+            },
+
+            "stats": {
+              "$stat": {
+                ".validate": "newData.isNumber() || newData.isBoolean() || (newData.isString() && newData.val().length <= 80)"
+              }
+            },
+
+            "$other": { ".validate": false }
+          }
+        }
+      },
+
+      "feed": {
+        ".indexOn": "createdAt",
+        "$runId": {
+          ".write": "!data.exists() && newData.exists() && newData.child('runId').val() === $runId",
+
+          ".validate": "newData.hasChildren(['runId', 'playerId', 'gameId', 'score', 'createdAt'])",
+
+          "runId": { ".validate": "newData.isString() && newData.val().length <= 64" },
+          "playerId": { ".validate": "newData.isString() && newData.val().length <= 64" },
+          "playerName": { ".validate": "newData.isString() && newData.val().length <= 40" },
+
+          "gameId": {
+            ".validate": "newData.val() === 'safety-mission' || newData.val() === 'crane-master' || newData.val() === 'safest-tower' || newData.val() === 'escape-challenge' || newData.val() === 'emergency-commander'"
+          },
+
+          "difficulty": {
+            ".validate": "newData.val() === 'easy' || newData.val() === 'normal' || newData.val() === 'hard'"
+          },
+
+          "score": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 12000" },
+          "accuracy": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+          "timeTakenMs": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 7200000" },
+          "completed": { ".validate": "newData.isBoolean()" },
+
+          "createdAt": {
+            ".validate": "newData.isNumber() && newData.val() <= now + 300000 && newData.val() >= now - 600000"
+          },
+
+          "$other": { ".validate": false }
+        }
+      },
+
+      "profiles": {
+        "$playerId": {
+          ".write": "newData.exists()",
+
+          "id": { ".validate": "newData.isString() && newData.val() === $playerId" },
+          "name": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
+          "team": { ".validate": "newData.isString() || newData.val() === null" },
+          "company": { ".validate": "newData.isString() || newData.val() === null" },
+
+          "totalScore": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 60000"
+          },
+
+          "runCount": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && (!data.exists() || (newData.val() >= data.val() && newData.val() <= data.val() + 1))"
+          },
+
+          "gamesCompleted": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5"
+          },
+
+          "bestScores": {
+            "$gameId": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 12000 && ($gameId === 'safety-mission' || $gameId === 'crane-master' || $gameId === 'safest-tower' || $gameId === 'escape-challenge' || $gameId === 'emergency-commander')"
+            }
+          },
+
+          "achievements": {
+            "$achievementId": { ".validate": "newData.isNumber()" }
+          },
+
+          "createdAt": { ".validate": "newData.isNumber()" },
+          "updatedAt": { ".validate": "newData.isNumber()" },
+          "lastPlayedAt": { ".validate": "newData.isNumber()" },
+
+          "$other": { ".validate": false }
+        }
+      },
+
+      "config": {
+        ".write": true,
+        "updatedAt": { ".validate": "newData.isNumber()" },
+        "games": {
+          "$gameId": {
+            ".validate": "$gameId === 'safety-mission' || $gameId === 'crane-master' || $gameId === 'safest-tower' || $gameId === 'escape-challenge' || $gameId === 'emergency-commander'",
+            "enabled": { ".validate": "newData.isBoolean()" },
+            "note": { ".validate": "newData.isString() && newData.val().length <= 200" },
+            "$other": { ".validate": false }
+          }
+        }
+      }
+    }
   }
 }

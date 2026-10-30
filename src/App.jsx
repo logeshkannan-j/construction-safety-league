@@ -1,11 +1,22 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import {
   HardHat, Users, Trophy, Clock, CheckCircle2, XCircle, Play, Pause,
   SkipForward, RotateCcw, Eye, EyeOff, Award, Wifi, WifiOff, Flag,
   ChevronRight, Shield, Zap, Crown, QrCode, LogIn, Volume2, VolumeX,
   Target, Upload, Trash2, MapPin, ImagePlus, X, Percent, Phone, Gem, Ban,
-  Pencil, UserMinus, Save, AlertTriangle, ListChecks, Lock
+  Pencil, UserMinus, Save, AlertTriangle, ListChecks, Lock, Gamepad2
 } from "lucide-react";
+
+// The 3D Safety Gaming Arena is loaded on demand. Everything it needs
+// (three.js, the five games) is in separate chunks, so a player who
+// only ever opens the quiz, the TV display or the admin panel never
+// downloads a byte of it.
+const ArenaView = lazy(() => import("./arena/ArenaView.jsx"));
+// Arena reporting for the admin panel, also loaded on demand so the
+// admin screen stays as light as it is today until it is opened.
+const ArenaAdminPanel = lazy(() => import("./arena/ui/ArenaAdminPanel.jsx"));
+// The integrated participant session (3D game + 10 quiz + 5 finale).
+const SoloSession = lazy(() => import("./SoloSession.jsx"));
 
 /* ------------------------------------------------------------------ *
  *  CONSTRUCTION SAFETY LEAGUE (standalone build)
@@ -20,20 +31,15 @@ import {
 
 import { GAME_KEY, Q_KEY, PLAYER_PREFIX, MY_ID_KEY, POLL_MS } from "./constants";
 import { safeGet, safeSet, safeDelete, safeList, getServerTimeOffset } from "./storage";
+import {
+  createSession, createLivePaper,
+  ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, NOT_RELEASED,
+} from "./session.js";
 
-const COLORS = {
-  bg: "#14171A",
-  surface: "#1C2126",
-  surfaceRaised: "#242A31",
-  line: "#333B43",
-  yellow: "#FFC629",
-  orange: "#FF5A1F",
-  green: "#33C481",
-  red: "#EA4F4F",
-  ink: "#F3F1EA",
-  muted: "#909AA3",
-  purple: "#9B7CF2",
-};
+// The palette and the shared control styles now live in theme.js so the
+// integrated session screens can reuse them verbatim. Same values.
+import { COLORS, inputStyle, btnStyle, linkBtnStyle } from "./theme.js";
+
 
 // Local (per-browser, NOT synced to Firebase) flag that remembers this
 // device already unlocked the Admin panel once, so re-opening the admin
@@ -42,38 +48,16 @@ const COLORS = {
 const ADMIN_UNLOCKED_KEY = "csl_admin_unlocked_v1";
 const ADMIN_PIN_KEY = "csl_admin_pin_v1";
 const GAME_QUESTION_SECONDS = 100;
-const GAME_QUESTION_COUNT = 20;
-const QUESTION_BANK_SKIP_COUNT = 5;
+// A paper is 10 general questions plus the 5-question finale. Both the
+// live event and the integrated session use that structure, and both
+// draw it from src/questionBank.js.
 const HOSTED_APP_URL = "https://logeshkannan-j.github.io/construction-safety-league/";
 
-const SEED_QUESTIONS = [
-  { round: "quiz", category: "Work at Height", difficulty: "Easy", question: "A worker is working at height. What is the most important fall protection equipment?", options: ["Gloves", "Full Body Harness", "Safety Goggles", "Face Mask"], correct: 1, timer: 15, points: 100, explanation: "A properly worn and anchored full body harness is the primary defense against a fall from height." },
-  { round: "truefalse", category: "Electrical Safety", difficulty: "Easy", question: "A damaged electrical cable can be temporarily repaired using normal tape and used for construction work.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Damaged cables must be taken out of service and repaired or replaced by a qualified person — never patched with ordinary tape." },
-  { round: "quiz", category: "Lifting Operations", difficulty: "Medium", question: "A crane is lifting materials. A worker enters the area below the suspended load. What should you do?", options: ["Let them pass quickly", "Stop them and keep everyone clear of the load", "Keep lifting", "Take a photo only"], correct: 1, timer: 15, points: 150, explanation: "No one should ever be under a suspended load — stop work and clear the area immediately." },
-  { round: "truefalse", category: "Housekeeping", difficulty: "Easy", question: "Good housekeeping helps prevent slips, trips, and falls.", options: ["TRUE", "FALSE"], correct: 0, timer: 10, points: 100, explanation: "Clear, organized work areas remove the trip and slip hazards that cause many site injuries." },
-  { round: "quiz", category: "Scaffolding", difficulty: "Medium", question: "Before using a scaffold, what should you check first?", options: ["The paint colour", "That it has a valid inspection tag", "How tall it is", "Nothing, just climb up"], correct: 1, timer: 15, points: 150, explanation: "A current inspection tag confirms the scaffold has been checked and is safe to use." },
-  { round: "quiz", category: "PPE", difficulty: "Easy", question: "Which of these is NOT standard PPE on a construction site?", options: ["Safety helmet", "High-visibility vest", "Steel-toe boots", "Flip-flops"], correct: 3, timer: 15, points: 100, explanation: "Open footwear like flip-flops offers no protection and is never acceptable on site." },
-  { round: "truefalse", category: "Ladder Safety", difficulty: "Medium", question: "It is safe to stand on the top rung of a ladder to reach higher.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Standing on the top rung removes your handhold and balance — always stay below the manufacturer's limit." },
-  { round: "quiz", category: "Excavation Safety", difficulty: "Hard", question: "What is the main hazard of an unshored trench deeper than 1.5 metres?", options: ["Noise", "Cave-in / collapse", "Bad smell", "Sunburn"], correct: 1, timer: 20, points: 200, explanation: "Unsupported trenches can collapse suddenly and without warning — shoring or sloping is required." },
-  { round: "quiz", category: "Fire Safety", difficulty: "Medium", question: "What should you do first if you discover a small fire on site?", options: ["Ignore it", "Raise the alarm and follow the evacuation plan", "Take a video", "Keep working nearby"], correct: 1, timer: 15, points: 150, explanation: "Raising the alarm first protects everyone else on site, even before attempting to fight a small fire." },
-  { round: "truefalse", category: "Permit to Work", difficulty: "Medium", question: "Hot work (welding/cutting) can be started without a permit if it will only take a few minutes.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Hot work always requires a permit, regardless of how long the task will take." },
-  { round: "quiz", category: "Manual Handling", difficulty: "Easy", question: "When lifting a heavy object from the ground, you should:", options: ["Bend your back and lift", "Bend your knees and keep your back straight", "Twist while lifting", "Lift as fast as possible"], correct: 1, timer: 15, points: 100, explanation: "Bending the knees and keeping the back straight lets your legs take the load, protecting your spine." },
-  { round: "quiz", category: "Barricading", difficulty: "Medium", question: "An open floor edge on site should be protected with:", options: ["A warning sign only", "Barricades or guardrails", "Nothing, workers will notice", "Tape on the floor"], correct: 1, timer: 15, points: 150, explanation: "Physical barricades or guardrails are required at open edges — signage alone does not stop a fall." },
-];
-
-// 10 additional questions covering more categories.
-const EXTRA_QUESTIONS = [
-  { round: "quiz", category: "Chemical Safety", difficulty: "Medium", question: "What should you check before using a chemical product on site?", options: ["The colour of the container", "The Safety Data Sheet (SDS)", "How full the container is", "Nothing, just use it"], correct: 1, timer: 15, points: 150, explanation: "The SDS tells you the hazards, required PPE, and safe handling steps before you use any chemical." },
-  { round: "truefalse", category: "PPE", difficulty: "Easy", question: "Eye protection is only required when using power tools.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Eye protection is also needed around dust, chemical splashes, grinding sparks, and other hazards, not just power tools." },
-  { round: "quiz", category: "Confined Space", difficulty: "Hard", question: "Before entering a confined space, what must first be arranged?", options: ["A quick peek inside", "A permit and atmospheric testing", "Just a torch", "Nothing if it's a small space"], correct: 1, timer: 20, points: 200, explanation: "A permit and air testing confirm the space is safe to breathe in and that an entry plan is in place." },
-  { round: "quiz", category: "Traffic Management", difficulty: "Medium", question: "Reversing a vehicle on a busy site should always be guided by:", options: ["No one, the driver can see fine", "A trained banksman / spotter", "Another driver in a different vehicle", "Nobody, just use mirrors"], correct: 1, timer: 15, points: 150, explanation: "A trained banksman covers blind spots the driver cannot see and helps prevent struck-by incidents." },
-  { round: "truefalse", category: "Noise", difficulty: "Easy", question: "Hearing protection is only needed if the noise is painful to hear.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Hearing damage can build up from prolonged exposure to noise well below the level that feels painful." },
-  { round: "quiz", category: "First Aid", difficulty: "Easy", question: "What is the first thing you should do when someone is injured on site?", options: ["Move them immediately", "Check the scene is safe, then get help", "Take a photo first", "Keep working nearby"], correct: 1, timer: 15, points: 100, explanation: "Checking the scene is safe protects you from becoming a second casualty before you assist or call for help." },
-  { round: "quiz", category: "Lifting Operations", difficulty: "Hard", question: "What must be checked before every crane lift?", options: ["Next week's weather forecast", "The load weight against the crane's rated capacity", "The operator's lunch break", "Nothing, cranes are always safe"], correct: 1, timer: 20, points: 200, explanation: "Exceeding a crane's rated capacity for the load and radius can cause a tip-over or structural failure." },
-  { round: "truefalse", category: "Signage", difficulty: "Easy", question: "Warning signs can be ignored if you've worked on the site before.", options: ["TRUE", "FALSE"], correct: 1, timer: 10, points: 100, explanation: "Site conditions change daily — signage must always be followed, regardless of experience." },
-  { round: "quiz", category: "Environmental", difficulty: "Medium", question: "A spill of oil on site should be:", options: ["Left to evaporate", "Contained and reported immediately", "Washed into the nearest drain", "Covered with soil only"], correct: 1, timer: 15, points: 150, explanation: "Containing the spill and reporting it quickly limits environmental damage and keeps it out of drains." },
-  { round: "quiz", category: "Working Alone", difficulty: "Medium", question: "A lone worker on site should always:", options: ["Turn off their phone to focus", "Have a check-in procedure with a supervisor", "Avoid telling anyone their location", "Skip PPE to move faster"], correct: 1, timer: 15, points: 150, explanation: "A regular check-in procedure means someone will notice quickly if a lone worker doesn't respond." },
-];
+/* The old seeded question set has been removed. Every quiz and finale
+ * question now comes from src/questionBank.js, which covers the twelve
+ * required construction-safety topics. The self-drawn 'Spot the Hazard'
+ * scenes below are kept, because picture-matching is a separate working
+ * round the admin can add to a game. */
 
 // A simple, self-drawn construction-site scene (no external image dependency)
 // used as the default "Spot the Hazard" round. Coordinates below are % of
@@ -123,7 +107,7 @@ const SEED_HAZARD_QUESTION = {
     { id: "h4", xPct: 16, yPct: 72, radiusPct: 9, name: "Unsafe ladder angle", description: "The ladder is leaning too steep and is not secured.", points: 60 },
   ],
 };
-SEED_QUESTIONS.splice(4, 0, SEED_HAZARD_QUESTION);
+
 
 // A second self-drawn "Spot the Hazard" scene — an excavation / trench site.
 const SEED_HAZARD_SVG_2 = `
@@ -346,38 +330,21 @@ const SEED_HAZARD_QUESTION_10 = {
   ],
 };
 
-SEED_QUESTIONS.push(...EXTRA_QUESTIONS);
-SEED_QUESTIONS.push(
-  // Keep one picture-matching hazard round in each fresh game.
-);
-
-// ------------------------- Safety Millionaire finale -------------------------
-// A tiered, escalating-stakes final round. Each player gets three lifelines
-// (usable once each, across the whole ladder, classic-Millionaire style):
-// 50:50, Ask the Room (live crowd read from other players' submitted answers),
-// and Phone a Friend (a partial hint drawn from the explanation).
-const MILLIONAIRE_LADDER = [
-  { tier: "Bronze Badge", question: "What colour hard hat is typically worn by site visitors?", options: ["White", "Blue", "Green", "Red"], correct: 1, points: 200 },
-  { tier: "Silver Badge", question: "How often should a fire extinguisher be visually inspected on site?", options: ["Once a year", "Monthly", "Only after use", "Never, unless it looks damaged"], correct: 1, points: 400 },
-  { tier: "Gold Badge", question: "What is the safe approach distance from an overhead power line for general work (typical minimum)?", options: ["0.5 metres", "3 metres", "10+ metres (per local regulation)", "No distance needed if insulated gloves are worn"], correct: 2, points: 600 },
-  { tier: "Platinum Badge", question: "In a confined space entry, what must be done before anyone enters?", options: ["Just prop the door open", "Atmospheric testing and a permit", "Turn on a fan and go in", "Nothing if it's a quick job"], correct: 1, points: 800 },
-  { tier: "Diamond Badge", question: "Under a typical hierarchy of controls, which is the MOST effective way to deal with a hazard?", options: ["PPE", "Administrative controls (training, signage)", "Elimination of the hazard", "Engineering controls"], correct: 2, points: 1000 },
-  { tier: "Safety Millionaire", question: "A near-miss occurs but causes no injury. What should happen next?", options: ["Nothing, no harm done", "Report and investigate it like an incident", "Only mention it if someone asks", "Fix it quietly yourself"], correct: 1, points: 1500 },
-].map((q, i) => ({
-  round: "millionaire",
-  category: "Safety Millionaire",
-  difficulty: "Escalating",
-  ladderIndex: i,
-  question: q.question,
-  options: q.options,
-  correct: q.correct,
-  timer: 25,
-  points: q.points,
-  tier: q.tier,
-  explanation: "Think about which option best protects people, not just paperwork.",
-}));
-
-SEED_QUESTIONS.push(...MILLIONAIRE_LADDER);
+// Every built-in 'Spot the Hazard' scene, in one place. These are not
+// part of the 15-question paper; the admin adds one when they want a
+// picture-matching round.
+const SEED_HAZARD_ROUNDS = [
+  SEED_HAZARD_QUESTION,
+  SEED_HAZARD_QUESTION_2,
+  SEED_HAZARD_QUESTION_3,
+  SEED_HAZARD_QUESTION_4,
+  SEED_HAZARD_QUESTION_5,
+  SEED_HAZARD_QUESTION_6,
+  SEED_HAZARD_QUESTION_7,
+  SEED_HAZARD_QUESTION_8,
+  SEED_HAZARD_QUESTION_9,
+  SEED_HAZARD_QUESTION_10,
+];
 
 /* ---------------------------- helpers ---------------------------- */
 
@@ -392,6 +359,21 @@ function defaultGame() {
     gameCode: genGameCode(),
     gameName: "Construction Safety League",
     status: "lobby", // lobby | question | reveal | leaderboard | ended
+
+    // How participants play.
+    //   "solo" — the integrated session: one game code and one set of
+    //            details gives the participant five rounds, each one a
+    //            3D mission followed by a quiz question and a finale
+    //            question, all scored into one result. The host releases
+    //            each round; inside a round the participant works at
+    //            their own pace with their own shuffled paper.
+    //   "live" — the original admin-paced event: the host advances the
+    //            questions and the TV shows the current one to the room.
+    sessionMode: "solo",
+    // Highest round the host has released, -1 before the event starts.
+    // A participant can never run ahead of this.
+    releasedRound: NOT_RELEASED,
+
     qIndex: 0,
     questionStartedAt: null,
     revealed: false,
@@ -442,23 +424,68 @@ function getQuestionDuration(question) {
   return Number(question?.timer) > 0 ? Number(question.timer) : GAME_QUESTION_SECONDS;
 }
 
+/* --------- adapting the shared bank to the live event format --------- */
+
+// The live event stores a flat list of question objects with a `round`
+// field. The shared bank in questionBank.js is format-neutral, so these
+// two adapters put a bank question into the shape the TV display and the
+// player view already expect.
+function toLiveQuizQuestion(question) {
+  return {
+    round: "quiz",
+    bankId: question.id,
+    category: question.topic,
+    difficulty: question.difficulty || "Medium",
+    question: question.question,
+    options: question.options,
+    correct: question.correct,
+    timer: GAME_QUESTION_SECONDS,
+    points: question.points,
+    explanation: question.explanation,
+  };
+}
+
+function toLiveMillionaireQuestion(question, ladderIndex) {
+  return {
+    round: "millionaire",
+    bankId: question.id,
+    category: "Safety Millionaire",
+    difficulty: "Escalating",
+    ladderIndex,
+    tier: question.tier,
+    question: question.question,
+    options: question.options,
+    correct: question.correct,
+    timer: GAME_QUESTION_SECONDS,
+    points: question.points,
+    explanation: question.explanation,
+  };
+}
+
+/**
+ * Builds a fresh paper for a LIVE event: the original 10 + 5 structure,
+ * drawn from the shared question bank with the question order and every
+ * option order shuffled.
+ *
+ * The draw and the shuffle come from session.js so live events and
+ * integrated sessions can never drift apart, but the shape is live
+ * mode's own — integrated sessions are five rounds of 1 + 1.
+ */
 function buildRandomizedGameQuestions() {
-  const mcqPool = SEED_QUESTIONS.filter((q) => q.round !== "hazard" && q.round !== "millionaire");
-  const hazardPool = SEED_QUESTIONS.filter((q) => q.round === "hazard");
-  const millionairePool = SEED_QUESTIONS.filter((q) => q.round === "millionaire");
-  const hazardCount = 1;
-  const millionaireCount = 5;
+  const { quiz, millionaire } = createLivePaper({ quizCount: 10, mqCount: 5 });
+  return [
+    ...quiz.map(toLiveQuizQuestion),
+    ...millionaire.map((question, i) => toLiveMillionaireQuestion(question, i)),
+  ];
+}
 
-  const selectedHazard = shuffleArray(hazardPool).slice(0, Math.min(hazardCount, hazardPool.length));
-  const selectedMillionaire = millionairePool.slice(-millionaireCount);
-  const remainingSlots = Math.max(0, GAME_QUESTION_COUNT - selectedHazard.length - selectedMillionaire.length);
-  const selectedMCQ = shuffleArray(mcqPool).slice(0, Math.min(remainingSlots, mcqPool.length));
-  const chosen = [...shuffleArray([...selectedMCQ, ...selectedHazard]), ...selectedMillionaire];
-
-  return chosen.map((question) => {
-    const normalized = question && question.options ? shuffleQuestionOptions(question) : question;
-    return enforceFixedGameTimer(normalized);
-  });
+/** A built-in picture-matching round, for the admin to add on demand. */
+function pickBuiltInHazardRound(existing = []) {
+  const used = new Set(existing.filter((q) => q.round === "hazard").map((q) => q.category));
+  const unused = SEED_HAZARD_ROUNDS.filter((r) => !used.has(r.category));
+  const pool = unused.length ? unused : SEED_HAZARD_ROUNDS;
+  const chosen = pool[Math.floor(Math.random() * pool.length)];
+  return { ...chosen, timer: GAME_QUESTION_SECONDS };
 }
 
 function normalizeQuestionSet(questionsList) {
@@ -495,6 +522,8 @@ export default function App() {
     try {
       const p = new URLSearchParams(window.location.search);
       if (p.get("role") === "player") return "player";
+      // Lets the Gaming Arena be linked to or QR-coded directly.
+      if (p.get("role") === "arena") return "arena";
     } catch {}
     return null;
   });
@@ -506,6 +535,11 @@ export default function App() {
       {role === "admin" && <AdminView onExit={() => setRole(null)} />}
       {role === "player" && <PlayerView onExit={() => setRole(null)} />}
       {role === "tv" && <TVView onExit={() => setRole(null)} />}
+      {role === "arena" && (
+        <Suspense fallback={<Centered><p style={{ color: COLORS.muted }}>Loading the 3D Gaming Arena…</p></Centered>}>
+          <ArenaView onExit={() => setRole(null)} />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -529,7 +563,7 @@ function RoleSelect({ onSelect }) {
       </div>
 
       <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, width: "100%", maxWidth: 900 }}>
-        <RoleCard icon={<Users size={22} />} title="Join as player" sub="Enter the game code, then play on your phone" color={COLORS.green} onClick={() => onSelect("player")} />
+        <RoleCard icon={<Users size={22} />} title="Join as player" sub="Enter the game code and your details — 3D missions and questions in one session" color={COLORS.green} onClick={() => onSelect("player")} />
         <RoleCard icon={<Trophy size={22} />} title="Show the arena" sub="Project the live questions and racing leaderboard" color={COLORS.yellow} onClick={() => onSelect("tv")} />
         <RoleCard icon={<Shield size={22} />} title="Run the event" sub="Create games, control rounds, and manage players" color={COLORS.orange} onClick={() => onSelect("admin")} />
       </div>
@@ -760,8 +794,10 @@ function AdminView({ onExit }) {
     await Promise.all((keys || []).map((k) => safeDelete(k, true)));
     const g = defaultGame();
     await safeSet(GAME_KEY, JSON.stringify(g), true);
-    // Create a fresh 20-question game set for everyone playing, then shuffle
-    // the question order and the answer order inside each question.
+    // Create a fresh paper for LIVE event mode (10 quiz + 5 finale),
+    // shuffling the question order and the answer order inside each.
+    // Integrated sessions do not use this — each participant draws their
+    // own round paper when they join.
     const gameQuestions = buildRandomizedGameQuestions();
     await safeSet(Q_KEY, JSON.stringify(gameQuestions), true);
     await refresh();
@@ -872,6 +908,17 @@ function AdminView({ onExit }) {
     setHz({ category: "Spot the Hazard", question: "", explanation: "", image: null, hazards: [], draftName: "", draftDesc: "", pendingPoint: null, placing: false });
   }
 
+  // ---- Add one of the built-in Spot the Hazard scenes ----
+  async function addBuiltInHazardRound() {
+    const current = questionsRef || [];
+    const round = pickBuiltInHazardRound(current);
+    const millionaireIndex = current.findIndex((question) => question.round === "millionaire");
+    const insertAt = millionaireIndex === -1 ? current.length : millionaireIndex;
+    const next = [...current.slice(0, insertAt), round, ...current.slice(insertAt)];
+    await safeSet(Q_KEY, JSON.stringify(next), true);
+    await refresh();
+  }
+
   // ---- Custom question builder (quiz / true-false) ----
   async function addCustomQuestion(q) {
     setAqBusy(true);
@@ -897,13 +944,46 @@ function AdminView({ onExit }) {
   const curQ = questions[game?.qIndex ?? 0];
   const answeredCount = curQ ? players.filter((p) => p.answers && p.answers[game.qIndex] !== undefined).length : 0;
 
+  // Live picture of an integrated-session event: where each participant
+  // has got to, and the average combined score.
+  const adminSoloMode = game?.sessionMode === "solo";
+  const releasedRound = Number.isFinite(game?.releasedRound) ? game.releasedRound : NOT_RELEASED;
+  const soloStats = useMemo(() => {
+    const stageOf = (p) => p?.session?.stage || null;
+    const scores = players.map((p) => p.score || 0);
+    // How many have finished everything the host has released so far —
+    // this is what tells the host it is safe to release the next round.
+    const waiting = players.filter((p) => {
+      const stage = stageOf(p);
+      return stage === "roundDone" || stage === "locked" || stage === "done";
+    }).length;
+    return {
+      finished: players.filter((p) => stageOf(p) === "done").length,
+      inGame: players.filter((p) => stageOf(p) === "game3d").length,
+      inQuiz: players.filter((p) => stageOf(p) === "quiz").length,
+      inFinale: players.filter((p) => stageOf(p) === "millionaire").length,
+      waiting,
+      allCaughtUp: players.length > 0 && waiting === players.length,
+      avgScore: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0,
+    };
+  }, [players]);
+
+  // Releasing a round is the ONLY way the room moves forward in an
+  // integrated session. It never goes backwards: a participant already
+  // inside round n must not be yanked out of it.
+  async function releaseNextRound() {
+    const next = Math.min(ROUND_COUNT - 1, releasedRound + 1);
+    if (next === releasedRound) return;
+    await patchGame({ releasedRound: next, status: "question" });
+  }
+
   return (
     <div style={{ padding: "20px 20px 60px", maxWidth: 880, margin: "0 auto" }}>
       <TopBar title="Admin Control Panel" onExit={onExit} connected={connected} onLock={lockAdmin} />
 
       {!game && (
         <Panel title="No active game" icon={<Play size={18} color={COLORS.yellow} />}>
-          <p style={{ color: COLORS.muted, fontSize: 14, marginBottom: 14 }}>Create a game to generate a join code and load a fresh 20-question set with randomized order and a 100-second timer for every question.</p>
+          <p style={{ color: COLORS.muted, fontSize: 14, marginBottom: 14 }}>Create a game to generate a join code. Participants get five rounds — a 3D mission, a quiz question and a finale question each — and you release the rounds one at a time.</p>
           <button disabled={busy} style={btnStyle(COLORS.yellow, "#1A1200")} onClick={createGame}>{busy ? "Creating…" : "Create Game"}</button>
         </Panel>
       )}
@@ -914,18 +994,59 @@ function AdminView({ onExit }) {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
               <StatCell label="Join code" value={game.gameCode} big />
               <StatCell label="Participants" value={players.length} />
-              <StatCell label="Question" value={game.status === "lobby" ? "—" : `${(game.qIndex ?? 0) + 1} / ${questions.length}`} />
+              {adminSoloMode
+                ? <StatCell label="Round" value={releasedRound < 0 ? "Not started" : `${releasedRound + 1} / ${ROUND_COUNT}`} />
+                : <StatCell label="Question" value={game.status === "lobby" ? "—" : `${(game.qIndex ?? 0) + 1} / ${questions.length}`} />}
             </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {game.status === "lobby" && <ActionBtn icon={<Play size={15} />} label="Start Game" color={COLORS.green} onClick={startGame} disabled={players.length === 0} />}
-              {game.status === "question" && <ActionBtn icon={<Eye size={15} />} label="Reveal Answer" color={COLORS.yellow} dark onClick={revealAnswer} />}
-              {(game.status === "reveal" || game.status === "leaderboard") && game.qIndex < questions.length - 1 && <ActionBtn icon={<SkipForward size={15} />} label="Next Question" color={COLORS.orange} onClick={nextQuestion} />}
-              {(game.status === "reveal" || game.status === "leaderboard") && game.qIndex >= questions.length - 1 && <ActionBtn icon={<Flag size={15} />} label="End Game" color={COLORS.red} onClick={endGame} />}
-              {game.status !== "lobby" && game.status !== "ended" && <ActionBtn icon={<Trophy size={15} />} label="Show Leaderboard" color={COLORS.surfaceRaised} onClick={showLeaderboard} />}
-              {game.status !== "lobby" && <ActionBtn icon={<RotateCcw size={15} />} label="Back to Lobby" color={COLORS.surfaceRaised} onClick={backToLobby} />}
-              <ActionBtn icon={<RotateCcw size={15} />} label="Reset Game" color={COLORS.red} onClick={resetGame} />
-            </div>
+            {adminSoloMode ? (
+              <>
+                <RoundTimeline releasedRound={releasedRound} />
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: 8, margin: "14px 0" }}>
+                  <StatCell label="In the 3D mission" value={soloStats.inGame} />
+                  <StatCell label="On the quiz" value={soloStats.inQuiz} />
+                  <StatCell label="On the finale" value={soloStats.inFinale} />
+                  <StatCell label="Waiting on you" value={soloStats.waiting} />
+                  <StatCell label="Avg total" value={soloStats.avgScore} />
+                </div>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {releasedRound < ROUND_COUNT - 1 && (
+                    <ActionBtn
+                      icon={<Play size={15} />}
+                      label={releasedRound < 0 ? "Start Round 1" : `Release Round ${releasedRound + 2}`}
+                      color={soloStats.allCaughtUp || releasedRound < 0 ? COLORS.green : COLORS.surfaceRaised}
+                      onClick={releaseNextRound}
+                      disabled={players.length === 0}
+                    />
+                  )}
+                  <ActionBtn icon={<Trophy size={15} />} label="Show live race on TV" color={COLORS.yellow} dark onClick={showLeaderboard} />
+                  <ActionBtn icon={<QrCode size={15} />} label="Show join code on TV" color={COLORS.surfaceRaised} onClick={backToLobby} />
+                  <ActionBtn icon={<Flag size={15} />} label="Show final results on TV" color={COLORS.orange} onClick={endGame} />
+                  <ActionBtn icon={<RotateCcw size={15} />} label="Reset Game" color={COLORS.red} onClick={resetGame} />
+                </div>
+
+                <p style={{ color: COLORS.muted, fontSize: 12, lineHeight: 1.5, marginTop: 10 }}>
+                  {releasedRound < 0
+                    ? `Nobody can start until you release Round 1. Each round is one 3D mission, then one quiz question, then one finale question.`
+                    : soloStats.allCaughtUp
+                      ? `Everyone has finished Round ${releasedRound + 1}. Release the next one when you're ready.`
+                      : `${players.length - soloStats.waiting} still working through Round ${releasedRound + 1}. Releasing the next round early will cut them off.`}
+                  {" "}Reset clears every participant and issues a new join code.
+                </p>
+              </>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {game.status === "lobby" && <ActionBtn icon={<Play size={15} />} label="Start Game" color={COLORS.green} onClick={startGame} disabled={players.length === 0} />}
+                {game.status === "question" && <ActionBtn icon={<Eye size={15} />} label="Reveal Answer" color={COLORS.yellow} dark onClick={revealAnswer} />}
+                {(game.status === "reveal" || game.status === "leaderboard") && game.qIndex < questions.length - 1 && <ActionBtn icon={<SkipForward size={15} />} label="Next Question" color={COLORS.orange} onClick={nextQuestion} />}
+                {(game.status === "reveal" || game.status === "leaderboard") && game.qIndex >= questions.length - 1 && <ActionBtn icon={<Flag size={15} />} label="End Game" color={COLORS.red} onClick={endGame} />}
+                {game.status !== "lobby" && game.status !== "ended" && <ActionBtn icon={<Trophy size={15} />} label="Show Leaderboard" color={COLORS.surfaceRaised} onClick={showLeaderboard} />}
+                {game.status !== "lobby" && <ActionBtn icon={<RotateCcw size={15} />} label="Back to Lobby" color={COLORS.surfaceRaised} onClick={backToLobby} />}
+                <ActionBtn icon={<RotateCcw size={15} />} label="Reset Game" color={COLORS.red} onClick={resetGame} />
+              </div>
+            )}
           </Panel>
 
           <Panel title="Leaderboard fun media" icon={<Volume2 size={18} color={COLORS.purple} />}>
@@ -942,6 +1063,83 @@ function AdminView({ onExit }) {
                 <input key={key} style={{ ...inputStyle, marginBottom: 0 }} type="url" aria-label={label} placeholder={`${label} URL (optional)`} defaultValue={game[key] || ""} onBlur={(e) => patchGame({ [key]: e.target.value.trim() })} />
               ))}
             </div>
+          </Panel>
+
+          <Panel title="How participants play" icon={<Gamepad2 size={18} color={COLORS.green} />}>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12, lineHeight: 1.55 }}>
+              Choose what a participant gets after they enter the game code and their details.
+            </p>
+            <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
+              {[
+                {
+                  id: "solo",
+                  title: "Integrated session (recommended)",
+                  detail: `One game code, one set of details, ${ROUND_COUNT} rounds. Each round is a 3D mission, then one quiz question, then one finale question — ${ROUND_COUNT * 3} items scored into a single result. You release each round; inside a round everyone works at their own pace on their own shuffled paper.`,
+                  color: COLORS.green,
+                },
+                {
+                  id: "live",
+                  title: "Live event (host-paced)",
+                  detail: "The original format: you advance the questions, the TV shows the current one, and everyone answers together.",
+                  color: COLORS.yellow,
+                },
+              ].map((option) => {
+                const active = (game.sessionMode || "live") === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    onClick={() => patchGame({ sessionMode: option.id })}
+                    style={{
+                      display: "flex", alignItems: "flex-start", gap: 11, textAlign: "left",
+                      background: active ? option.color + "14" : COLORS.surfaceRaised,
+                      border: `1px solid ${active ? option.color : COLORS.line}`,
+                      borderRadius: 10, padding: "12px 13px", cursor: "pointer", color: COLORS.ink,
+                    }}
+                  >
+                    <span style={{
+                      width: 18, height: 18, borderRadius: "50%", flexShrink: 0, marginTop: 2,
+                      border: `2px solid ${active ? option.color : COLORS.line}`,
+                      background: active ? option.color : "transparent",
+                    }} />
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: "block", fontWeight: 800, fontSize: 14, color: active ? option.color : COLORS.ink }}>
+                        {option.title}
+                      </span>
+                      <span style={{ display: "block", fontSize: 12.5, color: COLORS.muted, marginTop: 3, lineHeight: 1.5 }}>
+                        {option.detail}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {(game.sessionMode || "live") === "solo" && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, letterSpacing: 0.6, marginBottom: 7 }}>
+                  THE {ROUND_COUNT} ROUNDS
+                </div>
+                <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+                  {ROUND_GAMES.map((gameId, i) => (
+                    <div key={gameId} style={{ display: "flex", alignItems: "center", gap: 10, background: COLORS.surfaceRaised, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "9px 11px" }}>
+                      <span style={{ width: 22, height: 22, borderRadius: "50%", background: COLORS.green + "22", border: `1px solid ${COLORS.green}66`, color: COLORS.green, fontSize: 11, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink }}>{ROUND_MISSION_NAMES[gameId]}</span>
+                      <span style={{ fontSize: 12, color: COLORS.muted, marginLeft: "auto" }}>+ 1 quiz + 1 finale</span>
+                    </div>
+                  ))}
+                </div>
+                <p style={{ color: COLORS.muted, fontSize: 12, lineHeight: 1.55, margin: 0 }}>
+                  Changing the mode affects participants who join from now on. Anyone already
+                  part-way through keeps the session they started.
+                </p>
+              </>
+            )}
+          </Panel>
+
+          <Panel title="3D Gaming Arena" icon={<Gamepad2 size={18} color={COLORS.purple} />}>
+            <Suspense fallback={<p style={{ color: COLORS.muted, fontSize: 13 }}>Loading Arena reports…</p>}>
+              <ArenaAdminPanel />
+            </Suspense>
           </Panel>
 
           <Panel title="Admin security" icon={<Lock size={18} color={COLORS.orange} />}>
@@ -1001,7 +1199,21 @@ function AdminView({ onExit }) {
           </Panel>
 
           <Panel title="Add a picture hazard matching question" icon={<Target size={18} color={COLORS.orange} />}>
-            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12 }}>Upload a picture, click each hazard location, then give every numbered hazard a name. Players will match the picture numbers to these names. This round always uses 100 seconds.</p>
+            <div style={{ background: COLORS.surfaceRaised, borderRadius: 9, padding: 12, marginBottom: 14 }}>
+              <p style={{ color: COLORS.muted, fontSize: 13, margin: "0 0 10px", lineHeight: 1.55 }}>
+                There are {SEED_HAZARD_ROUNDS.length} built-in Spot the Hazard scenes (rooftop,
+                excavation, electrical room, loading dock and more). Add one with a single tap — it
+                is inserted before the finale, like any other question.
+              </p>
+              <button
+                style={{ ...btnStyle(COLORS.orange), marginTop: 0 }}
+                onClick={addBuiltInHazardRound}
+              >
+                <Target size={15} style={{ verticalAlign: -3, marginRight: 6 }} />
+                Add a built-in Spot the Hazard round
+              </button>
+            </div>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12 }}>Or upload your own picture, click each hazard location, then give every numbered hazard a name. Players will match the picture numbers to these names. This round always uses 100 seconds.</p>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <input style={{ ...inputStyle, flex: 1, minWidth: 180, marginBottom: 8 }} placeholder="Question title" value={hz.question} onChange={(e) => setHz({ ...hz, question: e.target.value })} />
               <input style={{ ...inputStyle, width: 180, marginBottom: 8 }} placeholder="Category" value={hz.category} onChange={(e) => setHz({ ...hz, category: e.target.value })} />
@@ -1393,18 +1605,21 @@ function PlayerView({ onExit }) {
   }, []);
 
   useEffect(() => {
-    if (!codeVerified || !game?.gameCode) return;
+    if (!game?.gameCode) return;
     (async () => {
       const savedId = await safeGet(MY_ID_KEY, false);
-      if (savedId) {
-        const raw = await safeGet(PLAYER_PREFIX + savedId, true);
-        if (raw) {
-          try {
-            const savedPlayer = JSON.parse(raw);
-            if (String(savedPlayer.gameCode) === String(game.gameCode)) setMe(savedPlayer);
-          } catch {}
-        }
-      }
+      if (!savedId) return;
+      const raw = await safeGet(PLAYER_PREFIX + savedId, true);
+      if (!raw) return;
+      try {
+        const savedPlayer = JSON.parse(raw);
+        if (String(savedPlayer.gameCode) !== String(game.gameCode)) return;
+        // This device already proved the code for this game, so a
+        // refresh resumes the session straight away instead of asking
+        // for the code again and making the participant find their place.
+        setCodeVerified(true);
+        setMe(savedPlayer);
+      } catch { /* a corrupt record just means they re-join */ }
     })();
   }, [codeVerified, game?.gameCode]);
 
@@ -1413,11 +1628,20 @@ function PlayerView({ onExit }) {
     return () => clearInterval(id);
   }, [serverOffset]);
 
-  // keep `me` fresh from the shared players list
+  // Keep `me` fresh from the shared players list — but never let a
+  // stale poll overwrite progress we just saved. The poll runs every
+  // 1.4s, so a read that started before our last write would otherwise
+  // roll the participant's answer back for a moment, which is very
+  // visible mid-session. Each write stamps `revision`, and an older
+  // revision is ignored.
   useEffect(() => {
     if (!me) return;
     const fresh = players.find((p) => p.id === me.id);
-    if (fresh) setMe(fresh);
+    if (!fresh) return;
+    const mine = Number(me.revision) || 0;
+    const theirs = Number(fresh.revision) || 0;
+    if (theirs < mine) return;
+    setMe(fresh);
   }, [players]); // eslint-disable-line
 
   async function join() {
@@ -1431,6 +1655,13 @@ function PlayerView({ onExit }) {
       lifelines: { fifty: false, audience: false, phone: false },
       lifelineData: {},
     };
+    // In the integrated session the participant's whole paper is drawn
+    // now and stored on their record, so it survives a page refresh and
+    // is theirs alone. The live event mode is unchanged and ignores it.
+    if (isSoloMode) {
+      player.session = createSession({ now: Date.now() });
+      player.scores = { game3d: 0, quiz: 0, millionaire: 0 };
+    }
     await safeSet(PLAYER_PREFIX + id, JSON.stringify(player), true);
     await safeSet(MY_ID_KEY, id, false);
     setMe(player);
@@ -1534,6 +1765,20 @@ function PlayerView({ onExit }) {
     [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
   );
 
+  // Games created before this build have no sessionMode, and those were
+  // all admin-paced live events — so treat a missing value as "live" and
+  // never change how an existing game behaves.
+  const isSoloMode = game?.sessionMode === "solo";
+
+  // Writes the participant's whole record, which is how this app already
+  // persists a player. Used by the integrated session on every answer.
+  const persistMe = useCallback(async (updated) => {
+    // `revision` makes our own writes win over an in-flight poll read.
+    const stamped = { ...updated, revision: (Number(updated.revision) || 0) + 1, updatedAt: Date.now() };
+    setMe(stamped);
+    await safeSet(PLAYER_PREFIX + stamped.id, JSON.stringify(stamped), true);
+  }, []);
+
   if (!game) {
     return <Centered><p style={{ color: COLORS.muted }}>Waiting for the admin to create a game…</p><button style={linkBtnStyle} onClick={onExit}>← Back</button></Centered>;
   }
@@ -1577,6 +1822,27 @@ function PlayerView({ onExit }) {
         </Panel>
         {scannerOpen && <QRScanner onDetected={handleScanDetected} onClose={() => setScannerOpen(false)} />}
       </Centered>
+    );
+  }
+
+  // ---- the integrated session ----
+  // One game code and one set of details give the participant five
+  // rounds — a 3D mission, a quiz question and a finale question each —
+  // as a single scored session. SoloSession reads game.releasedRound to
+  // know which round the host has opened. Live event mode is untouched.
+  if (isSoloMode) {
+    return (
+      <Suspense fallback={<Centered><p style={{ color: COLORS.muted }}>Loading your session…</p></Centered>}>
+        <SoloSession
+          me={me}
+          game={game}
+          players={players}
+          connected={connected}
+          serverOffset={serverOffset}
+          onPersist={persistMe}
+          onExit={onExit}
+        />
+      </Suspense>
     );
   }
 
@@ -2522,6 +2788,42 @@ const StatCell = React.memo(function StatCell({ label, value, big }) {
   );
 });
 
+/**
+ * The five rounds and where the room has got to. Rounds the host has
+ * released are lit; the next one up is outlined; the rest are dim.
+ */
+const RoundTimeline = React.memo(function RoundTimeline({ releasedRound }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${ROUND_COUNT}, 1fr)`, gap: 6 }}>
+      {ROUND_GAMES.map((gameId, i) => {
+        const released = i <= releasedRound;
+        const next = i === releasedRound + 1;
+        const color = released ? COLORS.green : next ? COLORS.yellow : COLORS.line;
+        return (
+          <div
+            key={gameId}
+            style={{
+              background: released ? COLORS.green + "14" : COLORS.surfaceRaised,
+              border: `1px solid ${color}`,
+              borderRadius: 8, padding: "8px 6px", textAlign: "center", minWidth: 0,
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, color }}>
+              ROUND {i + 1}
+            </div>
+            <div style={{
+              fontSize: 11, color: released ? COLORS.ink : COLORS.muted, marginTop: 3,
+              lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis",
+            }}>
+              {ROUND_MISSION_NAMES[gameId] || gameId}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
 const AdminPlayerRow = React.memo(function AdminPlayerRow({ rank, player, teams, editing, editForm, setEditForm, onStartEdit, onCancelEdit, onSaveEdit, kickConfirming, onKick }) {
   if (editing) {
     return (
@@ -2569,6 +2871,22 @@ const AdminPlayerRow = React.memo(function AdminPlayerRow({ rank, player, teams,
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{player.name}</div>
         {(player.team || player.company) && <div style={{ fontSize: 11, color: COLORS.muted }}>{player.team || player.company}</div>}
+        {player.scores && (
+          <div style={{ fontSize: 10.5, color: COLORS.muted, marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <span>3D <b style={{ color: COLORS.orange }}>{player.scores.game3d || 0}</b></span>
+            <span>Quiz <b style={{ color: COLORS.green }}>{player.scores.quiz || 0}</b></span>
+            <span>Finale <b style={{ color: COLORS.purple }}>{player.scores.millionaire || 0}</b></span>
+            {player.session?.stage && (
+              <span style={{ color: COLORS.muted }}>
+                · R{(player.session.roundIndex ?? 0) + 1} {{
+                  locked: "waiting to start", game3d: "in the 3D mission",
+                  quiz: "on the quiz", millionaire: "on the finale",
+                  roundDone: "round done, waiting", done: "finished",
+                }[player.session.stage] || player.session.stage}
+              </span>
+            )}
+          </div>
+        )}
       </div>
       <div style={{ fontWeight: 800, color: COLORS.yellow, fontSize: 14, minWidth: 40, textAlign: "right" }}>{player.score || 0}</div>
       <button
@@ -2629,12 +2947,6 @@ const ActionBtn = React.memo(function ActionBtn({ icon, label, color, dark, onCl
   );
 });
 
-const inputStyle = {
-  width: "100%", padding: "12px 14px", marginBottom: 10, borderRadius: 8,
-  border: `1px solid ${COLORS.line}`, background: COLORS.surfaceRaised, color: COLORS.ink, fontSize: 15, outline: "none",
-  boxSizing: "border-box",
-};
-function btnStyle(bg, fg = "#14171A") {
-  return { width: "100%", padding: "13px 14px", borderRadius: 8, border: "none", background: bg, color: fg, fontWeight: 800, fontSize: 15, cursor: "pointer", marginTop: 4 };
-}
-const linkBtnStyle = { background: "none", border: "none", color: COLORS.muted, fontSize: 13, cursor: "pointer", marginTop: 12, textDecoration: "underline" };
+/* COLORS, inputStyle, btnStyle and linkBtnStyle now come from theme.js
+ * (imported at the top of this file) so the integrated session screens
+ * share them. Their values are unchanged. */

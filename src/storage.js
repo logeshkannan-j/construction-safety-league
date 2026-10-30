@@ -1,7 +1,9 @@
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, get, set, remove } from "firebase/database";
-import { firebaseConfig } from "./firebaseConfig";
-import { GAME_KEY, Q_KEY, PLAYER_PREFIX } from "./constants";
+import { getDatabase, ref, get, set, remove, onValue } from "firebase/database";
+// Explicit extensions so this module also resolves under plain Node,
+// which the Arena's logic test harness runs under.
+import { firebaseConfig } from "./firebaseConfig.js";
+import { GAME_KEY, Q_KEY, PLAYER_PREFIX } from "./constants.js";
 
 // This module gives App.jsx the exact same safeGet/safeSet/safeDelete/safeList
 // signatures the Claude-artifact version used against window.storage, so the
@@ -92,12 +94,44 @@ export async function safeList(prefix, shared) {
 // Firebase publishes the difference between its server clock and this
 // browser's clock at .info/serverTimeOffset. Use it for synchronized game
 // timing so phones with incorrect device clocks still see the same countdown.
-export async function getServerTimeOffset() {
-  try {
-    const snap = await get(ref(db, ".info/serverTimeOffset"));
-    return Number(snap.val()) || 0;
-  } catch (e) {
-    console.error("getServerTimeOffset failed", e);
-    return 0;
-  }
+//
+// `.info/*` is a client-local namespace, NOT a stored path: get() rejects it
+// with "Invalid token in path", so this used to fail every single call and
+// silently return 0 from the catch. onValue is the supported way to read it.
+// The value is cached because it never meaningfully changes within a session.
+let _offset = null;
+let _offsetPending = null;
+
+export function getServerTimeOffset() {
+  if (_offset !== null) return Promise.resolve(_offset);
+  if (_offsetPending) return _offsetPending;
+
+  _offsetPending = new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      _offset = value;
+      _offsetPending = null;
+      try { unsubscribe(); } catch { /* already gone */ }
+      resolve(value);
+    };
+    // Never let a slow or blocked connection hold up a caller: an offset of
+    // 0 (trust this device's clock) is the correct fallback.
+    const timer = setTimeout(() => finish(0), 5000);
+    let unsubscribe = () => {};
+    try {
+      unsubscribe = onValue(
+        ref(db, ".info/serverTimeOffset"),
+        (snap) => { clearTimeout(timer); finish(Number(snap.val()) || 0); },
+        (e) => { clearTimeout(timer); console.error("getServerTimeOffset failed", e); finish(0); }
+      );
+    } catch (e) {
+      clearTimeout(timer);
+      console.error("getServerTimeOffset failed", e);
+      finish(0);
+    }
+  });
+
+  return _offsetPending;
 }
