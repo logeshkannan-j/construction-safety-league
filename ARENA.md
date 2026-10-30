@@ -386,7 +386,7 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 413 assertions with no browser required, across four suites.
+`npm test` runs 412 assertions with no browser required, across four suites.
 
 ### `tests/arena-games.test.mjs` — the 3D games, actually played (212 assertions)
 

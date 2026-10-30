@@ -181,7 +181,8 @@ device testing checklist are in **[ARENA.md](ARENA.md)**.
 ```bash
 npm install
 npm run dev
-npm test     # 391 tests: the 3D games, the question bank, rounds, scoring and rules
+npm test     # 412 tests: the 3D games, the question bank, rounds, scoring,
+             # rules, and that the app actually renders
 ```
 
 This runs the game locally (still talking to your real Firebase project,
