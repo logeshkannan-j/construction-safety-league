@@ -27,6 +27,7 @@ import {
   buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadder,
   buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
   buildZoneMarker, buildAriaMark, buildBrandedTower, poseWorker, buildKey, buildInfoBoard,
+  buildNameplate,
   collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
@@ -558,6 +559,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     );
     marker.rotation.x = -Math.PI / 2;
     marker.position.set(position.x, 0.12, position.z);
+    // Name the decision point, so it is obvious which object in the
+    // room is the one you are meant to deal with.
+    const plate = buildNameplate(String(label).toUpperCase(), {
+      sub: "PRESS E", accent: "#9B7CF2", width: 3.4,
+    });
+    plate.position.set(position.x, position.y + 1.0, position.z);
+    scene.add(plate);
     scene.add(marker);
     animated.push({ kind: "ring", object: marker, phase: Math.random() * 6 });
 

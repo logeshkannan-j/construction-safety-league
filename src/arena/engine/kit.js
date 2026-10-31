@@ -2395,6 +2395,77 @@ export function buildBarrier(geo, mat, { length = 2, color = "orange" } = {}) {
 }
 
 /**
+ * The label that floats over a thing you can interact with.
+ *
+ * A SPRITE, not a plane, so it always faces the camera. A name you
+ * have to walk round to read is not a name, and on a site where the
+ * player approaches from any direction a flat label spends most of
+ * its life edge-on.
+ *
+ * The HUD was naming the next objective — "Command post, 4 m N" —
+ * while nothing in the world said which object that was.
+ */
+export function nameplateTexture(text, { sub = "", accent = "#FFC629" } = {}) {
+  return canvasTexture(`nameplate:${text}:${sub}:${accent}`, 512, 160, (ctx, w, h) => {
+    // Rounded pill. Drawn by hand rather than with arcTo, which is not
+    // in the 2D stub the headless tests use.
+    const r = 46;
+    const pill = () => {
+      ctx.beginPath();
+      ctx.moveTo(r, 6);
+      ctx.lineTo(w - r, 6);
+      ctx.quadraticCurveTo(w - 6, 6, w - 6, r);
+      ctx.lineTo(w - 6, h - r);
+      ctx.quadraticCurveTo(w - 6, h - 6, w - r, h - 6);
+      ctx.lineTo(r, h - 6);
+      ctx.quadraticCurveTo(6, h - 6, 6, h - r);
+      ctx.lineTo(6, r);
+      ctx.quadraticCurveTo(6, 6, r, 6);
+      ctx.closePath();
+    };
+    ctx.fillStyle = "rgba(10,14,18,0.88)";
+    pill();
+    ctx.fill();
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 7;
+    pill();
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#FFFFFF";
+    ctx.letterSpacing = "1px";
+    const mainY = sub ? h / 2 - 16 : h / 2;
+    fitFont(ctx, text, w - 60, 62, 20, (px) => {
+      ctx.font = `900 ${px}px system-ui, sans-serif`;
+    });
+    ctx.fillText(text, w / 2, mainY);
+
+    if (sub) {
+      ctx.fillStyle = accent;
+      ctx.letterSpacing = "3px";
+      fitFont(ctx, sub, w - 70, 30, 12, (px) => {
+        ctx.font = `800 ${px}px system-ui, sans-serif`;
+      });
+      ctx.fillText(sub, w / 2, h / 2 + 38);
+    }
+    ctx.letterSpacing = "0px";
+  });
+}
+
+/** A floating, always-facing name over an interactable. */
+export function buildNameplate(text, { sub = "", accent = "#FFC629", width = 3.2 } = {}) {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: nameplateTexture(text, { sub, accent }),
+    transparent: true,
+    depthWrite: false,
+  }));
+  sprite.scale.set(width, width * (160 / 512), 1);
+  sprite.userData.nameplate = { text, sub };
+  return sprite;
+}
+
+/**
  * A site information board: a heading bar and a few lines under it.
  *
  * The scenario in each escape area only existed inside the dialog that

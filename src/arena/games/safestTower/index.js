@@ -23,7 +23,7 @@ import { createFirstPerson } from "../../engine/fpsController.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
-  buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, poseWorker,
+  buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, poseWorker, buildNameplate,
   buildTowerCrane, updateHoistRope, buildWorker, buildSign,
   buildMaterialPallet, buildSiteHut, buildBarrier, buildCone,
   buildExcavation, buildGuardrail, buildLadder, buildScaffold,
@@ -527,6 +527,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     outline.position.copy(flag.position);
     root.add(outline);
 
+    // The name of the hazard, over it. Walking round a compound
+    // looking for "something wrong" with no idea what you are looking
+    // at is a hunt, not an inspection.
+    const plate = buildNameplate(def.title.toUpperCase(), {
+      sub: `HAZARD ${HAZARDS.indexOf(def) + 1} OF ${HAZARD_COUNT}`,
+      accent: "#EA4F4F",
+      width: 5.6,
+    });
+    plate.position.set(def.at.x, 3.4, def.at.z);
+    scene.add(plate);
+
     const marker = buildZoneMarker(mat, { radius: 2.4, ok: false });
     marker.position.y = 0.03;
     root.add(marker);
@@ -538,6 +549,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       flag,
       outline,
       marker,
+      plate,
       fixed: null,
       solved: false,
       attempts: 0,

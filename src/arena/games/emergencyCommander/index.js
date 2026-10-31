@@ -35,7 +35,7 @@ import {
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail, buildScaffold,
   buildTowerCrane, updateHoistRope, buildWorker, buildCone, buildSign,
   buildFireExtinguisher, buildElectricalPanel, buildMaterialPallet,
-  buildSiteHut, buildBarrier, buildZoneMarker, buildCableRun, buildPuddle, poseWorker,
+  buildSiteHut, buildBarrier, buildZoneMarker, buildCableRun, buildPuddle, poseWorker, buildNameplate,
   collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
@@ -217,8 +217,24 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     beacon.position.set(anchor.x, 4.6, anchor.z);
     scene.add(beacon);
 
+    /* The name, over its head.
+     *
+     * The HUD has been naming the next objective — "Command post,
+     * 4 m N" — while nothing in the world said WHICH object that was.
+     * A step number and a name on every station is the difference
+     * between following instructions and hunting for the thing they
+     * refer to. */
+    const step = STATIONS.indexOf(station);
+    const plate = buildNameplate(station.label.toUpperCase(), {
+      sub: step >= 0 ? `STEP ${step + 1} — ${station.action.toUpperCase()}` : "",
+      accent: `#${accent.toString(16).padStart(6, "0")}`,
+      width: 5.2,
+    });
+    plate.position.set(anchor.x, 3.5, anchor.z);
+    scene.add(plate);
+
     stationMarkers.set(station.id, {
-      station, object, halo, beacon, hit,
+      station, object, halo, beacon, hit, plate,
       anchor: new THREE.Vector3(anchor.x, 1, anchor.z),
     });
   }
@@ -229,6 +245,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     m.halo.material.color.setHex(0x33c481);
     m.halo.material.opacity = 0.18;
     m.beacon.visible = false;
+    // Keep the name, but stop it competing with the ones still to do.
+    if (m.plate) m.plate.material.opacity = 0.35;
   }
 
   // --- 0. command post: a board and a radio mast, well clear of it all ---
