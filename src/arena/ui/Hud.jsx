@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Clock, Target, Trophy, AlertTriangle, CheckCircle2, XCircle, Pause, Activity } from "lucide-react";
+import { Clock, Target, Trophy, AlertTriangle, CheckCircle2, XCircle, Pause, Activity, Maximize, Minimize } from "lucide-react";
 import { C, SITE_NAME, SITE_SUBTITLE } from "../arenaConstants.js";
 
 /* ------------------------------------------------------------------ *
@@ -24,7 +24,8 @@ export function formatClock(ms) {
 
 export function HudTopBar({
   objective, score = 0, timeMs = null, progress = null, progressLabel,
-  accent = C.yellow, onPause, extra = null, mobile = false, danger = false,
+  accent = C.yellow, onPause, onFullscreen = null, fullscreen = false,
+  extra = null, mobile = false, danger = false,
 }) {
   const urgent = timeMs !== null && timeMs <= 20000;
   return (
@@ -131,6 +132,32 @@ export function HudTopBar({
         color={C.green}
         mobile={mobile}
       />
+
+      {onFullscreen && (
+        <button
+          type="button"
+          aria-label={fullscreen ? "Leave full screen" : "Full screen"}
+          title={fullscreen ? "Leave full screen" : "Full screen"}
+          onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); onFullscreen(); }}
+          style={{
+            pointerEvents: "auto",
+            width: mobile ? 38 : 42,
+            height: mobile ? 38 : 42,
+            borderRadius: 10,
+            border: `1px solid ${C.line}`,
+            background: C.surface + "dd",
+            color: C.ink,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            touchAction: "none",
+            flexShrink: 0,
+          }}
+        >
+          {fullscreen ? <Minimize size={mobile ? 16 : 18} /> : <Maximize size={mobile ? 16 : 18} />}
+        </button>
+      )}
 
       {onPause && (
         <button

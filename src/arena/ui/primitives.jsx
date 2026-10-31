@@ -126,6 +126,22 @@ export function Divider({ margin = 14 }) {
 }
 
 /** Full-screen overlay used by the briefing, pause and results screens. */
+/**
+ * The dimmed layer every panel, dialog and results screen sits on.
+ *
+ * Centred with AUTO MARGINS rather than `align-items: center`, which
+ * matters more than it sounds. A flex item centred with align-items
+ * that is taller than its container overflows equally in both
+ * directions, and the part above the top is unreachable — the
+ * scrollbar cannot get to it. An auto margin collapses to zero when
+ * there is not enough room, so the item pins to the top and the whole
+ * thing scrolls normally.
+ *
+ * This is why the electrical-room question appeared with its answers
+ * cut off the bottom of a short window: a 3D game is usually played in
+ * landscape, landscape on a phone is a short viewport, and a four
+ * option decision is a tall panel.
+ */
 export function Overlay({ children, onBackdrop, align = "center", padded = true, blur = true }) {
   return (
     <div
@@ -135,7 +151,7 @@ export function Overlay({ children, onBackdrop, align = "center", padded = true,
         inset: 0,
         zIndex: 40,
         display: "flex",
-        alignItems: align === "top" ? "flex-start" : "center",
+        alignItems: "flex-start",
         justifyContent: "center",
         padding: padded ? "max(14px, env(safe-area-inset-top, 0px)) 14px max(14px, env(safe-area-inset-bottom, 0px))" : 0,
         background: `${C.bg}e8`,
@@ -145,7 +161,22 @@ export function Overlay({ children, onBackdrop, align = "center", padded = true,
         pointerEvents: "auto",
       }}
     >
-      {children}
+      <div
+        style={{
+          // The centring. `auto` top and bottom when there is room,
+          // nothing when there is not.
+          margin: align === "top" ? "0 auto" : "auto",
+          width: "100%",
+          maxWidth: "100%",
+          display: "flex",
+          justifyContent: "center",
+          // Never let the wrapper be squashed by the flex container —
+          // it must keep its natural height so the parent can scroll.
+          flexShrink: 0,
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }

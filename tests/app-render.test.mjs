@@ -502,6 +502,107 @@ section("The mission briefing renders in both languages");
 }
 
 
+/* ------------------- panels that fit the screen ------------------- */
+
+section("A decision always fits the screen it is on");
+
+{
+  const { Overlay } = await server.ssrLoadModule("/src/arena/ui/primitives.jsx");
+  const { DecisionDialog } = await server.ssrLoadModule("/src/arena/ui/GameShell.jsx");
+
+  const fitRoot = ReactDOMClient.createRoot(rootEl);
+  const before = reactErrors.length;
+
+  /* ---- the overlay ----
+   *
+   * This is the bug the electrical-room screenshot showed. A flex item
+   * centred with `align-items: center` that is TALLER than its
+   * container overflows equally both ways, and the part above the top
+   * cannot be scrolled to — the scrollbar will not go there. Auto
+   * margins centre when there is room and collapse when there is not,
+   * so the panel pins to the top and the whole thing scrolls. */
+  fitRoot.render(React.createElement(Overlay, {},
+    React.createElement("div", { id: "tall", style: { height: 4000 } }, "tall")));
+  await settle(120);
+
+  const overlay = rootEl.firstElementChild;
+  check("the overlay scrolls", overlay?.style.overflowY === "auto", overlay?.style.overflowY);
+  check("the overlay does NOT centre with align-items",
+    overlay?.style.alignItems === "flex-start",
+    `align-items: ${overlay?.style.alignItems}`);
+  const wrapper = overlay?.firstElementChild;
+  check("it centres with an auto margin instead, which stays scrollable",
+    /auto/.test(wrapper?.style.margin || ""), `margin: ${wrapper?.style.margin}`);
+  check("the centring wrapper cannot be squashed",
+    wrapper?.style.flexShrink === "0", wrapper?.style.flexShrink);
+
+  /* ---- the dialog itself ---- */
+  const picked = [];
+  const dialog = {
+    eyebrow: "AREA 1 OF 5 — ELECTRICAL ROOM",
+    title: "The door ahead is powered and the frame is live. How do you make it safe?",
+    subtitle: "There is a distribution board, a local isolator for the door circuit, "
+      + "and an emergency lighting inverter.",
+    tone: "danger",
+    options: [
+      { id: "0", label: "Lock off the local isolator for the door circuit and prove it dead", badge: "A" },
+      { id: "1", label: "Switch the whole distribution board off at the main switch", badge: "B" },
+      { id: "2", label: "Pull the fuse for the door circuit and put it in your pocket", badge: "C" },
+      { id: "3", label: "Tape over the frame and tell everyone not to touch it", badge: "D" },
+    ],
+    footer: "Right first time is worth double.",
+    onPick: (id) => picked.push(id),
+  };
+
+  for (const mobile of [false, true]) {
+    fitRoot.render(React.createElement(DecisionDialog, { dialog, mobile, accent: "#FFC629" }));
+    await settle(120);
+
+    // root > overlay > centring wrapper > panel
+    const panel = rootEl.firstElementChild?.firstElementChild?.firstElementChild;
+    check(`${mobile ? "phone" : "desktop"}: the panel is capped to the screen`,
+      panel?.style.maxHeight === "100%", `max-height: ${panel?.style.maxHeight}`);
+    check(`${mobile ? "phone" : "desktop"}: the panel is a column so it can scroll inside`,
+      panel?.style.display === "flex" && panel?.style.flexDirection === "column",
+      `${panel?.style.display} / ${panel?.style.flexDirection}`);
+
+    // The question has to stay put while the ANSWERS scroll, so there
+    // must be exactly one scrolling region inside the panel.
+    const scrollers = [...(panel?.children || [])]
+      .filter((c) => c.style.overflowY === "auto");
+    check(`${mobile ? "phone" : "desktop"}: the answers are in a scrolling region`,
+      scrollers.length === 1, `${scrollers.length} scrolling regions`);
+    check(`${mobile ? "phone" : "desktop"}: that region can actually shrink`,
+      scrollers[0]?.style.minHeight === "0px" || scrollers[0]?.style.minHeight === "0",
+      `min-height: ${scrollers[0]?.style.minHeight}`);
+    check(`${mobile ? "phone" : "desktop"}: the question is outside the scrolling region`,
+      !!scrollers[0]
+      && rootEl.textContent.includes("ELECTRICAL ROOM")
+      && !scrollers[0].textContent.includes("ELECTRICAL ROOM"),
+      "the question should stay put while the answers scroll");
+
+    // And every answer is present and clickable.
+    const answers = [...rootEl.querySelectorAll("button")]
+      .filter((b) => /Lock off|Switch the whole|Pull the fuse|Tape over/.test(b.textContent || ""));
+    check(`${mobile ? "phone" : "desktop"}: all four answers are on the page`,
+      answers.length === 4, `${answers.length} answers`);
+    check(`${mobile ? "phone" : "desktop"}: the answers are inside the scrolling region`,
+      answers.every((a) => scrollers[0]?.contains(a)));
+  }
+
+  // Clicking one reports the REAL option id, not its slot.
+  const answerB = [...rootEl.querySelectorAll("button")]
+    .find((b) => (b.textContent || "").includes("Switch the whole"));
+  answerB?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  await settle(60);
+  check("picking an answer reports its id", picked.includes("1"), JSON.stringify(picked));
+
+  check("no React errors laying out a decision",
+    reactErrors.length === before, reactErrors.slice(before, before + 2).join(" | "));
+
+  fitRoot.unmount();
+}
+
 /* --------------------- a crash is never a blank page --------------------- */
 
 section("A render error shows itself");

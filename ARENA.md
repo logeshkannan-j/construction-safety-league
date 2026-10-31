@@ -257,6 +257,40 @@ shipped with the right answer longest in all five, and the hazard set with it
 longest in 9 of 10 by a 60-character margin — findable without reading a word.
 `tests/arena-games.test.mjs` fails if that comes back.
 
+### Panels that fit the screen
+
+A 3D game is played in landscape, landscape on a phone is a SHORT viewport, and
+a four-option decision is a tall panel. The electrical-room question was
+appearing with its answers off the bottom of the window and no way to reach
+them.
+
+Two causes, both fixed:
+
+`Overlay` centred its child with `align-items: center`. A flex item centred that
+way which is taller than its container overflows **equally in both directions**,
+and the part above the top cannot be scrolled to — the scrollbar will not go
+there. It now centres with an **auto margin**, which collapses to zero when
+there is no room, so the panel pins to the top and the whole thing scrolls
+normally. That one change fixes all six overlays, including the results screen.
+
+The decision panel itself is now capped at `max-height: 100%` and laid out as a
+column: the question stays put and the ANSWERS scroll under it, which is better
+than scrolling the question off the top to reach them.
+
+`tests/app-render.test.mjs` renders the real dialog at both sizes and asserts
+the overlay does not use `align-items` centring, that the answers live in a
+scrolling region that can shrink, that the question is outside it, and that all
+four answers are present and reachable. Reverting the Overlay fails six of them.
+
+### Full screen
+
+The shell is `position: fixed; inset: 0`, so it already fills the browser
+*window* — but a window is not a screen. Browser chrome takes 100–150 px of
+height, which in landscape on a phone is a third of the view. There is now a
+full-screen button beside pause in the HUD. The browser owns that state, so
+Escape and the system gesture are listened for rather than assumed, and the
+button is hidden where the API is unavailable (iPhone Safari).
+
 ### People
 
 `buildWorker()` builds a **skeleton**, not a pile of boxes at fixed heights:
@@ -610,7 +644,7 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 907 assertions with no browser required, across four suites.
+`npm test` runs 927 assertions with no browser required, across four suites.
 
 ### `tests/arena-games.test.mjs` — the 3D games, actually played (599 assertions)
 
@@ -678,7 +712,7 @@ and api, exactly as a player or a phone would:
 - live event mode: a live paper is still 10 + 5, still shuffled in place, still never moves the
   correct answer away from its text, and still deals a different paper per game
 
-### `tests/app-render.test.mjs` — the app actually mounts (94 assertions)
+### `tests/app-render.test.mjs` — the app actually mounts (114 assertions)
 
 Mounts the **real** React app in jsdom with effects running, clicks through to the admin panel and
 waits for the live Firebase record to arrive. A blank screen is invisible to every other suite

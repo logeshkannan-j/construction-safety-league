@@ -100,6 +100,8 @@ export default function GameShell({
   const { toasts, push: pushToast } = useToasts();
 
   const containerRef = useRef(null);
+  const rootRef = useRef(null);
+  const [fullscreen, setFullscreen] = useState(false);
   const instanceRef = useRef(null);
   const hudBufferRef = useRef({});
   const hudTimerRef = useRef(0);
@@ -222,6 +224,49 @@ export default function GameShell({
   }, []);
 
   useEffect(() => teardown, [teardown]);
+
+  /* --------------------------- full screen ---------------------------
+   *
+   * The shell already fills the browser WINDOW, but a window is not a
+   * screen: browser chrome on a phone eats 100-150 px of height, and
+   * these games are played in landscape where that is a third of the
+   * view. Going properly full screen is the single biggest thing a
+   * player can do for how much site they can see.
+   */
+  const fullscreenSupported = typeof document !== "undefined"
+    && (document.fullscreenEnabled || document.webkitFullscreenEnabled || false);
+
+  const toggleFullscreen = useCallback(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const active = document.fullscreenElement || document.webkitFullscreenElement;
+    try {
+      if (active) {
+        (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+      } else {
+        (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el, { navigationUI: "hide" });
+      }
+    } catch (e) {
+      // Safari on iPhone refuses this outright. Nothing to recover
+      // from, and the button simply does not latch.
+      console.warn("[arena] full screen unavailable", e);
+    }
+  }, []);
+
+  // The browser owns this state: Escape and the system gesture both
+  // leave full screen without going through the button.
+  useEffect(() => {
+    const sync = () => setFullscreen(
+      !!(document.fullscreenElement || document.webkitFullscreenElement)
+    );
+    sync();
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync);
+    };
+  }, []);
 
   // Preload the game module (and with it three.js and the 3D kit).
   useEffect(() => {
@@ -456,6 +501,7 @@ export default function GameShell({
 
   return (
     <div
+      ref={rootRef}
       style={{
         position: "fixed",
         inset: 0,
@@ -511,6 +557,8 @@ export default function GameShell({
               danger={hud.danger}
               mobile={mobile}
               onPause={() => setPaused(true)}
+              onFullscreen={fullscreenSupported ? toggleFullscreen : null}
+              fullscreen={fullscreen}
             />
 
             {hud.crosshair && <Crosshair state={hud.crosshair} accent={game.accent} />}
@@ -1237,7 +1285,9 @@ function PauseMenu({
 
 /* ========================== decision dialog ========================== */
 
-function DecisionDialog({ dialog, mobile, accent }) {
+// Exported so the layout contract can be tested without standing up a
+// WebGL stage. It is the one panel that regularly does not fit.
+export function DecisionDialog({ dialog, mobile, accent }) {
   const color = dialog.tone === "danger" ? C.red : dialog.tone === "good" ? C.green : accent;
   return (
     <Overlay align={mobile ? "top" : "center"} blur={false} onBackdrop={dialog.dismissable ? dialog.onDismiss : undefined}>
@@ -1245,21 +1295,43 @@ function DecisionDialog({ dialog, mobile, accent }) {
         style={{
           ...panelStyle,
           width: "min(100%, 620px)",
-          padding: mobile ? 14 : 20,
+          padding: 0,
           borderTop: `3px solid ${color}`,
           animation: "cslArenaRise .22s ease-out",
+          // Never taller than the space it is given. A four-option
+          // decision in a landscape phone window does not fit, so the
+          // panel caps itself and scrolls the ANSWERS rather than
+          // letting them fall off the bottom where they cannot be
+          // reached.
+          maxHeight: "100%",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
         }}
       >
-        {dialog.eyebrow && (
-          <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.3, color, marginBottom: 7 }}>
-            {dialog.eyebrow}
-          </div>
-        )}
-        <h3 style={{ fontSize: mobile ? 16 : 19, fontWeight: 900, margin: "0 0 6px", lineHeight: 1.3 }}>
-          {dialog.title}
-        </h3>
+        {/* The question stays put while the answers scroll under it. */}
+        <div style={{ flex: "0 0 auto", padding: mobile ? "14px 14px 0" : "20px 20px 0" }}>
+          {dialog.eyebrow && (
+            <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.3, color, marginBottom: 7 }}>
+              {dialog.eyebrow}
+            </div>
+          )}
+          <h3 style={{ fontSize: mobile ? 16 : 19, fontWeight: 900, margin: "0 0 6px", lineHeight: 1.3 }}>
+            {dialog.title}
+          </h3>
+        </div>
+
+        <div
+          style={{
+            flex: "1 1 auto",
+            minHeight: 0,
+            overflowY: "auto",
+            WebkitOverflowScrolling: "touch",
+            padding: mobile ? "0 14px 14px" : "0 20px 20px",
+          }}
+        >
         {dialog.subtitle && (
-          <p style={{ color: C.muted, fontSize: mobile ? 12.5 : 13.5, lineHeight: 1.55, margin: "0 0 14px" }}>
+          <p style={{ color: C.muted, fontSize: mobile ? 12.5 : 13.5, lineHeight: 1.55, margin: "8px 0 14px" }}>
             {dialog.subtitle}
           </p>
         )}
@@ -1333,6 +1405,7 @@ function DecisionDialog({ dialog, mobile, accent }) {
             {dialog.dismissLabel || "Close"}
           </ArenaButton>
         )}
+        </div>
       </div>
     </Overlay>
   );
