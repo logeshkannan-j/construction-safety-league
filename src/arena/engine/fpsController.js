@@ -77,6 +77,12 @@ export function createFirstPerson(camera, input, {
     bob: 0,
     frozen: false,
     thirdPerson: !!thirdPerson,
+    // The compass direction actually TRAVELLED, kept separate from
+    // `yaw`, which is where the player is looking. A third-person
+    // avatar has to face the way it is going, and in the two games
+    // with an orbit camera those are not the same thing — the camera
+    // yaw is fixed while the player walks about underneath it.
+    heading: yaw,
     // The height the player last left solid ground at. Seeded with the
     // spawn height so a mission that starts the player in the air still
     // measures the drop correctly.
@@ -288,6 +294,17 @@ export function createFirstPerson(camera, input, {
     /** True when the player is actually walking, for the walk cycle. */
     get moving() { return state.speed > 0.35; },
 
+    /**
+     * Which way they are TRAVELLING, for a visible body to face.
+     *
+     * Not `yaw`: that is where they are looking. The avatar used to be
+     * turned with atan2 of `velocity`, but velocity only ever carries
+     * the vertical component — gravity and jumping — so it was always
+     * atan2(0, 0) = 0 and every character walked due south while
+     * sliding in whatever direction it was actually going.
+     */
+    get heading() { return state.heading; },
+
     /** Point the character somewhere, when an outside camera owns the yaw. */
     setYaw(value) {
       if (Number.isFinite(value)) state.yaw = value;
@@ -410,6 +427,9 @@ export function createFirstPerson(camera, input, {
       } else {
         const dx = (forward.x * my + right.x * mx) * speed;
         const dz = (forward.z * my + right.z * mx) * speed;
+        // atan2(x, z) gives the angle whose (sin, cos) is (x, z),
+        // which is the convention a model built facing +Z needs.
+        if (Math.abs(dx) + Math.abs(dz) > 0.05) state.heading = Math.atan2(dx, dz);
         state.speed = Math.hypot(dx, dz);
         moveAxis("x", dx * dt);
         moveAxis("z", dz * dt);

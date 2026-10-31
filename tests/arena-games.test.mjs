@@ -433,9 +433,48 @@ section("The top view works in all five games");
   const t = instance.__test;
   runFrames(20);
 
-  check("escape: the floor has ceilings to begin with",
-    (t.ceilings || []).length >= 5 && t.ceilings.every((c) => c.visible),
-    `${(t.ceilings || []).length} ceilings`);
+  // The construction floor is deliberately OPEN to the structure
+  // above: its whole scenario is overhead work, and you cannot ask
+  // what PPE that needs in a room with a lid on it.
+  check("escape: every fitted-out room has a ceiling",
+    (t.ceilings || []).length === t.rooms.length - 1 && t.ceilings.every((c) => c.visible),
+    `${(t.ceilings || []).length} ceilings for ${t.rooms.length} rooms`);
+
+  {
+    const ppe = t.rooms.find((r) => r.key === "ppe");
+    const overPpe = (t.ceilings || []).filter((c) =>
+      c.position.x > ppe.x0 && c.position.x < ppe.x1);
+    check("escape: the construction floor is open to the sky above it",
+      overPpe.length === 0, `${overPpe.length} ceilings over it`);
+  }
+
+  /* ---- material comes off the deck above, which is the hazard ---- */
+  {
+    const debris = t.fallingDebris || [];
+    check("escape: there is material falling from the overhead work",
+      debris.length >= 3, `${debris.length} offcuts`);
+
+    const heights = new Set();
+    let lowest = Infinity;
+    let highest = -Infinity;
+    for (let i = 0; i < 240; i++) {
+      runFrames(1);
+      const d = debris[0];
+      if (!d.object.visible) continue;
+      heights.add(d.object.position.y.toFixed(2));
+      lowest = Math.min(lowest, d.object.position.y);
+      highest = Math.max(highest, d.object.position.y);
+    }
+    check("escape: it actually falls", heights.size > 20, `${heights.size} distinct heights`);
+    check("escape: it falls from the deck to the floor",
+      highest > 5 && lowest < 0.4, `${lowest.toFixed(2)} m to ${highest.toFixed(2)} m`);
+    check("escape: it drops over and over rather than once",
+      debris.every((d) => d.period > 0) && new Set(debris.map((d) => d.period)).size === debris.length,
+      debris.map((d) => d.period).join(", "));
+    check("escape: the offcuts are not synchronised",
+      new Set(debris.map((d) => d.t.toFixed(2))).size > 1,
+      debris.map((d) => d.t.toFixed(2)).join(", "));
+  }
 
   instance.input.press("topview");
   runFrames(90);
@@ -798,6 +837,125 @@ section("You can see the person you are playing");
     instance.dispose();
   }
 }
+section("A walking character faces the way it is going");
+
+{
+  /* The avatar used to be turned with atan2 of the controller's
+   * `velocity`, but velocity only ever carries the VERTICAL component
+   * — gravity and jumping — so it was atan2(0, 0) = 0 every frame and
+   * every character walked due south while sliding in whatever
+   * direction it was actually travelling. */
+  /* Two different right answers here, and they must not be confused.
+   *
+   * In the FIRST-PERSON missions the body faces where the player is
+   * LOOKING: that is what strafing is, and a body that spun to face
+   * sideways every time you side-stepped would be wrong.
+   *
+   * In the two missions with an orbit camera there is no look
+   * direction to face — the camera yaw sits still while the player
+   * walks about underneath it — so there the body must face the way
+   * it is TRAVELLING. That is the one that was broken. */
+  const WALKERS = [
+    ["safetyMission", (t) => t.controller, "look"],
+    ["escapeChallenge", (t) => t.controller, "look"],
+    ["safestTower", (t) => t.walker, "travel"],
+    ["emergencyCommander", (t) => t.walker, "travel"],
+  ];
+
+  for (const [path, pick, faces] of WALKERS) {
+    const { instance } = await boot(path);
+    const t = instance.__test;
+    const body = pick(t);
+    runFrames(20);
+
+    // Push the stick in four directions and check the body turns to
+    // match the direction actually travelled each time.
+    const offsets = [];
+    for (const [jx, jy] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
+      const from = body.position.clone();
+      instance.input.setJoystick(jx, jy);
+      runFrames(60);
+      instance.input.setJoystick(0, 0);
+      runFrames(10);
+
+      const moved = body.position.clone().sub(from);
+      moved.y = 0;
+      if (moved.length() < 0.3) continue;
+      const want = faces === "travel"
+        ? Math.atan2(moved.x, moved.z)
+        : body.yaw + Math.PI;
+      let off = want - t.avatar.rotation.y;
+      while (off > Math.PI) off -= Math.PI * 2;
+      while (off < -Math.PI) off += Math.PI * 2;
+      offsets.push(Math.abs(off));
+    }
+
+    check(`${path}: the body turns with every change of direction`,
+      offsets.length === 4, `${offsets.length} of 4 directions moved`);
+    check(`${path}: it faces where it should (${faces})`,
+      offsets.every((o) => o < 0.25),
+      offsets.map((o) => `${(o * 57.3).toFixed(0)}deg`).join(", "));
+
+    // And the controller reports a heading that is NOT just its yaw —
+    // in the orbit games the camera yaw never changes while walking.
+    check(`${path}: the controller reports a travel heading`,
+      Number.isFinite(body.heading));
+
+    instance.dispose();
+  }
+}
+
+section("Nobody on site stands perfectly still");
+
+{
+  for (const [path, id] of GAMES) {
+    const { instance } = await boot(path);
+    runFrames(10);
+
+    const scene = lastRenderer?.lastScene;
+    const people = [];
+    scene?.traverse((o) => {
+      if (o.userData?.rig && !o.userData.selfAnimated) people.push(o);
+    });
+    check(`${id}: there are people in the scene`, people.length > 0, `${people.length}`);
+
+    const read = () => people.map((p) => {
+      const r = p.userData.rig;
+      return `${r.hips.position.y.toFixed(4)}|${r.spine.rotation.y.toFixed(4)}|${r.head.rotation.y.toFixed(4)}`;
+    });
+    const before = read();
+    runFrames(90);
+    const after = read();
+
+    check(`${id}: every one of them is breathing and shifting`,
+      before.every((v, i) => v !== after[i]),
+      `${before.filter((v, i) => v === after[i]).length} frozen`);
+
+    // A yard of people moving in lockstep is worse than none moving.
+    // The mechanism is a per-figure offset into the idle cycle, so
+    // THAT is what is asserted — comparing live joint angles to four
+    // decimal places collides by chance and tests the sampling rather
+    // than the behaviour.
+    check(`${id}: every figure has its own place in the idle cycle`,
+      new Set(people.map((p) => p.userData.idleOffset)).size === people.length,
+      `${new Set(people.map((p) => p.userData.idleOffset)).size} offsets for ${people.length} people`);
+    check(`${id}: they are not all striking the same pose`,
+      people.length < 2 || new Set(after).size > 1,
+      `${new Set(after).size} distinct poses among ${people.length} people`);
+
+    // Their job still has to show: a figure posed "work" must still be
+    // working, not quietly drifting back to standing.
+    const workers = people.filter((p) => p.userData.pose === "work");
+    if (workers.length) {
+      check(`${id}: a figure set to work is still working after the idle runs`,
+        workers.every((p) => p.userData.rig.armL.rotation.x < -0.6),
+        workers.map((p) => p.userData.rig.armL.rotation.x.toFixed(2)).join(", "));
+    }
+
+    instance.dispose();
+  }
+}
+
 section("Scene content");
 
 {
@@ -1258,6 +1416,21 @@ section("Tower Crane Master — lift a load");
       lifts[0].pickBoard.position.z - lifts[0].pick.z) < 5
     && Math.hypot(lifts[0].landBoard.position.x - lifts[0].target.x,
       lifts[0].landBoard.position.z - lifts[0].target.z) < 5);
+
+  // They have to be readable from a cab 36 m up and 40 m away, which
+  // means big and TURNED TO FACE THE CRANE. A board pointing at a
+  // fixed compass direction shows the operator its back.
+  [["pick-up", lifts[0].pickBoard], ["landing", lifts[0].landBoard]].forEach(([label, board]) => {
+    const size = new THREE.Box3().setFromObject(board).getSize(new THREE.Vector3());
+    check(`the ${label} board is big enough to read from the cab`,
+      size.y > 3.5 && Math.max(size.x, size.z) > 2,
+      `${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)}`);
+    const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(board.quaternion);
+    const toCrane = new THREE.Vector3(
+      CRANE.x - board.position.x, 0, CRANE.z - board.position.z).normalize();
+    check(`the ${label} board faces the crane`, facing.dot(toCrane) > 0.9,
+      `dot ${facing.dot(toCrane).toFixed(2)}`);
+  });
   check("the capacity chart falls as radius grows",
     safeWorkingLoad(10) > safeWorkingLoad(35), `${safeWorkingLoad(10)} vs ${safeWorkingLoad(35)}`);
 

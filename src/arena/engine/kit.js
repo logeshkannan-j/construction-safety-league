@@ -1956,8 +1956,14 @@ export function buildWorker(geo, mat, {
       spine.add(band);
     });
     if (fine) {
-      [-0.085, 0.085].forEach((bx) => {
-        spine.add(box(geo, mat.white, 0.045, 0.22, 0.3, bx, 0.45, 0.01, { shadow: false }));
+      // The two braces over the shoulders. They lie ON the front of
+      // the vest — 18 mm of tape, not a slab. They were 0.3 m DEEP,
+      // which is deeper than the whole chest, so they stood proud of
+      // the vest front and back and read as a box strapped to the
+      // ribs.
+      [-0.075, 0.075].forEach((bx) => {
+        spine.add(box(geo, mat.white, 0.042, 0.2, 0.018, bx, 0.45, 0.136, { shadow: false }));
+        spine.add(box(geo, mat.white, 0.042, 0.2, 0.018, bx, 0.45, -0.132, { shadow: false }));
       });
     }
   }
@@ -2019,33 +2025,69 @@ export function buildWorker(geo, mat, {
     // Jaw and chin, so the profile is not a ball.
     head.add(joint(skinMat, 0.062, -0.075, { z: 0.012, flat: 1.15 }));
     head.add(box(geo, skinMat, 0.075, 0.05, 0.055, 0, -0.095, 0.052, { shadow: false }));
-    // Ears, nose. Tiny, and they are what make a head face forwards.
+    // Ears.
     [-0.082, 0.082].forEach((ex) => {
       head.add(box(geo, skinMat, 0.016, 0.042, 0.03, ex, -0.005, 0.004, { shadow: false }));
     });
-    head.add(box(geo, skinMat, 0.022, 0.035, 0.03, 0, -0.022, 0.1, { shadow: false }));
-    [-0.042, 0.042].forEach((ex) => {
-      head.add(box(geo, mat.black, 0.022, 0.014, 0.012, ex, 0.025, 0.093, { shadow: false }));
+
+    /* ---- the face ----
+     *
+     * Everything here sits PROUD of the skull. The first version put
+     * the eyes at z = 0.093 inside a skull that reaches 0.101, so they
+     * were buried in the head and the face was blank. A feature on a
+     * head this size has to break the surface to exist at all.
+     *
+     * The skull front is at z = 0.101, so the face plate at 0.098
+     * gives a flat cheek for the features to sit on and everything
+     * else is measured out from there. */
+    head.add(box(geo, skinMat, 0.125, 0.14, 0.02, 0, 0.01, 0.098, { shadow: false }));
+
+    // Brow ridge: the single biggest thing that stops a head reading
+    // as an egg, because it puts the eyes in shadow.
+    head.add(box(geo, skinMat, 0.132, 0.022, 0.028, 0, 0.052, 0.105, { shadow: false }));
+
+    // Eyes: a white, then a dark iris standing in front of it.
+    [-0.038, 0.038].forEach((ex) => {
+      head.add(box(geo, mat.white, 0.034, 0.019, 0.016, ex, 0.028, 0.108, { shadow: false }));
+      head.add(box(geo, mat.black, 0.016, 0.016, 0.012, ex, 0.027, 0.114, { shadow: false }));
+      // Brows, above and a touch wider than the eye.
+      head.add(box(geo, mat.timberDark, 0.038, 0.011, 0.014, ex, 0.041, 0.112, { shadow: false }));
     });
+
+    // Nose: a bridge and a tip, clearly out from the face.
+    head.add(box(geo, skinMat, 0.026, 0.05, 0.028, 0, 0.012, 0.114, { shadow: false }));
+    head.add(box(geo, skinMat, 0.032, 0.022, 0.034, 0, -0.016, 0.119, { shadow: false }));
+
+    // Mouth.
+    head.add(box(geo, mat.skinDark, 0.05, 0.014, 0.014, 0, -0.056, 0.111, { shadow: false }));
   }
 
   if (helmet) {
     // A hard hat sits ON the head: the shell is a little wider than the
     // skull and the brim a little wider again. Getting this wrong by a
     // factor of two is the difference between a hard hat and a sombrero.
+    /* A hard hat sits ON TOP of the head: the shell starts ABOVE the
+     * brow and the brim rings it there. Both earlier attempts put it
+     * too low — first a brim 2.4x the width of the skull, then a shell
+     * big enough to swallow the eyes and a brim slicing across the
+     * face between the eyes and the nose.
+     *
+     * Brow is at local y = 0.047, so nothing of the hat comes below
+     * 0.05, and the eyes at 0.027 are clear of all of it. */
+    const HAT_BOTTOM = 0.05;
+    const HAT_TOP = 0.185;
     const shell = new THREE.Mesh(geo.sphere, helmetMat);
-    shell.scale.set(0.206, 0.19, 0.236);
-    shell.position.y = 0.055;
+    shell.scale.set(0.206, HAT_TOP - HAT_BOTTOM, 0.232);
+    shell.position.y = (HAT_TOP + HAT_BOTTOM) / 2;
     shell.castShadow = true;
     head.add(shell);
 
-    // Brim right round, 0.125 m radius against a 0.084 m head radius.
-    const brim = cylinder(geo, helmetMat, 0.125, 0.016, 0, -0.025, 0.004, { shadow: false });
+    const brim = cylinder(geo, helmetMat, 0.122, 0.015, 0, HAT_BOTTOM + 0.004, 0.002, { shadow: false });
     head.add(brim);
     if (fine) {
-      // A deeper peak at the front, and the ridge over the crown.
-      head.add(box(geo, helmetMat, 0.15, 0.018, 0.055, 0, -0.028, 0.125, { shadow: false }));
-      head.add(box(geo, helmetMat, 0.028, 0.03, 0.17, 0, 0.142, 0.005, { shadow: false }));
+      // A peak at the front, and the ridge over the crown.
+      head.add(box(geo, helmetMat, 0.14, 0.016, 0.052, 0, HAT_BOTTOM + 0.002, 0.116, { shadow: false }));
+      head.add(box(geo, helmetMat, 0.028, 0.028, 0.168, 0, HAT_TOP - 0.012, 0.004, { shadow: false }));
     }
   }
 
@@ -2068,6 +2110,11 @@ export function buildWorker(geo, mat, {
     legL: legs[0], legR: legs[1], armL: arms[0], armR: arms[1],
   };
   group.userData.role = role;
+  // What this figure is doing, so an animator can keep re-applying it,
+  // and its own offset into the idle cycle — without this a yard full
+  // of people breathes in unison, which is worse than not breathing.
+  group.userData.pose = pose;
+  group.userData.idleOffset = Math.random() * 12;
   group.userData.worker = { helmet, vest, harness, boots };
 
   // Bake each joint down to one mesh per material. Done last, so
@@ -2097,6 +2144,12 @@ export function buildWorker(geo, mat, {
  */
 export function poseWorker(worker, {
   phase = 0, moving = false, pose = "stand", running = false, carrying = false,
+  // Elapsed seconds, for the idle layer. A figure standing perfectly
+  // still is the thing that makes a scene look dead, so standing is
+  // never actually still: it breathes, shifts its weight, and looks
+  // around. Pass the stage clock; each figure offsets it by its own
+  // amount so a crowd is not synchronised.
+  t = null,
 } = {}) {
   const rig = worker?.userData?.rig;
   if (!rig) return;
@@ -2222,6 +2275,62 @@ export function poseWorker(worker, {
     armL.userData.elbow.rotation.x = -0.18;
     armR.userData.elbow.rotation.x = -0.14;
     spine.rotation.x = 0;
+  }
+
+  /* ---- the idle layer, on top of whatever pose was just set ----
+   *
+   * Four slow cycles at different periods, so they never line up and
+   * the loop is not visible: a breath, a weight shift, a sway, and a
+   * head that looks around. Small — single degrees — because the point
+   * is that a person is never quite still, not that they are fidgeting.
+   */
+  if (t !== null && Number.isFinite(t)) {
+    const breath = Math.sin(t * 1.25);
+    const shift = Math.sin(t * 0.37);
+    const sway = Math.sin(t * 0.61);
+    const glance = Math.sin(t * 0.29) * Math.sin(t * 0.13);
+
+    hips.position.y += breath * 0.006;
+    hips.rotation.z += shift * 0.022;
+    spine.rotation.x += breath * 0.018;
+    spine.rotation.y += sway * 0.035;
+    spine.rotation.z -= shift * 0.014;
+    head.rotation.y += glance * 0.42;
+    head.rotation.x += Math.sin(t * 0.47) * 0.05;
+    armL.rotation.z += sway * 0.03;
+    armR.rotation.z += sway * 0.03;
+    armL.rotation.x += breath * 0.02;
+    armR.rotation.x -= breath * 0.02;
+    // The leg carrying the weight straightens as the other relaxes.
+    legL.rotation.x += shift * 0.018;
+    legR.rotation.x -= shift * 0.018;
+  }
+}
+
+/**
+ * Every rigged figure under `root`, except any that animates itself.
+ *
+ * The player's own avatar sets its pose from the controller each frame,
+ * so it marks itself `selfAnimated` and is left out — posing it twice
+ * would fight the walk cycle.
+ */
+export function collectWorkers(root) {
+  const list = [];
+  root.traverse((o) => {
+    if (o.userData?.rig && !o.userData.selfAnimated) list.push(o);
+  });
+  return list;
+}
+
+/** Runs the idle layer over a list from collectWorkers(). */
+export function idleWorkers(list, t) {
+  for (let i = 0; i < list.length; i++) {
+    const w = list[i];
+    poseWorker(w, {
+      pose: w.userData.pose || "stand",
+      moving: false,
+      t: t + (w.userData.idleOffset || 0),
+    });
   }
 }
 

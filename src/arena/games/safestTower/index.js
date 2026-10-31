@@ -29,6 +29,7 @@ import {
   buildExcavation, buildGuardrail, buildLadder, buildScaffold,
   buildCableRun, buildPuddle, buildElectricalPanel, buildZoneMarker, buildDebris,
   collider,
+  collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { HAZARDS, HAZARD_COUNT, SCORING } from "./hazards.js";
@@ -619,6 +620,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const avatar = buildWorker(geo, mat, {
     helmet: true, vest: true, boots: true, role: "officer",
   });
+  // Posed from the controller every frame, so the crowd animator
+  // must leave it alone.
+  avatar.userData.selfAnimated = true;
   scene.add(avatar);
   let walkPhase = 0;
 
@@ -656,13 +660,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     walker.setYaw(cam.yaw);
     walker.update(dt);
 
-    const v = walker.velocity;
     const moving = walker.moving;
     walkPhase += dt * (walker.state.running ? 11 : 7.4) * (moving ? 1 : 0);
     avatar.position.set(walker.position.x, walker.position.y, walker.position.z);
     // Face the way they are actually travelling, not the way the
     // camera happens to be pointing.
-    if (moving) avatar.rotation.y = Math.atan2(v.x, v.z);
+    // Turn toward the way they are travelling rather than snapping,
+    // so a change of direction reads as a person turning.
+    if (moving) {
+      let d = walker.heading - avatar.rotation.y;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      avatar.rotation.y += d * Math.min(1, dt * 9);
+    }
     poseWorker(avatar, {
       phase: walkPhase, moving, running: walker.state.running, pose: "stand",
     });
@@ -890,6 +900,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   focusOn(hazards[0].world, { height: 2.2 });
 
+  // Every rigged figure in the world, gathered once.
+  const people = collectWorkers(scene);
+
   stage.start((dt) => {
     if (state.paused) return;
 
@@ -944,6 +957,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       hudAccumulator = 0;
       pushHud();
     }
+
+    // Nobody on this site stands perfectly still.
+    idleWorkers(people, stage.elapsed);
 
     input.endFrame();
   });

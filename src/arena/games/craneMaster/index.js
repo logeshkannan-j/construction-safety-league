@@ -24,6 +24,7 @@ import {
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail,
   buildTowerCrane, updateHoistRope, buildWorker, buildCone, buildSign,
   buildMaterialPallet, buildZoneMarker, buildSiteHut, buildBarrier, poseWorker,
+  collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx, setMotor, stopAllLoops } from "../../audio.js";
 
@@ -353,21 +354,36 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     pickRing.visible = false;
     scene.add(pickRing);
 
-    // Signage, so the two ends of the lift are readable from the cab
-    // rather than being two rings you have to be told about. A real
-    // lift plan is posted on a board at each end.
+    /* Signage at both ends of the lift.
+     *
+     * These have to be readable from a cab 36 m up and 40 m away, so
+     * they are big, they are short — a four-line sign is unreadable at
+     * that range — and each one TURNS TO FACE THE CRANE rather than
+     * pointing at a fixed compass direction, which is how you end up
+     * reading the back of your own signage.
+     *
+     * Each also gets a painted panel on the deck beneath it, because
+     * from directly overhead a board is edge-on and invisible. */
+    const faceCrane = (x, z) => Math.atan2(CRANE.x - x, CRANE.z - z);
+
     const pickBoard = buildSign(geo, mat, {
-      text: `PICK UP — ${lift.label}`, kind: "info", height: 2.8, width: 1.5,
+      text: "PICK UP", kind: "warning", height: 4.2, width: 2.6,
     });
-    pickBoard.position.set(lift.pick.x, 0, lift.pick.z + 3.2);
+    pickBoard.position.set(lift.pick.x, 0, lift.pick.z + 3.4);
+    pickBoard.rotation.y = faceCrane(lift.pick.x, lift.pick.z + 3.4);
     scene.add(pickBoard);
+    // Painted deck panel, read from above.
+    scene.add(box(geo, mat.yellow, 5.4, 0.04, 5.4, lift.pick.x, 0.03, lift.pick.z, { shadow: false }));
+    scene.add(box(geo, mat.black, 4.4, 0.05, 4.4, lift.pick.x, 0.04, lift.pick.z, { shadow: false }));
 
     const landBoard = buildSign(geo, mat, {
-      text: `LAND HERE — LEVEL ${(lift.target.floor ?? 0) + 1}`,
-      kind: "info", height: 2.6, width: 1.5,
+      text: `LAND LEVEL ${(lift.target.floor ?? 0) + 1}`, kind: "warning", height: 4.0, width: 2.6,
     });
-    landBoard.position.set(lift.target.x, targetY, lift.target.z + 3.2);
+    landBoard.position.set(lift.target.x, targetY, lift.target.z + 3.4);
+    landBoard.rotation.y = faceCrane(lift.target.x, lift.target.z + 3.4);
     scene.add(landBoard);
+    scene.add(box(geo, mat.yellow, 5.4, 0.04, 5.4, lift.target.x, targetY + 0.03, lift.target.z, { shadow: false }));
+    scene.add(box(geo, mat.black, 4.4, 0.05, 4.4, lift.target.x, targetY + 0.04, lift.target.z, { shadow: false }));
 
     return {
       ...lift,
@@ -1320,6 +1336,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   if (lifts[0]) lifts[0].pickRing.visible = true;
   state.lastHookPos.copy(hookWorldPosition(_hook));
 
+  // Every rigged figure in the world, gathered once.
+  const people = collectWorkers(scene);
+
   stage.start((dt) => {
     if (state.paused) return;
 
@@ -1388,6 +1407,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       hudAccumulator = 0;
       pushHud();
     }
+
+    // Nobody on this site stands perfectly still.
+    idleWorkers(people, stage.elapsed);
 
     input.endFrame();
   });

@@ -27,6 +27,7 @@ import {
   buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadder,
   buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
   buildZoneMarker, buildAriaMark, buildBrandedTower, poseWorker, buildKey,
+  collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
@@ -149,6 +150,48 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ----------------------------- geometry ----------------------------- */
 
+  /** Offcuts falling through the slab opening on the construction floor. */
+  const fallingDebris = [];
+  let debrisDust = null;
+
+  const centreZOf = (room) => (room.z0 + room.z1) / 2;
+
+  /**
+   * Drops the offcuts, over and over.
+   *
+   * Each one falls under gravity from the deck, lands, puffs dust and
+   * waits out the rest of its period before going again, so three of
+   * them on different periods read as work going on above rather than
+   * as a looping animation.
+   */
+  function updateFallingDebris(dt) {
+    if (!fallingDebris.length) return;
+    let landedNow = false;
+    for (const d of fallingDebris) {
+      d.t += dt;
+      if (d.t > d.period) d.t -= d.period;
+      // Time to fall `top` metres at 9.8 m/s^2.
+      const fallTime = Math.sqrt((2 * d.top) / 9.8);
+      if (d.t <= fallTime) {
+        const y = d.top - 0.5 * 9.8 * d.t * d.t;
+        d.object.visible = true;
+        d.object.position.set(d.x, Math.max(0.07, y), d.z);
+        d.object.rotation.x = d.t * d.spin;
+        d.object.rotation.z = d.t * d.spin * 0.6;
+        if (!d.landed && y <= 0.1) { d.landed = true; landedNow = true; }
+      } else {
+        d.object.visible = false;
+        d.landed = false;
+      }
+    }
+    if (debrisDust) {
+      if (landedNow) { debrisDust.visible = true; debrisDust.userData.until = stage.elapsed + 0.5; }
+      else if (debrisDust.visible && stage.elapsed > (debrisDust.userData.until || 0)) {
+        debrisDust.visible = false;
+      }
+    }
+  }
+
   // Held so the overhead view can hide them and show the floor as an
   // evacuation plan — which is the only way an aerial of an interior
   // shows anything at all.
@@ -195,12 +238,41 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       (room.x0 + room.x1) / 2, -0.15, centreZ);
     scene.add(floorMesh);
 
-    // Ceiling, so the space feels like a room.
-    const ceiling = box(geo, mat.plasterCeiling,
-      room.x1 - room.x0, 0.3, room.z1 - room.z0,
-      (room.x0 + room.x1) / 2, WALL_HEIGHT + 0.15, centreZ);
-    scene.add(ceiling);
-    ceilings.push(ceiling);
+    /* The construction floor has NO CEILING. Its whole scenario is
+     * "an open floor with overhead work and a crane lifting above it",
+     * and you cannot ask somebody what PPE they need for overhead work
+     * in a room with a plasterboard lid on it. It is left open to the
+     * dark structure above, which is also what makes it the one area
+     * that feels unfinished rather than fitted out. */
+    const openToAbove = room.key === "ppe";
+
+    if (!openToAbove) {
+      const ceiling = box(geo, mat.plasterCeiling,
+        room.x1 - room.x0, 0.3, room.z1 - room.z0,
+        (room.x0 + room.x1) / 2, WALL_HEIGHT + 0.15, centreZ);
+      scene.add(ceiling);
+      ceilings.push(ceiling);
+    } else {
+      // The soffit of the floor above, two storeys up, with the slab
+      // edge the material is being landed over left open.
+      const w = room.x1 - room.x0;
+      const d = room.z1 - room.z0;
+      const SOFFIT = WALL_HEIGHT + 5.4;
+      [[-d * 0.34, d * 0.32], [d * 0.34, d * 0.32]].forEach(([oz, dz]) => {
+        scene.add(box(geo, mat.concreteDark, w, 0.42, dz,
+          (room.x0 + room.x1) / 2, SOFFIT, centreZ + oz, { shadow: false }));
+      });
+      // Downstand beams, so looking up reads as a structure.
+      for (let i = 0; i <= 3; i++) {
+        scene.add(box(geo, mat.concreteDark, 0.44, 0.6, d,
+          room.x0 + (i * w) / 3, SOFFIT - 0.5, centreZ, { shadow: false }));
+      }
+      // Walls continue up past head height into the dark.
+      [room.z0, room.z1].forEach((wz) => {
+        scene.add(box(geo, mat.concreteDark, w, SOFFIT - WALL_HEIGHT, 0.28,
+          (room.x0 + room.x1) / 2, (SOFFIT + WALL_HEIGHT) / 2, wz, { shadow: false }));
+      });
+    }
 
     // Skirting, and a strip light down the middle of each room. Both are
     // what stop a white box from reading as an empty white box.
@@ -208,10 +280,24 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       scene.add(box(geo, mat.skirting, room.x1 - room.x0, 0.12, 0.06,
         (room.x0 + room.x1) / 2, 0.06, wz + (wz === room.z0 ? 0.18 : -0.18), { shadow: false }));
     });
-    const lightRuns = Math.max(1, Math.round((room.x1 - room.x0) / 7));
-    for (let i = 0; i < lightRuns; i++) {
-      const lx = room.x0 + ((i + 0.5) * (room.x1 - room.x0)) / lightRuns;
-      scene.add(box(geo, mat.white, 2.6, 0.08, 0.22, lx, WALL_HEIGHT - 0.08, centreZ, { shadow: false }));
+    if (!openToAbove) {
+      const lightRuns = Math.max(1, Math.round((room.x1 - room.x0) / 7));
+      for (let i = 0; i < lightRuns; i++) {
+        const lx = room.x0 + ((i + 0.5) * (room.x1 - room.x0)) / lightRuns;
+        scene.add(box(geo, mat.white, 2.6, 0.08, 0.22, lx, WALL_HEIGHT - 0.08, centreZ, { shadow: false }));
+      }
+    } else {
+      // No fitted lighting here yet — a couple of festoon lamps on a
+      // drop, which is what leaves the rest of it dark.
+      const w = room.x1 - room.x0;
+      for (let i = 0; i < 2; i++) {
+        const lx = room.x0 + ((i + 0.5) * w) / 2;
+        scene.add(cylinder(geo, mat.black, 0.012, 1.6, lx, WALL_HEIGHT + 0.6, centreZ, { shadow: false }));
+        const lamp = new THREE.Mesh(geo.sphere, mat.lobbyGlow);
+        lamp.scale.setScalar(0.26);
+        lamp.position.set(lx, WALL_HEIGHT - 0.2, centreZ);
+        scene.add(lamp);
+      }
     }
 
     // North and south walls (full length).
@@ -475,6 +561,71 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     worker.rotation.y = 1.2;
     scene.add(worker);
     animated.push({ kind: "worker", object: worker, phase: 1 });
+
+    /* ---- the overhead work, and what comes off it ----
+     *
+     * This is the room that asks what PPE you need to cross a floor
+     * with people working above it. The answer is only obvious if you
+     * can SEE the thing above you and watch material come off it, so
+     * there is a man on the deck two storeys up and a steady trickle
+     * of offcuts dropping through the slab opening onto the exclusion
+     * zone below.
+     *
+     * The drop zone is marked and it is on your route, which is the
+     * point: you cannot get to the far door without crossing under it.
+     */
+    const DECK_Y = WALL_HEIGHT + 4.6;
+    const dropX = room.x0 + 11.5;
+    const dropZ = centreZOf(room);
+
+    // The deck above, its open edge, and the man working at it.
+    scene.add(box(geo, mat.plywood, 5.5, 0.22, 4.2, dropX + 1.6, DECK_Y, dropZ, { shadow: false }));
+    scene.add(buildGuardrail(mat, {
+      x: dropX + 1.6, y: DECK_Y + 0.11, z: dropZ - 2.1, length: 5.5, axis: "x", compliant: true,
+    }).group);
+    const above = buildWorker(geo, mat, {
+      helmet: true, vest: true, harness: true, pose: "work", detail: "low",
+    });
+    above.position.set(dropX + 2.2, DECK_Y + 0.11, dropZ + 0.6);
+    above.rotation.y = -2.2;
+    scene.add(above);
+
+    // The exclusion zone it all lands in.
+    const dropZone = buildZoneMarker(mat, { radius: 2.1 });
+    dropZone.position.set(dropX, 0.03, dropZ);
+    scene.add(dropZone);
+    const overheadSign = buildSign(geo, mat, {
+      text: "DANGER — OVERHEAD WORK", kind: "warning", height: 2.3, width: 1.1,
+    });
+    overheadSign.position.set(dropX - 2.6, 0, dropZ);
+    overheadSign.rotation.y = -Math.PI / 2;
+    scene.add(overheadSign);
+
+    // Three offcuts on their own cycles, so it is a trickle and not a
+    // metronome. They are scenery: they cannot actually hit you, and
+    // the mission does not punish you for standing there — the lesson
+    // is the PPE question at the door, not a reflex test.
+    for (let i = 0; i < 3; i++) {
+      const debris = box(geo, mat.timber, 0.5 + i * 0.18, 0.09, 0.14, 0, 0, 0);
+      debris.castShadow = false;
+      scene.add(debris);
+      fallingDebris.push({
+        object: debris,
+        x: dropX + (i - 1) * 0.75,
+        z: dropZ + (i === 1 ? 0.7 : -0.5),
+        top: DECK_Y - 0.2,
+        t: i * 1.9,
+        period: 4.6 + i * 1.3,
+        spin: 2.4 + i,
+      });
+    }
+
+    // The dust each one kicks up when it lands.
+    const dust = buildPuddle(geo, mat, { radius: 1.1 });
+    dust.position.set(dropX, 0.04, dropZ);
+    dust.visible = false;
+    scene.add(dust);
+    debrisDust = dust;
 
     [[room.x0 + 6, room.z0 + 3], [room.x0 + 11, room.z1 - 5]].forEach(([cx, cz]) => {
       const cone = buildCone(geo, mat, {});
@@ -745,6 +896,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     helmet: true, vest: true, boots: true, helmetColor: "orange",
   });
   avatar.visible = false;
+  // Posed from the controller every frame, so the crowd animator
+  // must leave it alone.
+  avatar.userData.selfAnimated = true;
   scene.add(avatar);
   let walkPhase = 0;
 
@@ -1217,6 +1371,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* -------------------------------- loop -------------------------------- */
 
+  // Every rigged figure in the world, gathered once.
+  const people = collectWorkers(scene);
+
   stage.start((dt) => {
     if (state.paused) return;
 
@@ -1263,6 +1420,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
 
     updateKeys(dt);
+    updateFallingDebris(dt);
     updateAvatar(dt);
     planView.update(dt, input, () => controller.syncCamera());
 
@@ -1332,6 +1490,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       pushHud();
     }
 
+    // Nobody on this site stands perfectly still.
+    idleWorkers(people, stage.elapsed);
+
     input.endFrame();
   });
 
@@ -1383,6 +1544,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     __test: {
       zoomFov: () => camera.fov,
       state, controller, interactables, doors, rooms, ceilings, avatar,
+      fallingDebris, updateFallingDebris,
       keys, spawnKey, collectKey, hasKey, keyFor, useDoor, doorFor, unlockDoor,
       get planBlend() { return planView.blend; },
       get fire() { return fire; },

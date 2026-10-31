@@ -36,6 +36,7 @@ import {
   buildTowerCrane, updateHoistRope, buildWorker, buildCone, buildSign,
   buildFireExtinguisher, buildElectricalPanel, buildMaterialPallet,
   buildSiteHut, buildBarrier, buildZoneMarker, buildCableRun, buildPuddle, poseWorker,
+  collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PHASES, SCORING, pickScenario } from "./scenarios.js";
@@ -622,8 +623,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   const cam = {
     yaw: 2.4,
-    pitch: -0.34,
-    distance: scenario.scene === "fall" ? 24 : 26,
+    // Over the shoulder rather than a drone shot. At 26 m the
+    // commander was a speck and you could not tell which way they
+    // were facing, which is most of why the walking read wrong.
+    pitch: -0.30,
+    distance: scenario.scene === "fall" ? 15 : 14,
     target: incident.position.clone(),
     desired: incident.position.clone(),
   };
@@ -653,6 +657,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const avatar = buildWorker(geo, mat, {
     helmet: true, vest: true, boots: true, role: "officer",
   });
+  // Posed from the controller every frame, so the crowd animator
+  // must leave it alone.
+  avatar.userData.selfAnimated = true;
   scene.add(avatar);
   let walkPhase = 0;
 
@@ -667,7 +674,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const moving = commander.moving;
     walkPhase += dt * (commander.state.running ? 11 : 7.4) * (moving ? 1 : 0);
     avatar.position.set(commander.position.x, commander.position.y, commander.position.z);
-    if (moving) avatar.rotation.y = Math.atan2(commander.velocity.x, commander.velocity.z);
+    // Turn toward the way they are travelling rather than snapping,
+    // so a change of direction reads as a person turning.
+    if (moving) {
+      let d = commander.heading - avatar.rotation.y;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      avatar.rotation.y += d * Math.min(1, dt * 9);
+    }
     poseWorker(avatar, {
       phase: walkPhase, moving, running: commander.state.running, pose: "stand",
     });
@@ -684,7 +698,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     cam.pitch -= look.dy * 0.003;
     cam.pitch = Math.max(-1.1, Math.min(0.2, cam.pitch));
     const wheel = input.consumeWheel();
-    if (wheel) cam.distance = Math.max(10, Math.min(70, cam.distance + wheel * 0.03));
+    if (wheel) cam.distance = Math.max(6, Math.min(70, cam.distance + wheel * 0.03));
 
     // After acting on a station the camera eases in on it, so the
     // player sees the consequence of what they just did.
@@ -693,11 +707,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       if (Math.abs(cam.distance - cam.observeDistance) < 0.4) cam.observeDistance = 0;
     }
 
-    cam.target.lerp(cam.desired, Math.min(1, dt * 2.2));
+    // Follows closely: a lagging camera on a walking character reads
+    // as the character sliding rather than walking.
+    cam.target.lerp(cam.desired, Math.min(1, dt * 6));
     const horizontal = Math.cos(cam.pitch) * cam.distance;
     camera.position.set(
       cam.target.x + Math.sin(cam.yaw) * horizontal,
-      cam.target.y + 3 - Math.sin(cam.pitch) * cam.distance,
+      cam.target.y + 1.6 - Math.sin(cam.pitch) * cam.distance,
       cam.target.z + Math.cos(cam.yaw) * horizontal
     );
     camera.lookAt(cam.target);
@@ -1052,6 +1068,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     api.toast("Take command. Find the command post and work the response.", "warn");
   }, 3400);
 
+  // Every rigged figure in the world, gathered once.
+  const people = collectWorkers(scene);
+
   stage.start((dt) => {
     if (state.paused) return;
 
@@ -1096,8 +1115,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // at whatever the current step is about. Wheel and pinch still give
     // fine control; this is the one-tap version for a phone.
     if (input.wasPressed("zoom")) {
-      const close = cam.observeDistance || 14;
-      cam.distance = cam.distance > close + 6 ? close : 36;
+      const close = cam.observeDistance || 9;
+      cam.distance = cam.distance > close + 6 ? close : 30;
       sfx.click();
     }
 
@@ -1188,6 +1207,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       sun.target.position.set(cam.target.x, 0, cam.target.z);
       sun.target.updateMatrixWorld();
     }
+
+    // Nobody on this site stands perfectly still.
+    idleWorkers(people, stage.elapsed);
 
     input.endFrame();
   });

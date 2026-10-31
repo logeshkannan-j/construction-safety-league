@@ -331,6 +331,53 @@ peak and ridge, vest braces — while keeping the whole skeleton, so a crowd sti
 walks properly. After the joint baking its saving is in triangles rather than
 draw calls. The sixteen workers who evacuate in Emergency Response use it.
 
+### The face, and why it was blank
+
+Every feature sits PROUD of the skull. The first attempt put the eyes at
+z = 0.093 inside a skull that reaches 0.101, so they were buried and the face
+was blank. There is now a flat face plate at the skull front with a brow ridge,
+eye whites with dark irises standing in front of them, brows, a two-part nose
+and a mouth — and `tests/arena-games.test.mjs` raycasts each one to assert it is
+the FRONTMOST surface, which is the only check that would have caught it.
+
+The hard hat has been wrong twice: first a brim 2.4× the width of the skull,
+then a shell big enough to swallow the eyes with the brim slicing across the
+face between the eyes and the nose. It is now pinned to two constants,
+`HAT_BOTTOM = 0.05` and `HAT_TOP = 0.185`, both above the brow at 0.047, so
+nothing of it can come down over the face.
+
+The white slab on the chest was the vest braces: 0.042 × 0.2 × **0.3 m**, deeper
+than the whole chest, so they stood proud of the vest front *and* back. They are
+18 mm of tape lying on the surface now, front and back separately.
+
+### Nobody stands still
+
+`poseWorker` takes `t` — elapsed seconds — and layers an idle on top of whatever
+pose is set: a breath, a weight shift, a sway and a slow glance, on four
+different periods so the loop never becomes visible. Every figure gets a random
+`idleOffset`, because a yard of people breathing in unison is worse than none
+breathing at all.
+
+`collectWorkers(scene)` gathers every rigged figure once and `idleWorkers(list,
+t)` runs them, one line in each game's frame loop. The player's own avatar sets
+`selfAnimated` so the crowd animator leaves it alone. The idle re-applies each
+figure's stored `pose`, so somebody set to "work" is still working.
+
+### Which way a body faces
+
+Two different right answers, and they must not be confused. In the first-person
+missions the body faces where the player is **looking** — that is what strafing
+is. In the two missions with an orbit camera there is no look direction to face,
+because the camera yaw sits still while the player walks about underneath it, so
+the body faces the way it is **travelling**.
+
+The travelling case was broken: the avatar was turned with `atan2` of the
+controller's `velocity`, but velocity only ever carries the vertical component —
+gravity and jumping — so it was `atan2(0, 0)` = 0 every frame and the character
+walked due south while sliding in whatever direction it was actually going. The
+controller now tracks a real `heading` from the movement it applies, and the
+avatar turns toward it rather than snapping.
+
 ### Moving, in all five missions
 
 Every mission has a joystick:
@@ -644,9 +691,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 927 assertions with no browser required, across four suites.
+`npm test` runs 973 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (599 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (645 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of

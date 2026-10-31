@@ -24,6 +24,7 @@ import {
   buildBarrier, buildSign, buildFireExtinguisher, buildElectricalPanel,
   buildExcavation, buildMaterialPallet, buildDebris, buildCableRun, buildPuddle,
   buildPPEStation, buildMaterialHoist, buildZoneMarker, buildSiteHut, makeHighlight, poseWorker,
+  collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { HAZARDS, SCORING, categoryOptions, actionOptions } from "./hazards.js";
@@ -693,6 +694,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     helmet: true, vest: true, boots: true, role: "officer",
   });
   avatar.visible = false;
+  // Posed from the controller every frame, so the crowd animator
+  // must leave it alone.
+  avatar.userData.selfAnimated = true;
   scene.add(avatar);
   let walkPhase = 0;
 
@@ -1013,6 +1017,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
   }
 
+  // Every rigged figure in the world, gathered once.
+  const people = collectWorkers(scene);
+
   stage.start((dt) => {
     if (state.paused) return;
 
@@ -1083,6 +1090,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       hudAccumulator = 0;
       pushHud();
     }
+
+    // Nobody on this site stands perfectly still.
+    idleWorkers(people, stage.elapsed);
 
     input.endFrame();
   });
