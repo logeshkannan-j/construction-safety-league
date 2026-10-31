@@ -52,7 +52,7 @@ export const STATIONS = [
       "The first thing a commander does is take a position where they can see the incident and "
       + "stay out of it. A commander inside the hazard is another casualty.",
     effects: { control: 18 },
-    ta: { label: "கட்டளை மையம்", action: "பொறுப்பேற்கவும்" },
+    ta: { prompt: "பாதுகாப்பான இடத்தில் நின்று பொறுப்பேற்கவும்", label: "கட்டளை மையம்", action: "பொறுப்பேற்கவும்" },
   },
   {
     id: "alarm",
@@ -66,7 +66,7 @@ export const STATIONS = [
       "The alarm is the highest-value action available to you, and it is almost free. Raise it "
       + "before you do anything clever.",
     effects: { control: 14, evacuation: 10 },
-    ta: { label: "அலாரம் பட்டன்", action: "அலாரம் அடிக்கவும்" },
+    ta: { prompt: "அலாரம் அடித்து அனைவரையும் எச்சரிக்கவும்", label: "அலாரம் பட்டன்", action: "அலாரம் அடிக்கவும்" },
   },
   {
     id: "isolate",
@@ -80,7 +80,7 @@ export const STATIONS = [
       "Isolate from outside the hazard. Sending somebody in to throw a switch is how the second "
       + "casualty happens.",
     effects: { control: 16, casualty: 4 },
-    ta: { label: "மின் இணைப்புப் பலகை", action: "மின்சாரம் நிறுத்தவும்" },
+    ta: { prompt: "தளத்தின் மின் இணைப்பை நிறுத்தவும்", label: "மின் இணைப்புப் பலகை", action: "மின்சாரம் நிறுத்தவும்" },
   },
   {
     id: "evacuate",
@@ -94,7 +94,7 @@ export const STATIONS = [
       "Evacuation is not finished when people leave the building. It is finished when somebody "
       + "has counted them and knows who is missing.",
     effects: { control: 10, evacuation: 55 },
-    ta: { label: "ஒன்றுகூடும் இடம்", action: "வெளியேற்றவும்" },
+    ta: { prompt: "அனைவரையும் ஒன்றுகூடும் இடத்திற்கு அனுப்பவும்", label: "ஒன்றுகூடும் இடம்", action: "வெளியேற்றவும்" },
   },
   {
     id: "cordon",
@@ -108,7 +108,7 @@ export const STATIONS = [
       "A cordon stops the curious and the helpful from becoming casualties. Set it wide — you can "
       + "always bring it in later.",
     effects: { control: 18 },
-    ta: { label: "தடுப்பு வேலி", action: "தடுப்பு அமைக்கவும்" },
+    ta: { prompt: "கூம்புகளை வைத்து ஆபத்து மண்டலத்தைச் சுற்றி வளைக்கவும்", label: "தடுப்பு வேலி", action: "தடுப்பு அமைக்கவும்" },
   },
   {
     id: "casualty",
@@ -122,7 +122,7 @@ export const STATIONS = [
       "You send the trained responder. You do not go yourself, and you do not send willing "
       + "volunteers into a hazard they are not equipped for.",
     effects: { casualty: 26, control: 6 },
-    ta: { label: "முதலுதவி மையம்", action: "முதலுதவியாளரை அனுப்பவும்" },
+    ta: { prompt: "முதலுதவி நிலையத்திலிருந்து உதவியை அழைக்கவும்", label: "முதலுதவி மையம்", action: "முதலுதவியாளரை அனுப்பவும்" },
   },
   {
     id: "services",
@@ -136,7 +136,7 @@ export const STATIONS = [
       "Call with what you know now and update them later. Never delay the call to make the "
       + "information better.",
     effects: { casualty: 20, control: 12 },
-    ta: { label: "தள ரேடியோ", action: "அவசர சேவையை அழைக்கவும்" },
+    ta: { prompt: "ரேடியோவில் அவசர சேவைக்கு அழைக்கவும்", label: "தள ரேடியோ", action: "அவசர சேவையை அழைக்கவும்" },
   },
   {
     id: "meet",
@@ -150,7 +150,7 @@ export const STATIONS = [
       "An ambulance that cannot find the entrance is an ambulance that is not treating anybody. "
       + "Somebody meets them, every time.",
     effects: { casualty: 14, control: 16 },
-    ta: { label: "அவசர வாகன வாயில்", action: "சேவையினரை வரவேற்கவும்" },
+    ta: { prompt: "வரும் அவசர வாகனத்தை வாயிலில் வரவேற்று உள்ளே கொண்டு வரவும்", label: "அவசர வாகன வாயில்", action: "சேவையினரை வரவேற்கவும்" },
   },
 ];
 

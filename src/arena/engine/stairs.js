@@ -16,6 +16,9 @@
  *     tread — no further, so the player always has floor to step onto
  *   - the void is railed on three sides, leaving the top of the flight
  *     as the only opening, so nobody falls down the stairwell
+ *   - the flight itself is railed on BOTH sides for its whole length,
+ *     and those rails carry collision: a stair you can walk off
+ *     sideways halfway up is not a stair
  * ------------------------------------------------------------------ */
 
 export const STAIR = {
@@ -27,6 +30,11 @@ export const STAIR = {
   // controller's standing height plus a little slack.
   headroom: 1.85,
   bodyRadius: 0.34,
+  // Handrail height above the pitch line, and how thick the balustrade
+  // is. 1.0 m is the usual stair-rail height; the site guardrails
+  // elsewhere are 1.1 m because they protect a flat edge.
+  railHeight: 1.0,
+  railThickness: 0.14,
 };
 
 /**
@@ -112,12 +120,89 @@ export function stairFlight({
     railRuns,
     xStart,
     xEnd,
+    baseY,
+    rise,
     topY,
     going,
     treadRise,
+    width,
     entry: { x: xStart - 0.8, z: zCenter },
     exit: { x: xEnd + 0.8, z: zCenter },
   };
+}
+
+/**
+ * The balustrade for one flight: a handrail on each side, running the
+ * whole length of the pitch.
+ *
+ * Returns both the visual parts and the collision runs, because the two
+ * are not the same shape. A handrail is a thin sloping tube; making a
+ * collider out of it would let the player's feet pass under it and walk
+ * off the side of the flight. So the collision is a stepped wall — a few
+ * axis-aligned boxes following the pitch, each from the tread it starts
+ * on up to rail height — which is what actually keeps a body on the
+ * stair.
+ *
+ * `parts` entries are box descriptors for the kit's merger, in the same
+ * local space as the flight. `colliders` entries are plain boxes,
+ * already centred, with no rotation.
+ */
+export function stairRails(flight, { segments = 4, posts = 5 } = {}) {
+  const parts = [];
+  const colliders = [];
+  if (!flight || !flight.going) return { parts, colliders };
+
+  const width = flight.width || STAIR.width;
+  const halfW = width / 2;
+  const h = STAIR.railHeight;
+  const t = STAIR.railThickness;
+  const baseY = flight.baseY || 0;
+  const rise = flight.rise != null ? flight.rise : flight.topY - baseY;
+  const zCenter = flight.treads.length ? flight.treads[0].z : 0;
+
+  // Height of the pitch line at a position along the flight.
+  const pitchAt = (x) => baseY + rise * Math.min(1, Math.max(0, (x - flight.xStart) / flight.going));
+
+  const slope = Math.atan2(rise, flight.going);
+  const diagonal = Math.hypot(rise, flight.going);
+
+  [-1, 1].forEach((side) => {
+    const z = zCenter + side * halfW;
+
+    // Top rail and mid rail, sloping with the flight.
+    [h, h * 0.55].forEach((offset) => {
+      parts.push({
+        w: diagonal, h: 0.07, d: 0.07,
+        x: (flight.xStart + flight.xEnd) / 2,
+        y: baseY + rise / 2 + offset,
+        z,
+        rotZ: slope,
+      });
+    });
+
+    // Newel posts, vertical, standing on the pitch line.
+    for (let i = 0; i < posts; i += 1) {
+      const px = flight.xStart + (flight.going * i) / (posts - 1);
+      parts.push({
+        w: 0.08, h: h + 0.04, d: 0.08,
+        x: px, y: pitchAt(px) + (h + 0.04) / 2, z,
+      });
+    }
+
+    // The collision wall: a few boxes stepping up the pitch.
+    for (let sgn = 0; sgn < segments; sgn += 1) {
+      const x0 = flight.xStart + (flight.going * sgn) / segments;
+      const x1 = flight.xStart + (flight.going * (sgn + 1)) / segments;
+      const yLow = pitchAt(x0);
+      const yHigh = pitchAt(x1) + h;
+      colliders.push({
+        x: (x0 + x1) / 2, y: (yLow + yHigh) / 2, z,
+        w: x1 - x0, h: yHigh - yLow, d: t,
+      });
+    }
+  });
+
+  return { parts, colliders };
 }
 
 /**
@@ -138,6 +223,12 @@ export function validateFlight(flight, stepHeight = 0.45) {
   }
   if (flight.voidRect.d < STAIR.width) {
     problems.push("the void is narrower than the flight");
+  }
+  // The balustrade must not close the flight up. The clear width is the
+  // flight width less half a balustrade on each side.
+  const clear = (flight.width || STAIR.width) - STAIR.railThickness;
+  if (clear < STAIR.bodyRadius * 2 + 0.4) {
+    problems.push(`the handrails leave only ${clear.toFixed(2)} m clear — a body needs ${(STAIR.bodyRadius * 2 + 0.4).toFixed(2)} m`);
   }
   return problems;
 }

@@ -28,6 +28,7 @@ import {
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { HAZARDS, SCORING, categoryOptions, actionOptions } from "./hazards.js";
+import { t, tAlt, getLang, onLangChange } from "../../language.js";
 
 /* ============================== metadata ============================== */
 
@@ -95,6 +96,28 @@ const BUILDING = { x: -10, z: 10, width: 18, depth: 14, floors: 4, floorHeight: 
 const BASE_MISSION_SECONDS = 420;
 
 /* ============================== the game ============================== */
+
+/* The wording of the two inspection steps, in the same English-first
+ * shape as every other bilingual record in the project. Both lines are
+ * shown on the dialog at once. */
+const STEP_TEXT = {
+  identify: {
+    title: "What is the primary hazard here?",
+    footer: "Classify it first, then decide what to do about it.",
+    ta: {
+      title: "இங்கு உள்ள முதன்மை ஆபத்து எது?",
+      footer: "முதலில் வகைப்படுத்தவும், பிறகு என்ன செய்வது என்று தீர்மானிக்கவும்.",
+    },
+  },
+  action: {
+    title: "What corrective action do you take?",
+    footer: "Pick the control that actually removes the risk.",
+    ta: {
+      title: "இதைச் சரிசெய்ய என்ன நடவடிக்கை எடுப்பீர்கள்?",
+      footer: "ஆபத்தை உண்மையிலேயே நீக்கும் கட்டுப்பாட்டைத் தேர்ந்தெடுக்கவும்.",
+    },
+  },
+};
 
 export function create({ container, difficulty, quality, settings, mobile, api }) {
   const stage = createStage(container, { quality, fov: mobile ? 76 : 72 });
@@ -731,6 +754,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     finished: false,
     paused: false,
     dialogOpen: false,
+    // Which question is on screen, so switching language repaints it.
+    openDialog: null,
     target: null,
     highlight: null,
     lastPromptId: null,
@@ -826,20 +851,27 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
   }
 
-  function openIdentifyDialog(hazard) {
+  /* `options` is passed back in when the dialog is simply being
+   * repainted — switching language must not reshuffle the answers
+   * under the player's finger. */
+  function openIdentifyDialog(hazard, options = categoryOptions(hazard.data), quiet = false) {
     state.dialogOpen = true;
     controller.setFrozen(true);
-    sfx.interact();
-    const options = categoryOptions(hazard.data);
+    if (!quiet) sfx.interact();
+    state.openDialog = { step: "identify", hazard, options };
 
+    const lang = getLang();
     api.dialog({
       eyebrow: "HAZARD INSPECTION — STEP 1 OF 2",
-      title: "What is the primary hazard here?",
-      subtitle: hazard.data.detail,
+      title: t(STEP_TEXT.identify, "title", lang),
+      titleAlt: tAlt(STEP_TEXT.identify, "title", lang),
+      subtitle: t(hazard.data, "detail", lang),
+      subtitleAlt: tAlt(hazard.data, "detail", lang),
       tone: "normal",
       options: options.map((o, i) => ({
         id: o.id,
-        label: o.label,
+        label: lang === "ta" && o.labelTa ? o.labelTa : o.label,
+        labelAlt: lang === "ta" ? (o.labelTa ? o.label : "") : (o.labelTa || ""),
         badge: String.fromCharCode(65 + i),
       })),
       footer: `Correct classification +${SCORING.identify} · wrong answer ${SCORING.wrong}`,
@@ -861,16 +893,20 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
   }
 
-  function openActionDialog(hazard) {
-    const options = actionOptions(hazard.data);
+  function openActionDialog(hazard, options = actionOptions(hazard.data)) {
+    state.openDialog = { step: "action", hazard, options };
+    const lang = getLang();
     api.dialog({
       eyebrow: "HAZARD INSPECTION — STEP 2 OF 2",
-      title: "What corrective action do you take?",
-      subtitle: `${hazard.data.title} — ${hazard.data.category}`,
+      title: t(STEP_TEXT.action, "title", lang),
+      titleAlt: tAlt(STEP_TEXT.action, "title", lang),
+      subtitle: `${t(hazard.data, "title", lang)} — ${hazard.data.category}`,
+      subtitleAlt: tAlt(hazard.data, "title", lang),
       tone: "normal",
       options: options.map((o, i) => ({
         id: o.id,
-        label: o.label,
+        label: lang === "ta" && o.labelTa ? o.labelTa : o.label,
+        labelAlt: lang === "ta" ? (o.labelTa ? o.label : "") : (o.labelTa || ""),
         badge: String.fromCharCode(65 + i),
       })),
       footer: `Correct action +${SCORING.action} · wrong answer ${SCORING.wrong}`,
@@ -904,6 +940,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     setTarget(null);
     api.dialog(null);
     state.dialogOpen = false;
+    state.openDialog = null;
     controller.setFrozen(false);
 
     if (state.reported >= hazards.length) {
@@ -1017,6 +1054,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
   }
 
+  /* Switching language repaints whatever question is open, in the SAME
+   * answer order, so the toggle works mid-question. */
+  const stopLangWatch = onLangChange(() => {
+    const open = state.openDialog;
+    if (open?.step === "identify") openIdentifyDialog(open.hazard, open.options, true);
+    else if (open?.step === "action") openActionDialog(open.hazard, open.options);
+    pushHud(true);
+  });
+
   // Every rigged figure in the world, gathered once.
   const people = collectWorkers(scene);
 
@@ -1128,6 +1174,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     dispose() {
+      stopLangWatch();
       siteView.dispose();
       input.dispose();
       stage.dispose();

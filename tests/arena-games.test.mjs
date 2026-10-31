@@ -1436,6 +1436,87 @@ section("Run, jump and first person, everywhere but the cab");
   }
 }
 
+section("Every staircase can actually be walked up");
+
+/* The user's report was "the person going inside the staircase, he is
+ * not move up floor" — and in the Emergency Response mission that was
+ * literally true: the commander was given only the hoarding as
+ * collision, so the concrete frame and its stair core were scenery. You
+ * walked INTO the treads and straight out the far side of the building
+ * at ground level.
+ *
+ * So this walks every flight of every building a player can stand in,
+ * from the bottom to the top, and also pushes sideways while climbing
+ * to prove the handrails hold a body on the flight. */
+{
+  const STAIRCASES = [
+    // [game, how to reach its body, the building it stands in]
+    ["safetyMission", (t) => t.controller, { x: -10, z: 10, width: 18, depth: 14, floorHeight: 3.4, floors: 4 }],
+    ["emergencyCommander", (t) => t.walker, { x: -8, z: 6, width: 20, depth: 15, floorHeight: 3.4, floors: 4 }],
+  ];
+
+  /* The joystick values that send the player towards +x, which is the
+   * direction every flight climbs. It has to be derived from the yaw
+   * because in the third-person missions the camera owns the yaw and
+   * overwrites whatever a teleport set. */
+  const towardsPlusX = (yaw) => ({ mx: Math.cos(yaw), my: -Math.sin(yaw) });
+
+  for (const [path, pick, B] of STAIRCASES) {
+    const { instance } = await boot(path);
+    const body = pick(instance.__test);
+    const flightZ = B.z - B.depth / 2 + 2.1;
+    const xStart = B.x - B.width / 2 + 1.0;
+
+    const walkUp = (startZ, sideways = 0) => {
+      const baseY = 0;
+      const want = B.floorHeight;
+      body.teleport(xStart - 1.2, baseY + 0.05, startZ);
+      instance.input.setJoystick(0, 0);
+      runFrames(2);                        // let the game set the yaw
+      const { mx, my } = towardsPlusX(body.state.yaw);
+      for (let i = 0; i < 240; i += 1) {
+        // `sideways` pushes across the flight as well as up it.
+        instance.input.setJoystick(mx - sideways * my, my + sideways * mx);
+        runFrames(1);
+        if (body.position.y >= want - 0.05) break;
+      }
+      instance.input.setJoystick(0, 0);
+      return { y: body.position.y, z: body.position.z, want };
+    };
+
+    for (let f = 0; f < B.floors - 1; f += 1) {
+      const baseY = f * B.floorHeight;
+      const want = baseY + B.floorHeight;
+      body.teleport(xStart - 1.2, baseY + 0.05, flightZ);
+      instance.input.setJoystick(0, 0);
+      runFrames(2);
+      const { mx, my } = towardsPlusX(body.state.yaw);
+      for (let i = 0; i < 240; i += 1) {
+        instance.input.setJoystick(mx, my);
+        runFrames(1);
+        if (body.position.y >= want - 0.05) break;
+      }
+      instance.input.setJoystick(0, 0);
+      check(`${path}: the flight from Level ${f + 1} reaches Level ${f + 2}`,
+        body.position.y >= want - 0.05,
+        `ended at y=${body.position.y.toFixed(2)}, wanted ${want.toFixed(2)}`);
+    }
+
+    // Handrails. Pushed hard into the rail, the player must still get
+    // up, and must still be on the flight when they arrive.
+    for (const side of [-1, 1]) {
+      const r = walkUp(flightZ + side * 0.9, side * 0.45);
+      const offCentre = Math.abs(r.z - flightZ);
+      check(`${path}: leaning on the ${side < 0 ? "left" : "right"} handrail still climbs`,
+        r.y >= r.want - 0.05, `y=${r.y.toFixed(2)}`);
+      check(`${path}: the ${side < 0 ? "left" : "right"} handrail keeps them on the flight`,
+        offCentre < 1.0, `${offCentre.toFixed(2)} m off the centre line`);
+    }
+
+    instance.dispose();
+  }
+}
+
 section("First person and third person both work");
 
 {
@@ -1711,32 +1792,163 @@ section("Every 3D question is available in Tamil");
     }],
   ];
 
+  /* Both languages are on the panel at once now, so the toggle decides
+   * which one LEADS — the heading and the button text — and the other
+   * is the second line underneath. These read the two layers apart. */
+  const leadText = (d) => [d?.title, d?.subtitle,
+    ...(d?.options || []).map((o) => o.label)].filter(Boolean).join(" ");
+  const secondText = (d) => [d?.titleAlt, d?.subtitleAlt,
+    ...(d?.options || []).map((o) => o.labelAlt)].filter(Boolean).join(" ");
+
   for (const [path, open] of SCREENS) {
     lang.setLang("en");
     const { instance, record } = await boot(path);
     runFrames(5);
     open(instance, record);
     runFrames(2);
-    const english = JSON.stringify(record.dialog || {});
-    check(`${path}: the question is in English by default`,
-      !TAMIL.test(english) && english.length > 50, english.slice(0, 80));
+    check(`${path}: English leads by default`,
+      !TAMIL.test(leadText(record.dialog)) && leadText(record.dialog).length > 50,
+      leadText(record.dialog).slice(0, 80));
+    check(`${path}: the Tamil is on the panel underneath it`,
+      TAMIL.test(secondText(record.dialog)), secondText(record.dialog).slice(0, 80));
 
     lang.setLang("ta");
     runFrames(4);
-    const tamil = JSON.stringify(record.dialog || {});
-    check(`${path}: switching language redraws the open question in Tamil`,
-      TAMIL.test(tamil), tamil.slice(0, 120));
+    check(`${path}: switching language puts Tamil first`,
+      TAMIL.test(leadText(record.dialog)), leadText(record.dialog).slice(0, 120));
+    check(`${path}: and keeps the English underneath`,
+      /[A-Za-z]{4}/.test(secondText(record.dialog)), secondText(record.dialog).slice(0, 80));
     check(`${path}: it is still four options`,
       (record.dialog?.options || []).length === 4);
 
     lang.setLang("en");
     runFrames(4);
-    check(`${path}: switching back returns to English`,
-      !TAMIL.test(JSON.stringify(record.dialog || {})));
+    check(`${path}: switching back puts English first`,
+      !TAMIL.test(leadText(record.dialog)), leadText(record.dialog).slice(0, 80));
 
     instance.dispose();
   }
   lang.setLang("en");
+}
+
+section("Tamil is on the question itself, in every mission");
+
+/* The report was "in my picture there is no Tamil", on a question the
+ * player was looking straight at. Two things were wrong: the Safety
+ * Mission's hazard catalogue had no Tamil at all, and every dialog
+ * showed ONE language, so an English-set player had no way of knowing
+ * there was a translation to be had.
+ *
+ * The signs on this site have always shown both lines. The questions do
+ * now too, and this reads the dialog each mission actually renders and
+ * looks for Tamil in it — whichever language is selected. */
+{
+  const langMod = await import(`${SRC}/language.js`);
+  const TAMIL = /[஀-௿]/;
+
+  /** Every piece of text the dialog puts on screen, as one string. */
+  const dialogText = (d) => [
+    d?.title, d?.titleAlt, d?.subtitle, d?.subtitleAlt, d?.footer,
+    ...(d?.options || []).flatMap((o) => [o.label, o.labelAlt, o.desc]),
+  ].filter(Boolean).join(" · ");
+
+  /* Each mission, and how to get a question on screen in it. */
+  const OPENERS = {
+    safetyMission: (instance) => {
+      const { controller, hazards } = instance.__test;
+      const h = hazards[0];
+      controller.teleport(h.position.x, h.data.place.y, h.position.z + 1.6, 0);
+      controller.state.pitch = 0;
+      runFrames(3);
+      instance.input.press("interact");
+      runFrames(2);
+      instance.input.release("interact");
+      runFrames(2);
+    },
+    safestTower: (instance) => {
+      instance.__test.inspect(instance.__test.hazards[0]);
+      runFrames(2);
+    },
+    craneMaster: (instance) => {
+      const t = instance.__test;
+      t.raiseInterrupt(t.chosenInterrupt, { subject: t.lifts[0].group });
+      runFrames(2);
+    },
+    escapeChallenge: (instance) => {
+      const t = instance.__test;
+      const item = t.interactables.find((i) => i.key);
+      t.openPuzzle(item);
+      runFrames(2);
+    },
+    // The incident brief opens on its own when the mission starts.
+    emergencyCommander: () => runFrames(4),
+  };
+
+  for (const lang of ["en", "ta"]) {
+    langMod.setLang(lang);
+    for (const [path, open] of Object.entries(OPENERS)) {
+      const { instance, record } = await boot(path);
+      runFrames(6);
+      open(instance);
+      const text = dialogText(record.dialog);
+      check(`${path}: a question is on screen to read (${lang})`, text.length > 20,
+        `dialog text: ${text.slice(0, 80)}`);
+      check(`${path}: that question shows Tamil (${lang})`, TAMIL.test(text),
+        text.slice(0, 160));
+      // And the English has not been thrown away by switching.
+      check(`${path}: it shows the English too (${lang})`, /[A-Za-z]{4}/.test(text),
+        text.slice(0, 160));
+      instance.dispose();
+    }
+  }
+  langMod.setLang("en");
+}
+
+section("The Safety Mission hazard catalogue is bilingual");
+
+{
+  const TAMIL = /[஀-௿]/;
+  const H = await import(`${SRC}/games/safetyMission/hazards.js`);
+
+  const missing = H.HAZARDS.filter((h) => !h.ta?.title || !h.ta?.detail);
+  check("every hazard has a Tamil title and description", missing.length === 0,
+    missing.map((h) => h.id).join(", "));
+  check("those are actually Tamil",
+    H.HAZARDS.every((h) => TAMIL.test(h.ta.title) && TAMIL.test(h.ta.detail)));
+
+  const cats = Object.values(H.CATEGORIES);
+  const acts = Object.values(H.ACTIONS);
+  check("every classification has a Tamil equivalent",
+    cats.every((c) => TAMIL.test(H.CATEGORIES_TA[c] || "")),
+    cats.filter((c) => !H.CATEGORIES_TA[c]).join(", "));
+  check("every corrective action has a Tamil equivalent",
+    acts.every((a) => TAMIL.test(H.ACTIONS_TA[a] || "")),
+    acts.filter((a) => !H.ACTIONS_TA[a]).join(", "));
+
+  /* ---- and the answer cannot be picked out by its shape ----
+   *
+   * Measured before this was written: the correct corrective action was
+   * the LONGEST of the four options in 9 of the 10 hazards, because the
+   * right answer names the whole control while the distractors were
+   * one-line shortcuts. Picking the longest option scored 90%. */
+  const tells = [];
+  H.HAZARDS.forEach((h) => {
+    const sets = [
+      ["EN category", [h.category, ...h.categoryDecoys.slice(0, 3)]],
+      ["EN action", [h.action, ...h.actionDecoys.slice(0, 3)]],
+      ["TA category", [h.category, ...h.categoryDecoys.slice(0, 3)].map((c) => H.CATEGORIES_TA[c] || "")],
+      ["TA action", [h.action, ...h.actionDecoys.slice(0, 3)].map((a) => H.ACTIONS_TA[a] || "")],
+    ];
+    sets.forEach(([tag, list]) => {
+      const lens = list.map((x) => [...String(x)].length);
+      const others = lens.slice(1).sort((a, b) => a - b);
+      const mid = (others[0] + others[others.length - 1]) / 2;
+      if (Math.abs(lens[0] - mid) > 20) tells.push(`${tag}:${h.id}(${lens.join("/")})`);
+      if (lens[0] > others[others.length - 1] + 6) tells.push(`${tag}:${h.id} longest`);
+    });
+  });
+  check("the answer is not findable by length, in either language",
+    tells.length === 0, tells.join(" "));
 }
 
 section("Scene content");
@@ -2387,6 +2599,107 @@ section("Tower Crane Master — lift a load");
 
   instance.dispose();
   check("game 2 disposes without throwing", true);
+}
+
+section("The load lands on the terrace and will not sink through it");
+
+/* The report was "the top floor material lowering is not happening
+ * properly — it should stop on the terrace but it goes to the floor
+ * below", and it was true. The lift used to target an intermediate
+ * slab, which is physically impossible to lower onto in a finished
+ * frame, so the game suspended the roof as an obstacle and the bundle
+ * descended straight through it to rest a storey down.
+ *
+ * This drives the hoist all the way to its stop and measures where the
+ * underside of the load actually ends up. */
+{
+  const { instance } = await boot("craneMaster");
+  const {
+    state, lifts, loadWorldPosition, CRANE, BUILDING, frame, landingHeightForLoad,
+    interrupts, answerInterrupt,
+  } = instance.__test;
+  const input = instance.input;
+  const lift = lifts[0];
+  const terraceY = frame.floors[frame.floors.length - 1].y;
+  const floorBelow = frame.floors[frame.floors.length - 2].y;
+
+  runFrames(10);
+  check("the landing is the terrace, the top slab",
+    lift.target.floor === BUILDING.floors - 1 && Math.abs(lift.targetY - terraceY) < 0.001,
+    `floor ${lift.target.floor} at y=${lift.targetY}, terrace at y=${terraceY}`);
+  check("the brief says terrace", /terrace/i.test(lift.note), lift.note);
+
+  const bearingOf = (x, z) => Math.atan2(-(z - CRANE.z), x - CRANE.x);
+  const radiusOf = (x, z) => Math.hypot(x - CRANE.x, z - CRANE.z);
+
+  /** Hangs the load from the hook over (x, z) and lowers it to the stop. */
+  function lowerFullyOver(x, z) {
+    state.slew = bearingOf(x, z);
+    state.radius = radiusOf(x, z);
+    state.slewVel = 0;
+    state.radiusVel = 0;
+    state.hookY = 22;
+    state.attached = lift;
+    state.swing.set(0, 0);
+    state.swingVel.set(0, 0);
+    let lowest = Infinity;
+    input.press("hoistDown");
+    for (let i = 0; i < 1200; i += 1) {
+      runFrames(1);
+      // A safety situation halts the crane until it is dealt with, so
+      // the operator deals with it — otherwise this measures nothing
+      // but the fact that the lift was interrupted.
+      if (interrupts.open) {
+        answerInterrupt(interrupts.open.def.correct);
+        input.release("hoistDown");
+        runFrames(6);
+        input.press("hoistDown");
+      }
+      const base = loadWorldPosition().y - lift.baseOffset;
+      if (base < lowest) lowest = base;
+    }
+    input.release("hoistDown");
+    runFrames(5);
+    return { lowest, base: loadWorldPosition().y - lift.baseOffset };
+  }
+
+  // 1. Over the landing zone: it must come to rest ON the terrace.
+  const onTarget = lowerFullyOver(lift.target.x, lift.target.z);
+  check("lowering over the landing zone stops the load on the terrace",
+    Math.abs(onTarget.base - terraceY) < 0.08,
+    `underside came to rest at y=${onTarget.base.toFixed(3)}, terrace is y=${terraceY.toFixed(2)}`);
+  check("it never passes through the terrace on the way down",
+    onTarget.lowest > terraceY - 0.08,
+    `dipped to y=${onTarget.lowest.toFixed(3)}`);
+  check("it does not reach the floor below",
+    onTarget.lowest > floorBelow + 1,
+    `reached y=${onTarget.lowest.toFixed(3)}, the floor below is y=${floorBelow.toFixed(2)}`);
+
+  // 2. Over the building but away from the landing zone: the roof is a
+  //    solid obstruction, not a void to drop through.
+  const offTarget = lowerFullyOver(BUILDING.x + 5, BUILDING.z - 4);
+  check("away from the landing zone the terrace is solid",
+    offTarget.lowest > terraceY - 0.4,
+    `dipped to y=${offTarget.lowest.toFixed(3)} at a spot with no landing pad`);
+
+  // 3. Clear of the building the ground is the limit, so a load can
+  //    still be set down outside — the clamp is not a blanket ceiling.
+  const outside = lowerFullyOver(CRANE.x + 30, CRANE.z + 2);
+  check("clear of the building the load can still be set down",
+    outside.base < 1.2, `stopped at y=${outside.base.toFixed(3)}`);
+
+  // And the rule itself, read directly.
+  state.slew = bearingOf(lift.target.x, lift.target.z);
+  state.radius = radiusOf(lift.target.x, lift.target.z);
+  state.hookY = 22;
+  state.attached = lift;
+  state.swing.set(0, 0);
+  runFrames(2);
+  check("the lowering limit over the landing zone IS the terrace",
+    Math.abs(landingHeightForLoad() - terraceY) < 0.001,
+    `${landingHeightForLoad()}`);
+
+  instance.dispose();
 }
 
 /* ================================================================ *

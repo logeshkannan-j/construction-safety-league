@@ -110,3 +110,38 @@ export function tBoth(record, field) {
   const ta = t(record, field, "ta");
   return ta && ta !== en ? [en, ta] : [en];
 }
+
+/**
+ * The SAME field in the other language, for showing both at once.
+ *
+ * A toggle is not enough for a dialog. The signs on this site show
+ * English and Tamil together because the person who needs the Tamil is
+ * not going to go looking for a setting first — and a player who had
+ * not found the toggle reported, fairly, that "there is no Tamil".
+ * So every question now carries its translation underneath, with the
+ * player's chosen language on top.
+ *
+ * Returns "" when there is nothing to add, so the caller can simply
+ * skip the second line.
+ */
+export function tAlt(record, field, lang = current) {
+  const primary = t(record, field, lang);
+  const secondary = t(record, field, otherLang(lang));
+  return secondary && secondary !== primary ? secondary : "";
+}
+
+/**
+ * The option labels in the other language, aligned to the primary list.
+ *
+ * Falls back per LIST, like `tOptions`: if the two lists are not the
+ * same length there is no safe pairing, so nothing is added rather
+ * than risking an answer being shown against the wrong translation.
+ */
+export function tOptionsAlt(record, lang = current, field = "options") {
+  const primary = tOptions(record, lang, field);
+  const secondary = tOptions(record, otherLang(lang), field);
+  if (!Array.isArray(secondary) || secondary.length !== primary.length) {
+    return primary.map(() => "");
+  }
+  return secondary.map((s, i) => (s && s !== primary[i] ? s : ""));
+}

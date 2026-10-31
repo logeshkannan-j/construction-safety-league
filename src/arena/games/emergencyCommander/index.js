@@ -29,6 +29,7 @@ import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
+import { t, tAlt, getLang, onLangChange } from "../../language.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
@@ -670,9 +671,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    * It matters for this mission in particular: "take command from a
    * position of safety" means something once you can walk into the
    * wrong place.
+   *
+   * The structure is solid to them, too. It was not: the commander was
+   * only given the hoarding, so the concrete frame and its stair core
+   * were scenery — you walked INTO the staircase and stood inside the
+   * treads, and no amount of pushing forward took you to the floor
+   * above, because there was nothing to step onto.
    */
   const commander = createFirstPerson(camera, input, {
-    colliders: hoarding.colliders,
+    colliders: [...hoarding.colliders, ...frame.colliders, ...scaffold.colliders],
     spawn: { x: incident.position.x + 10, y: 0, z: incident.position.z + 14 },
     yaw: 0,
     // Jump and run are on in every mission except the crane, where
@@ -732,6 +739,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    * handed to the orbit camera above; switching to first person gives
    * both back to it, because an orbit camera cannot drive a head.
    */
+  /* Switching language repaints the brief and the objective line. */
+  const stopLangWatch = onLangChange(() => {
+    if (state.briefOpen) showBrief();
+    pushHud();
+  });
+
   function setFirstPerson(value) {
     state.firstPerson = !!value;
     commander.setOwnsView(state.firstPerson);
@@ -936,15 +949,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Stops the decision dialog's periodic timer re-render from
     // immediately painting over the brief.
     state.briefOpen = true;
+    const lang = getLang();
     api.dialog({
       eyebrow: "INCIDENT BRIEF",
-      title: scenario.title,
-      subtitle: scenario.brief,
+      title: t(scenario, "title", lang),
+      titleAlt: tAlt(scenario, "title", lang),
+      subtitle: t(scenario, "brief", lang),
+      subtitleAlt: tAlt(scenario, "brief", lang),
       tone: "danger",
       options: [],
       dismissable: true,
       dismissLabel: interrupting ? "Back to the decision — the clock is running" : "Back to the incident",
-      footer: `Alert: ${scenario.alert}`,
+      footer: [`Alert: ${t(scenario, "alert", lang)}`, tAlt(scenario, "alert", lang)]
+        .filter(Boolean).join("  ·  "),
       onDismiss: () => {
         state.briefOpen = false;
         api.dialog(null);
@@ -1055,13 +1072,21 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const nextPhase = nextRequiredPhase();
     const nextStation = STATIONS[nextPhase] || null;
     const to = bearingToNext(nextStation);
+    const lang = getLang();
+    // The objective carries both languages on one line, the player's
+    // own first. It is the only instruction on the screen.
+    const objectiveFor = (station) => {
+      const primary = t(station, "prompt", lang);
+      const secondary = tAlt(station, "prompt", lang);
+      return secondary ? `${primary} · ${secondary}` : primary;
+    };
     api.hud({
       controlScheme: "command",
       objective: state.finished
         ? "Incident closed out"
         : nextStation
-          ? `${PHASES[nextStation.phase] || "Respond"} — ${nextStation.prompt}`
-          : scenario.title,
+          ? `${PHASES[nextStation.phase] || "Respond"} — ${objectiveFor(nextStation)}`
+          : t(scenario, "title", lang),
       score: Math.max(0, state.score),
       timeMs: state.remainingMs,
       progress: (state.doneStations.size / STATION_COUNT) * 100,
@@ -1311,6 +1336,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     dispose() {
+      stopLangWatch();
       state.disposed = true;
       clearPendingTimers();
       siteView.dispose();

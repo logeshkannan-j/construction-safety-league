@@ -21,7 +21,7 @@
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { stairFlight, validateFlight } from "./stairs.js";
+import { stairFlight, validateFlight, stairRails } from "./stairs.js";
 import { SITE_NAME, SITE_SUBTITLE } from "../arenaConstants.js";
 
 /* ============================ textures ============================ */
@@ -1341,6 +1341,21 @@ export function buildConcreteFrame(geo, mat, {
           { rotZ: slope }
         );
         group.add(stringer);
+      });
+
+      // Handrails up both sides of the flight. These DO collide: the
+      // stringer behind them is only half a metre high, so without
+      // them a player drifting off the centre line walks straight off
+      // the side of the flight and falls back to the floor below —
+      // which is what being unable to get upstairs looked like.
+      const balustrade = stairRails(flight);
+      if (balustrade.parts.length) {
+        const railMesh = mergedMesh(balustrade.parts, mat.galv, { shadow: false });
+        railMesh.position.set(x, 0, z);
+        group.add(railMesh);
+      }
+      balustrade.colliders.forEach((c) => {
+        colliders.push(collider(x + c.x, c.y, z + c.z, c.w, c.h, c.d));
       });
 
       // Guardrails around the stairwell void in the slab above, so the

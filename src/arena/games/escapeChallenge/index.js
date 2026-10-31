@@ -33,7 +33,7 @@ import {
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
 import { shuffledOrder } from "../../shuffle.js";
-import { t, tOptions, onLangChange, getLang } from "../../language.js";
+import { t, tAlt, tOptions, onLangChange, getLang } from "../../language.js";
 
 /* ============================== metadata ============================== */
 
@@ -1402,18 +1402,25 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     api.dialog({
       eyebrow: puzzle.eyebrow,
       title: t(puzzle, "title"),
+      titleAlt: tAlt(puzzle, "title"),
       subtitle: t(puzzle, "subtitle"),
+      subtitleAlt: tAlt(puzzle, "subtitle"),
       tone: "normal",
       // Shown in THIS player's order. `id` still carries the real
       // option id, so the answer is scored against the definition and
       // never against the slot it landed in.
       options: (item.order || puzzle.options.map((_, i) => i)).map((realIndex, slot) => {
         const option = puzzle.options[realIndex];
-        const taLabels = puzzle.ta?.options;
+        // Falls back per LIST: a half-translated option list would
+        // put two languages in one question.
+        const taLabels = puzzle.ta?.options?.length === puzzle.options.length
+          ? puzzle.ta.options : null;
+        const ta = taLabels ? taLabels[realIndex] : "";
+        const taFirst = !!ta && getLangForOptions() === "ta";
         return {
           id: option.id,
-          label: (taLabels && taLabels.length === puzzle.options.length
-            && getLangForOptions() === "ta") ? taLabels[realIndex] : option.label,
+          label: taFirst ? ta : option.label,
+          labelAlt: taFirst ? option.label : (ta && ta !== option.label ? ta : ""),
           desc: difficulty.hints || attempts > 0 ? option.desc : undefined,
           badge: String.fromCharCode(65 + slot),
         };

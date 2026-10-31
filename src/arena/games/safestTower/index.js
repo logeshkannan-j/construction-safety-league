@@ -21,7 +21,7 @@ import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
 import { shuffledOrder } from "../../shuffle.js";
-import { t, tOptions, onLangChange } from "../../language.js";
+import { t, tAlt, tOptions, tOptionsAlt, onLangChange } from "../../language.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
@@ -768,13 +768,16 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     api.dialog({
       eyebrow: `GROUND LEVEL — HAZARD ${HAZARDS.indexOf(def) + 1} OF ${HAZARD_COUNT}`,
       title: t(def, "title"),
+      titleAlt: tAlt(def, "title"),
       subtitle: `${t(def, "brief")}\n\n${t(def, "question")}`,
+      subtitleAlt: [tAlt(def, "brief"), tAlt(def, "question")].filter(Boolean).join("\n\n"),
       tone: "danger",
       // Shown in this player's own order; `id` carries the REAL index
       // so the answer is scored against the definition, not the slot.
       options: hazard.order.map((realIndex, slot) => ({
         id: String(realIndex),
         label: tOptions(def)[realIndex],
+        labelAlt: tOptionsAlt(def)[realIndex],
         badge: String.fromCharCode(65 + slot),
       })),
       footer: hazard.attempts > 0

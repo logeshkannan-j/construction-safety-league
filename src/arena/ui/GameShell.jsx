@@ -1334,6 +1334,14 @@ function PauseMenu({
 
 // Exported so the layout contract can be tested without standing up a
 // WebGL stage. It is the one panel that regularly does not fit.
+/* Every decision dialog shows BOTH languages.
+ *
+ * The language button switches which one is on top; it does not hide
+ * the other. A player reported "there is no Tamil" on a question they
+ * were looking straight at, because the toggle was set to English and
+ * nothing on the panel said there was another language to be had. The
+ * site's own signs have always shown both lines, so the questions do
+ * now as well. */
 export function DecisionDialog({ dialog, mobile, accent }) {
   const color = dialog.tone === "danger" ? C.red : dialog.tone === "good" ? C.green : accent;
   return (
@@ -1366,6 +1374,11 @@ export function DecisionDialog({ dialog, mobile, accent }) {
           <h3 style={{ fontSize: mobile ? 16 : 19, fontWeight: 900, margin: "0 0 6px", lineHeight: 1.3 }}>
             {dialog.title}
           </h3>
+          {dialog.titleAlt && (
+            <h4 style={{ fontSize: mobile ? 14 : 16, fontWeight: 800, margin: "0 0 6px", lineHeight: 1.35, color: C.muted }}>
+              {dialog.titleAlt}
+            </h4>
+          )}
         </div>
 
         <div
@@ -1378,8 +1391,20 @@ export function DecisionDialog({ dialog, mobile, accent }) {
           }}
         >
         {dialog.subtitle && (
-          <p style={{ color: C.muted, fontSize: mobile ? 12.5 : 13.5, lineHeight: 1.55, margin: "8px 0 14px" }}>
+          <p style={{ color: C.muted, fontSize: mobile ? 12.5 : 13.5, lineHeight: 1.55, margin: "8px 0 6px" }}>
             {dialog.subtitle}
+          </p>
+        )}
+
+        {dialog.subtitleAlt && (
+          <p
+            style={{
+              color: C.muted, fontSize: mobile ? 12.5 : 13.5, lineHeight: 1.6,
+              margin: "0 0 14px", paddingLeft: 10,
+              borderLeft: `2px solid ${color}55`,
+            }}
+          >
+            {dialog.subtitleAlt}
           </p>
         )}
 
@@ -1433,6 +1458,11 @@ export function DecisionDialog({ dialog, mobile, accent }) {
                 <span style={{ display: "block", fontWeight: 800, fontSize: mobile ? 13 : 14, lineHeight: 1.35 }}>
                   {opt.label}
                 </span>
+                {opt.labelAlt && (
+                  <span style={{ display: "block", fontWeight: 700, fontSize: mobile ? 12.5 : 13.5, color: C.muted, marginTop: 3, lineHeight: 1.4 }}>
+                    {opt.labelAlt}
+                  </span>
+                )}
                 {opt.desc && (
                   <span style={{ display: "block", fontSize: 11.5, color: C.muted, marginTop: 2, lineHeight: 1.4 }}>
                     {opt.desc}

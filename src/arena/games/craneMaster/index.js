@@ -20,7 +20,7 @@ import { createTopView } from "../../engine/topview.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import { INTERRUPTS, INTERRUPT_SCORING } from "./interrupts.js";
 import { shuffledOrder } from "../../shuffle.js";
-import { t, tOptions, onLangChange } from "../../language.js";
+import { t, tAlt, tOptions, tOptionsAlt, onLangChange } from "../../language.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail,
@@ -129,12 +129,20 @@ function clampUnit(v) {
  * ONE lift. The mission is to take a single load off the stockpile and
  * land it on the building above — pick, rig, slew, trolley, hoist, land.
  *
- * Difficulty raises the floor it has to go to and adds the wind event,
- * rather than adding more loads: doing one lift properly is the skill,
- * and repeating it four times only added length.
+ * The landing is ALWAYS the terrace: the top slab, in the open air.
+ *
+ * It used to be an intermediate floor, raised by difficulty, and that
+ * was wrong in a way you could see. A load cannot be lowered to Level 3
+ * of a finished frame — the slab above is in the way — so the game had
+ * to pretend the roof was not there and let the load sink straight
+ * through it. On screen the bundle passed through the top floor and
+ * came to rest a storey below, which is exactly what it looked like:
+ * broken. Landing on the terrace is both what a tower crane actually
+ * does and something the physics can tell the truth about.
+ *
+ * Difficulty changes the wind and the interrupt, not the floor.
  */
-function buildLiftPlan(difficulty) {
-  const floor = difficulty.id === "easy" ? 1 : difficulty.id === "hard" ? 3 : 2;
+function buildLiftPlan(difficulty, topFloor) {
   return [
     {
       id: "steel",
@@ -143,8 +151,9 @@ function buildLiftPlan(difficulty) {
       palletType: "steel",
       size: { x: 3.2, y: 0.9, z: 1.2 },
       pick: { x: 17, z: -13 },
-      target: { x: -9, z: 13, floor },
-      note: `Take the steel bundle from the stockpile and land it on Level ${floor + 1}. `
+      target: { x: -9, z: 13, floor: topFloor },
+      note: `Take the steel bundle from the stockpile and land it on the TERRACE — `
+        + `the top slab, Level ${topFloor + 1}. `
         + "The banksman has cleared the slab and the lift plan is agreed.",
       windEvent: difficulty.id === "hard",
     },
@@ -279,7 +288,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ------------------------------- loads ------------------------------- */
 
-  const plan = buildLiftPlan(difficulty);
+  // The terrace is the top slab of the frame we are feeding.
+  const plan = buildLiftPlan(difficulty, BUILDING.floors - 1);
 
   function buildLoadMesh(lift) {
     const group = new THREE.Group();
@@ -379,7 +389,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     scene.add(box(geo, mat.black, 4.4, 0.05, 4.4, lift.pick.x, 0.04, lift.pick.z, { shadow: false }));
 
     const landBoard = buildSign(geo, mat, {
-      text: `LAND LEVEL ${(lift.target.floor ?? 0) + 1}`, kind: "warning", height: 4.0, width: 2.6,
+      text: `LAND HERE · TERRACE (LEVEL ${(lift.target.floor ?? 0) + 1})`, kind: "warning", height: 4.0, width: 2.6,
     });
     landBoard.position.set(lift.target.x, targetY, lift.target.z + 3.4);
     landBoard.rotation.y = faceCrane(lift.target.x, lift.target.z + 3.4);
@@ -618,8 +628,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     if (state.radius === CRANE.minRadius || state.radius === CRANE.maxRadius) state.radiusVel = 0;
 
     const lift = state.attached;
+    // The rope drop takes the hook down to the load's ORIGIN, which sits
+    // `baseOffset` above the load's own underside — so the hook has to
+    // stop that much higher again or the bundle settles into the slab.
     const minHook = lift
-      ? landingHeightForLoad() + ropeLengthFor(lift) + 0.05
+      ? landingHeightForLoad() + ropeLengthFor(lift) + lift.baseOffset
       : CRANE.minHookHeight;
     const maxHook = hookTopY - 1.4;
     const nextHook = clamp(state.hookY + state.hoistVel * dt, minHook, maxHook);
@@ -1006,7 +1019,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     else if (!lift) objective = "Lift plan complete";
     else if (!state.attached) objective = `Hook on: ${lift.label} at ${lift.radiusPick.toFixed(0)} m radius`;
     else if (lift.target.floor === null) objective = `Land ${lift.label} on the ground target`;
-    else objective = `Land ${lift.label} on Level ${lift.target.floor}`;
+    else objective = `Land ${lift.label} on the terrace (Level ${lift.target.floor + 1})`;
 
     api.hud({
       controlScheme: "crane",
@@ -1188,13 +1201,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     api.dialog({
       eyebrow: "LIFT HALTED — SAFETY CHECK",
       title: t(def, "title"),
-      subtitle: `${t(def, "warning")}\n\n${def.question}`,
+      titleAlt: tAlt(def, "title"),
+      // The question itself used to be read straight off the English
+      // field here, so a Tamil operator got an English question under
+      // a Tamil heading.
+      subtitle: `${t(def, "warning")}\n\n${t(def, "question")}`,
+      subtitleAlt: [tAlt(def, "warning"), tAlt(def, "question")].filter(Boolean).join("\n\n"),
       tone: "danger",
       // Shuffled per play; `id` is the REAL index so the answer is
       // scored against the definition, not the slot.
       options: open.order.map((realIndex, slot) => ({
         id: String(realIndex),
         label: tOptions(def)[realIndex],
+        labelAlt: tOptionsAlt(def)[realIndex],
         badge: String.fromCharCode(65 + slot),
       })),
       footer: open.attempts > 0
@@ -1482,6 +1501,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
       state, lifts, hookWorldPosition, loadWorldPosition, safeWorkingLoad, CRANE,
+      BUILDING, frame, landingHeightForLoad,
       interrupts, raiseInterrupt, answerInterrupt, checkInterrupts, chosenInterrupt,
       stray, landingBarricade,
       zoomFov: () => camera.fov,
