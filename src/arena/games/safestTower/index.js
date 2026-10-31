@@ -434,7 +434,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         // Double guardrail and toe board along the open edge.
         group.add(buildGuardrail(mat, {
           x: 0, y: 0.34, z: 1.0, length: 7, axis: "x", compliant: true,
-        }).group);
+        }));
         // Material moved back off the edge.
         const pallet = buildMaterialPallet(geo, mat, { type: "block", rows: 2 });
         pallet.position.set(-1.4, 0.34, -2.4);

@@ -130,6 +130,33 @@ for (const [path, id, title] of GAMES) {
   const stageScene = lastRenderer ? null : null;
   check(`${id}: a renderer was created`, !!lastRenderer);
 
+  /* Nothing undefined may be put into the scene.
+   *
+   * three.js only WARNS when you add undefined to a scene, so a
+   * builder whose return shape you misremembered silently drops
+   * whatever it was. That happened twice with buildGuardrail, which
+   * returns a Group and was being called as `.group` — and one of
+   * those was the corrected version of the unprotected-edge hazard,
+   * so the fix for an edge-protection hazard had no edge protection
+   * in it and nothing failed. */
+  const originalWarn = console.warn;
+  const originalErr0 = console.error;
+  const warnings = [];
+  const grab = (...args) => { warnings.push(args.map(String).join(" ")); };
+  console.warn = grab;
+  // three.js reports a bad add through console.ERROR, not warn, which
+  // is why the first version of this check passed with the bug in.
+  console.error = grab;
+  try {
+    runFrames(2);
+  } finally {
+    console.warn = originalWarn;
+    console.error = originalErr0;
+  }
+  const addWarnings = warnings.filter((w) => /not an instance of THREE\.Object3D/i.test(w));
+  check(`${id}: nothing undefined was added to the scene`, addWarnings.length === 0,
+    addWarnings.slice(0, 2).join(" | "));
+
   // Drive the real loop.
   let loopError = null;
   const originalError = console.error;
@@ -956,6 +983,95 @@ section("Nobody on site stands perfectly still");
   }
 }
 
+section("The room tells you the problem before you touch anything");
+
+{
+  const { instance } = await boot("escapeChallenge");
+  const t = instance.__test;
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const { PUZZLES, AREA_ORDER } = await import(`${SRC}/games/escapeChallenge/puzzles.js`);
+  runFrames(10);
+
+  const scene = lastRenderer.lastScene;
+  const boards = [];
+  scene.traverse((o) => { if (o.userData?.boardHeight) boards.push(o); });
+
+  // One per area, plus the one at the fire saying what is burning.
+  check("every area has a board on the wall", boards.length >= AREA_ORDER.length,
+    `${boards.length} boards for ${AREA_ORDER.length} areas`);
+
+  AREA_ORDER.forEach((key) => {
+    const room = t.rooms.find((r) => r.key === key);
+    const inRoom = boards.filter((b) => b.position.x > room.x0 && b.position.x < room.x1);
+    check(`${key}: the area has its own board`, inRoom.length >= 1,
+      `${inRoom.length} boards between x ${room.x0} and ${room.x1}`);
+    check(`${key}: the board is at reading height, not on the floor`,
+      inRoom[0] && inRoom[0].userData.boardHeight > 1.5 && inRoom[0].userData.boardHeight < 3.2,
+      `top at ${inRoom[0]?.userData.boardHeight?.toFixed(2)} m`);
+  });
+
+  // The plant room must say WHAT CLASS of fire it is. Choosing between
+  // four extinguishers is not a decision if nobody told you what is
+  // burning.
+  const fireRoom = t.rooms.find((r) => r.key === "fire");
+  const fireBoards = boards.filter((b) => b.position.x > fireRoom.x0 && b.position.x < fireRoom.x1);
+  check("the plant room has a second board for the fire itself",
+    fireBoards.length >= 2, `${fireBoards.length} boards in the plant room`);
+
+  /* ---- the extinguishers have to be identifiable ---- */
+  const types = kit.EXTINGUISHER_TYPES;
+  t.extinguishers.forEach((ext) => {
+    const spec = types[ext.cls];
+    check(`the ${ext.cls} extinguisher has a declared type`, !!spec, ext.cls);
+    if (!spec) return;
+    check(`the ${ext.cls} extinguisher says which fires it is for`,
+      !!spec.classes && !!spec.use, JSON.stringify(spec));
+
+    // A coloured band and a printed label, both on the body.
+    let banded = false;
+    let labelled = false;
+    ext.object.traverse((o) => {
+      if (!o.isMesh) return;
+      if (o.material?.map?.image || o.material?.map) labelled = true;
+      if (o.material && o.material !== undefined && o.position.y > 0.55 && o.position.y < 0.72) banded = true;
+    });
+    check(`the ${ext.cls} extinguisher carries a colour band`, banded);
+    check(`the ${ext.cls} extinguisher carries a printed label`, labelled);
+  });
+
+  // The four on the wall must be four DIFFERENT types, or the choice
+  // is not a choice.
+  check("the four extinguishers are four different types",
+    new Set(t.extinguishers.map((e) => e.cls)).size === t.extinguishers.length,
+    t.extinguishers.map((e) => e.cls).join(", "));
+  check("exactly one of them is right for a live electrical fire",
+    t.extinguishers.filter((e) => /ELECTRICAL/i.test(types[e.cls]?.classes || "")).length === 1,
+    t.extinguishers.map((e) => `${e.cls}:${types[e.cls]?.classes}`).join(" "));
+
+  /* ---- the live frame arcs, and stops when isolated ---- */
+  check("there is an arc on the live door frame", !!t.liveArc);
+  let lit = 0;
+  let strikes = 0;
+  let was = false;
+  for (let i = 0; i < 300; i++) {
+    runFrames(1);
+    const on = t.liveArc.group.visible;
+    if (on) lit += 1;
+    if (on && !was) strikes += 1;
+    was = on;
+  }
+  check("the arc actually flashes", lit > 10 && lit < 290, `lit on ${lit} of 300 frames`);
+  check("it flashes irregularly rather than blinking on a timer",
+    strikes > 5, `${strikes} strikes in 5 seconds`);
+
+  const elec = t.interactables.find((i) => i.key === "electrical");
+  elec.done = true;
+  runFrames(6);
+  check("isolating the circuit stops the arc", t.liveArc.group.visible === false);
+
+  instance.dispose();
+}
+
 section("Scene content");
 
 {
@@ -1608,6 +1724,8 @@ section("Spot the Hazards — clearing the site correctly");
 {
   const { instance, record } = await boot("safestTower");
   const { state, hazards, inspect, answer, HAZARD_COUNT } = instance.__test;
+  const kitForHazards = await import(`${SRC}/engine/kit.js`);
+  const matForHazards = kitForHazards.createMaterials({ anisotropy: 1, segments: 8 });
 
   runFrames(10);
   check("the walk-round covers ten ground-level hazards",
@@ -1673,9 +1791,48 @@ section("Spot the Hazards — clearing the site correctly");
   check("a second attempt is worth less than first time",
     state.score === G3.SCORING.wrongAnswer + G3.SCORING.solvedAfterMiss, `${state.score}`);
 
-  // --- clear the rest, all first time ---
-  hazards.slice(1).forEach((h) => { inspect(h); answer(h, h.def.correct); runFrames(1); });
+  /* --- clear the rest, all first time ---
+   *
+   * The CORRECTED version of each hazard is built here, on solve, not
+   * at construction — so this is the only place a mistake in one of
+   * them shows. buildGuardrail returns a Group and the corrected
+   * unprotected-edge hazard was calling it as `.group`, which added
+   * undefined: the fix for an edge-protection hazard had no edge
+   * protection in it, and nothing anywhere failed. */
+  const fixWarnings = [];
+  const realWarn = console.warn;
+  const realErr = console.error;
+  const grabFix = (...args) => { fixWarnings.push(args.map(String).join(" ")); };
+  console.warn = grabFix;
+  console.error = grabFix;
+  try {
+    hazards.slice(1).forEach((h) => { inspect(h); answer(h, h.def.correct); runFrames(1); });
+  } finally {
+    console.warn = realWarn;
+    console.error = realErr;
+  }
   check("every hazard can be cleared", hazards.every((h) => h.solved));
+  check("every corrected hazard is built without dropping anything",
+    fixWarnings.length === 0, fixWarnings.slice(0, 2).join(" | "));
+
+  // And the corrected version has to actually contain the control it
+  // claims. The edge hazard's whole answer is a guardrail, which is
+  // two merged meshes, so the corrected version must have exactly two
+  // more than the same scene built without one.
+  {
+    const edge = hazards.find((h) => h.def.kind === "edge");
+    const countIn = (root) => {
+      let n = 0;
+      root?.traverse((o) => { if (o.isMesh) n += 1; });
+      return n;
+    };
+    const railMeshes = countIn(kitForHazards.buildGuardrail(matForHazards, {
+      x: 0, y: 0, z: 0, length: 7, axis: "x", compliant: true,
+    }));
+    check("the corrected edge hazard actually has a guardrail in it",
+      countIn(edge?.fixed) > countIn(edge?.unsafe) + railMeshes - 1,
+      `corrected ${countIn(edge?.fixed)}, unsafe ${countIn(edge?.unsafe)}, rail ${railMeshes}`);
+  }
   check("all but the fumbled one were cleared first time",
     state.firstTime === HAZARD_COUNT - 1, `${state.firstTime} of ${HAZARD_COUNT - 1}`);
 

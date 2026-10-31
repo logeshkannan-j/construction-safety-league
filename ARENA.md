@@ -331,6 +331,52 @@ peak and ridge, vest braces — while keeping the whole skeleton, so a crowd sti
 walks properly. After the joint baking its saving is in triangles rather than
 draw calls. The sixteen workers who evacuate in Emergency Response use it.
 
+### The room has to state the problem
+
+Every escape area's scenario only existed inside the dialog that opened when you
+walked up to something, so until you triggered it the room told you nothing.
+`buildInfoBoard()` puts it on the wall where the real thing has it — a heading
+bar and the scenario underneath — and the content is read straight out of
+`PUZZLES`, so the board and the question can never say different things. Text is
+fitted to the board the same way the hoarding is.
+
+The plant room gets a **second** board saying what is burning and what class of
+fire that makes it. Choosing between four extinguishers is not a decision if
+nobody told you the switchgear is still live.
+
+Extinguishers are identifiable now: every body is red with a coloured band round
+the shoulder — the real convention — and a printed label giving the type, the
+classes it covers and what it is for. `EXTINGUISHER_TYPES` is the single source
+for all of it, and the tests assert the four on the wall are four different
+types with exactly one rated for live electrical.
+
+### Things that move
+
+The electrical room's scenario is that the door frame is LIVE, which a white
+room and a dialog do not convey. An arc now flashes off the frame — two sine
+waves that do not divide into each other, so it never settles into a rhythm —
+and it stops the moment the circuit is isolated. That is read off the decision
+point itself rather than a separate flag, because the first version checked
+`state.isolated`, which this game has never had, so the arc would have flashed
+for the whole run.
+
+The plant-room smoke rises, swells and thins instead of being a grey ball parked
+over the flames.
+
+### Nothing undefined in a scene
+
+three.js only logs when you add `undefined` to a scene, so a builder whose
+return shape you misremembered silently drops whatever it was. That happened
+twice with `buildGuardrail`, which returns a Group and was being called as
+`.group` — and one of those was the **corrected** version of the
+unprotected-edge hazard, so the fix for an edge-protection hazard contained no
+edge protection and nothing failed.
+
+Two checks now cover it: one over construction, one over the corrected hazards,
+which are built on solve rather than at startup. Both capture `console.error`,
+not `console.warn` — three.js reports a bad add through error, and the first
+version of this check captured the wrong channel and passed with the bug in.
+
 ### The face, and why it was blank
 
 Every feature sits PROUD of the skull. The first attempt put the eyes at
@@ -691,9 +737,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 973 assertions with no browser required, across four suites.
+`npm test` runs 1,014 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (645 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (686 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of

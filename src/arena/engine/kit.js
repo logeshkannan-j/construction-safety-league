@@ -2394,6 +2394,102 @@ export function buildBarrier(geo, mat, { length = 2, color = "orange" } = {}) {
   return group;
 }
 
+/**
+ * A site information board: a heading bar and a few lines under it.
+ *
+ * The scenario in each escape area only existed inside the dialog that
+ * opened when you walked up to something, so until you triggered it the
+ * room told you nothing. This is the board that is on the wall of the
+ * real thing — what the area is, what is wrong with it, what you have
+ * to decide.
+ *
+ * Text is fitted to the width the same way the hoarding is, because the
+ * content comes from the scenario files and nobody writing those should
+ * have to count characters.
+ */
+export function boardTexture(title, lines = [], { accent = ARIA_ORANGE } = {}) {
+  const key = `board:${title}:${lines.join("|")}:${accent}`;
+  return canvasTexture(key, 768, 512, (ctx, w, h) => {
+    ctx.fillStyle = "#11161B";
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = "#2B343C";
+    ctx.lineWidth = 10;
+    ctx.strokeRect(5, 5, w - 10, h - 10);
+
+    // Heading bar.
+    ctx.fillStyle = accent;
+    ctx.fillRect(10, 10, w - 20, 92);
+    ctx.fillStyle = "#11161B";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.letterSpacing = "2px";
+    fitFont(ctx, title, w - 72, 54, 20, (px) => {
+      ctx.font = `900 ${px}px system-ui, sans-serif`;
+    });
+    ctx.fillText(title, 36, 57);
+
+    // Body, wrapped to the width rather than to a character count.
+    ctx.fillStyle = "#E8EDF2";
+    ctx.letterSpacing = "0px";
+    const size = lines.length > 4 ? 28 : 33;
+    ctx.font = `600 ${size}px system-ui, sans-serif`;
+    const maxWidth = w - 76;
+    const wrapped = [];
+    lines.forEach((line) => {
+      let current = "";
+      String(line).split(/\s+/).forEach((word) => {
+        const next = current ? `${current} ${word}` : word;
+        if (ctx.measureText(next).width > maxWidth && current) {
+          wrapped.push(current);
+          current = word;
+        } else {
+          current = next;
+        }
+      });
+      if (current) wrapped.push(current);
+      wrapped.push("");
+    });
+    let y = 150;
+    wrapped.slice(0, 10).forEach((line) => {
+      if (line) ctx.fillText(line, 38, y);
+      y += line ? size * 1.34 : size * 0.6;
+    });
+  });
+}
+
+/**
+ * The board above, mounted on a wall or on two legs.
+ *
+ * `facing` is the direction the FACE looks, in radians about Y.
+ */
+export function buildInfoBoard(geo, mat, {
+  title = "NOTICE", lines = [], width = 2.6, accent = null, legs = true, height = 1.1,
+} = {}) {
+  const group = new THREE.Group();
+  const h = width * (512 / 768);
+
+  const face = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({
+    map: boardTexture(title, lines, accent ? { accent } : {}),
+    side: THREE.DoubleSide,
+  }));
+  face.scale.set(width, h, 1);
+  face.position.set(0, height + h / 2, 0.035);
+  face.castShadow = false;
+  group.add(face);
+
+  // Backing panel and a frame, so it is an object and not a decal.
+  group.add(box(geo, mat.steelDark, width + 0.08, h + 0.08, 0.06, 0, height + h / 2, 0));
+
+  if (legs) {
+    [-width / 2 + 0.2, width / 2 - 0.2].forEach((lx) => {
+      group.add(cylinder(geo, mat.galv, 0.035, height, lx, height / 2, 0, { low: true }));
+    });
+    group.add(box(geo, mat.black, width * 0.8, 0.05, 0.4, 0, 0.025, 0, { shadow: false }));
+  }
+  group.userData.boardHeight = height + h;
+  return group;
+}
+
 export function buildSign(geo, mat, { text = "DANGER", kind = "warning", height = 2.1, width = 0.8, post = true } = {}) {
   const group = new THREE.Group();
   const faceMat = new THREE.MeshLambertMaterial({ map: signTexture(text, kind), side: THREE.DoubleSide });
@@ -2410,13 +2506,75 @@ export function buildSign(geo, mat, { text = "DANGER", kind = "warning", height 
   return group;
 }
 
+/**
+ * Extinguisher types, as they are actually marked.
+ *
+ * Every body is RED; the type is the colour of the band round the top
+ * and the text on the label. That is the real convention, and it is
+ * also the thing the plant-room decision turns on — a player who
+ * cannot read the band is guessing, which is not the lesson.
+ */
+export const EXTINGUISHER_TYPES = {
+  water: { band: "blue2", name: "WATER", classes: "A", use: "Wood, paper, textiles" },
+  foam: { band: "white", name: "FOAM", classes: "A B", use: "Wood, paper, flammable liquids" },
+  co2: { band: "black", name: "CO2", classes: "B + ELECTRICAL", use: "Live electrical equipment" },
+  wet: { band: "yellow", name: "WET CHEMICAL", classes: "F", use: "Cooking oils and fats" },
+  powder: { band: "blue2", name: "DRY POWDER", classes: "A B C", use: "Most fires, but not indoors" },
+  ABC: { band: "blue2", name: "DRY POWDER", classes: "A B C", use: "Most fires, but not indoors" },
+};
+
+/** The label wrapped round an extinguisher: name, classes and use. */
+export function extinguisherLabelTexture(cls) {
+  const t = EXTINGUISHER_TYPES[cls] || EXTINGUISHER_TYPES.ABC;
+  return canvasTexture(`extLabel:${cls}`, 256, 256, (ctx, w, h) => {
+    ctx.fillStyle = "#F4F2EC";
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#1A1A1A";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.letterSpacing = "1px";
+    fitFont(ctx, t.name, w - 24, 46, 16, (px) => {
+      ctx.font = `900 ${px}px system-ui, sans-serif`;
+    });
+    ctx.fillText(t.name, w / 2, 52);
+    ctx.fillStyle = "#C8262B";
+    ctx.fillRect(18, 86, w - 36, 6);
+    ctx.fillStyle = "#1A1A1A";
+    fitFont(ctx, t.classes, w - 30, 58, 18, (px) => {
+      ctx.font = `900 ${px}px system-ui, sans-serif`;
+    });
+    ctx.fillText(t.classes, w / 2, 134);
+    ctx.fillStyle = "#4A5560";
+    ctx.letterSpacing = "0px";
+    fitFont(ctx, t.use, w - 26, 24, 11, (px) => {
+      ctx.font = `600 ${px}px system-ui, sans-serif`;
+    });
+    ctx.fillText(t.use, w / 2, 196);
+  });
+}
+
 export function buildFireExtinguisher(geo, mat, { onStand = true, cls = "ABC" } = {}) {
   const group = new THREE.Group();
-  const body = cylinder(geo, mat.red, 0.11, 0.52, 0, 0.42, 0);
-  group.add(body);
-  group.add(cylinder(geo, mat.black, 0.055, 0.12, 0, 0.74, 0, { low: true }));
-  group.add(box(geo, mat.steelDark, 0.2, 0.05, 0.07, 0.06, 0.78, 0));
-  group.add(box(geo, mat.white, 0.13, 0.14, 0.02, 0, 0.46, 0.11, { shadow: false }));
+  const type = EXTINGUISHER_TYPES[cls] || EXTINGUISHER_TYPES.ABC;
+  const bandMat = { white: mat.white, black: mat.black, yellow: mat.yellow, blue2: mat.blue, red: mat.red }[type.band] || mat.white;
+
+  group.add(cylinder(geo, mat.red, 0.11, 0.52, 0, 0.42, 0));
+  // The colour band round the shoulder — the thing you identify it by.
+  group.add(cylinder(geo, bandMat, 0.115, 0.13, 0, 0.63, 0));
+  group.add(cylinder(geo, mat.black, 0.055, 0.1, 0, 0.75, 0, { low: true }));
+  group.add(box(geo, mat.steelDark, 0.2, 0.05, 0.07, 0.06, 0.79, 0));
+  // Hose down the side.
+  group.add(cylinder(geo, mat.black, 0.018, 0.34, 0.1, 0.5, 0.04, { rotZ: 0.3 }));
+
+  // The label, large and legible, wrapped round the front.
+  const label = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({
+    map: extinguisherLabelTexture(cls), side: THREE.DoubleSide,
+  }));
+  label.scale.set(0.17, 0.17, 1);
+  label.position.set(0, 0.44, 0.112);
+  label.castShadow = false;
+  group.add(label);
+
   if (onStand) {
     group.add(box(geo, mat.red, 0.5, 0.05, 0.3, 0, 0.14, 0));
     group.add(box(geo, mat.red, 0.05, 0.16, 0.3, -0.22, 0.22, 0));

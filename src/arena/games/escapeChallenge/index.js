@@ -26,7 +26,7 @@ import {
   buildGround, buildSign, buildFireExtinguisher, buildElectricalPanel,
   buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadder,
   buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
-  buildZoneMarker, buildAriaMark, buildBrandedTower, poseWorker, buildKey,
+  buildZoneMarker, buildAriaMark, buildBrandedTower, poseWorker, buildKey, buildInfoBoard,
   collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
@@ -150,6 +150,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ----------------------------- geometry ----------------------------- */
 
+  /** The arc flashing off the live door frame in the electrical room. */
+  let liveArc = null;
+
   /** Offcuts falling through the slab opening on the construction floor. */
   const fallingDebris = [];
   let debrisDust = null;
@@ -164,6 +167,41 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    * them on different periods read as work going on above rather than
    * as a looping animation.
    */
+  /**
+   * Flashes the arc.
+   *
+   * Irregular on purpose — two sine waves that do not divide into each
+   * other, so it never settles into a rhythm, and it goes dark for a
+   * beat now and then the way a real intermittent fault does. Stops
+   * the moment the circuit is isolated.
+   */
+  function updateLiveArc(dt) {
+    if (!liveArc) return;
+    liveArc.phase += dt;
+    const t = liveArc.phase;
+    // Stops the moment the player actually isolates the circuit —
+    // read off the decision point itself rather than a separate flag,
+    // because a separate flag is a thing that can be left unset. The
+    // first version checked `state.isolated`, which this game has
+    // never had, so the arc would have flashed for the whole run.
+    if (interactables.some((i) => i.key === "electrical" && i.done)) {
+      liveArc.group.visible = false;
+      return;
+    }
+    const strike = Math.sin(t * 23) * Math.sin(t * 7.3) + Math.sin(t * 41) * 0.4;
+    const on = strike > 0.35;
+    liveArc.group.visible = on;
+    if (!on) return;
+    const intensity = Math.min(1, (strike - 0.35) / 0.9);
+    liveArc.group.children.forEach((spark, i) => {
+      if (spark === liveArc.glow) return;
+      spark.scale.set(1, 0.6 + intensity * (1 + (i % 3) * 0.4), 1);
+      spark.rotation.z = (i - 2) * 0.5 + Math.sin(t * 31 + i) * 0.4;
+    });
+    liveArc.glow.scale.setScalar(1.0 + intensity * 0.9);
+    liveArc.glow.material.opacity = 0.12 + intensity * 0.3;
+  }
+
   function updateFallingDebris(dt) {
     if (!fallingDebris.length) return;
     let landedNow = false;
@@ -478,6 +516,33 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
   }
 
+  /* ---------------------- the board on the wall ----------------------
+   *
+   * Every area's scenario only existed inside the dialog that opened
+   * when you walked up to something, so until you triggered it the room
+   * told you nothing at all. This puts it on the wall, where the real
+   * thing has it: what the area is, what is wrong with it, and what
+   * you have to decide.
+   *
+   * Built from PUZZLES, so the board and the question can never say
+   * different things.
+   */
+  AREA_ORDER.forEach((key, index) => {
+    const puzzle = PUZZLES[key];
+    const room = roomByKey(key);
+    if (!puzzle || !room) return;
+    const board = buildInfoBoard(geo, mat, {
+      title: `${index + 1}. ${puzzle.area.toUpperCase()}`,
+      lines: [puzzle.title, puzzle.subtitle],
+      width: 3.0,
+      height: 1.0,
+      legs: false,
+    });
+    // On the north wall, just inside the door you come in through.
+    board.position.set(room.x0 + 3.6, 0, room.z0 + 0.22);
+    scene.add(board);
+  });
+
   /* ========================== area dressing ========================== */
 
   function roomByKey(key) {
@@ -535,6 +600,34 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     danger.rotation.y = Math.PI;
     scene.add(danger);
 
+    /* ---- the thing that is actually wrong, arcing ----
+     *
+     * The scenario is that the door frame is LIVE. Standing in a white
+     * room reading a dialog does not tell you that; an arc flashing
+     * off the frame does. It flashes irregularly and lights the wall
+     * around it, which is also the only moving thing in the room.
+     */
+    const arcGroup = new THREE.Group();
+    const arcMat = new THREE.MeshBasicMaterial({
+      color: 0xbfe6ff, transparent: true, opacity: 0.95, depthWrite: false,
+    });
+    for (let i = 0; i < 5; i++) {
+      const spark = box(geo, mat.white, 0.03, 0.18 + i * 0.05, 0.03, 0, 0, 0, { shadow: false });
+      spark.material = arcMat;
+      spark.position.set((i - 2) * 0.07, 1.5 + (i % 3) * 0.22, 0);
+      spark.rotation.z = (i - 2) * 0.5;
+      arcGroup.add(spark);
+    }
+    const arcGlow = new THREE.Mesh(geo.sphere, new THREE.MeshBasicMaterial({
+      color: 0x9fd8ff, transparent: true, opacity: 0.25, depthWrite: false,
+    }));
+    arcGlow.scale.setScalar(1.3);
+    arcGlow.position.y = 1.6;
+    arcGroup.add(arcGlow);
+    arcGroup.position.set(room.doorAt.x - 0.35, 0, room.doorAt.z);
+    scene.add(arcGroup);
+    liveArc = { group: arcGroup, glow: arcGlow, phase: 0 };
+
     addInteractable({
       key: "electrical",
       position: { x: room.x1 - 3.4, z: room.z1 - 2.4 },
@@ -582,7 +675,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     scene.add(box(geo, mat.plywood, 5.5, 0.22, 4.2, dropX + 1.6, DECK_Y, dropZ, { shadow: false }));
     scene.add(buildGuardrail(mat, {
       x: dropX + 1.6, y: DECK_Y + 0.11, z: dropZ - 2.1, length: 5.5, axis: "x", compliant: true,
-    }).group);
+    }));
     const above = buildWorker(geo, mat, {
       helmet: true, vest: true, harness: true, pose: "work", detail: "low",
     });
@@ -671,6 +764,29 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     );
     smoke.position.set(room.x1 - 4.0, 3.0, room.centreZ);
     scene.add(smoke);
+    // Smoke that actually rises and rolls, rather than a grey ball
+    // parked above the flames.
+    animated.push({ kind: "smoke", object: smoke, phase: 0, baseY: 3.0 });
+
+    /* What is burning, and therefore what class of fire it is.
+     *
+     * The player is asked to choose between four extinguishers. That
+     * is not a decision without this board: you cannot pick the right
+     * one for a fire whose class you were never told. */
+    const fireBoard = buildInfoBoard(geo, mat, {
+      title: "FIRE — LIVE ELECTRICAL",
+      lines: [
+        "Burning: 415 V switchgear cabinet. The supply to it is STILL ON.",
+        "Class of fire: electrical. Water and foam conduct. Wet chemical is for cooking oils.",
+        "Check the band on the extinguisher before you pick it up.",
+      ],
+      width: 3.2,
+      height: 1.0,
+      accent: "#EA4F4F",
+      legs: false,
+    });
+    fireBoard.position.set(room.x1 - 4.0, 0, room.z0 + 0.22);
+    scene.add(fireBoard);
 
     // The four extinguishers on the wall. Each one is picked up
     // individually and carried to the fire — the player physically
@@ -1420,6 +1536,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
 
     updateKeys(dt);
+    updateLiveArc(dt);
     updateFallingDebris(dt);
     updateAvatar(dt);
     planView.update(dt, input, () => controller.syncCamera());
@@ -1479,6 +1596,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
           flame.scale.y = 1.0 + Math.sin(item.phase * 7 + index) * 0.35;
           flame.rotation.z = Math.sin(item.phase * 4 + index) * 0.16;
         });
+      } else if (item.kind === "smoke") {
+        // Rises, swells and thins as it goes, then starts again, so
+        // the plume reads as smoke being produced rather than a ball.
+        const cycle = (item.phase % 3.4) / 3.4;
+        item.object.position.y = item.baseY + cycle * 1.9;
+        item.object.position.x += Math.sin(item.phase * 0.9) * dt * 0.25;
+        const grow = 0.55 + cycle * 1.1;
+        item.object.scale.setScalar(grow);
+        item.object.material.opacity = 0.34 * (1 - cycle * 0.85);
       } else if (item.kind === "worker") {
         item.object.rotation.y += Math.sin(item.phase * 0.8) * dt * 0.1;
       }
@@ -1545,6 +1671,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       zoomFov: () => camera.fov,
       state, controller, interactables, doors, rooms, ceilings, avatar,
       fallingDebris, updateFallingDebris,
+      get liveArc() { return liveArc; },
       keys, spawnKey, collectKey, hasKey, keyFor, useDoor, doorFor, unlockDoor,
       get planBlend() { return planView.blend; },
       get fire() { return fire; },
