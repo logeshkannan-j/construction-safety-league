@@ -17,6 +17,9 @@ const ArenaView = lazy(() => import("./arena/ArenaView.jsx"));
 const ArenaAdminPanel = lazy(() => import("./arena/ui/ArenaAdminPanel.jsx"));
 // The integrated participant session (3D game + 10 quiz + 5 finale).
 const SoloSession = lazy(() => import("./SoloSession.jsx"));
+// Only pulled in when the host opens a mission preview, so the 3D
+// bundle never loads for an admin who does not ask for it.
+const GameShell = lazy(() => import("./arena/ui/GameShell.jsx"));
 
 /* ------------------------------------------------------------------ *
  *  CONSTRUCTION SAFETY LEAGUE (standalone build)
@@ -33,7 +36,7 @@ import { GAME_KEY, Q_KEY, PLAYER_PREFIX, MY_ID_KEY, POLL_MS } from "./constants"
 import { safeGet, safeSet, safeDelete, safeList, getServerTimeOffset, getDbError } from "./storage";
 import {
   buildEventPlan, renumberPlan, planSummary, createRun, clampQuizPerRound,
-  ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, NOT_RELEASED,
+  ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS, NOT_RELEASED,
   QUIZ_PER_ROUND, QUIZ_PER_ROUND_OPTIONS, MQ_PER_ROUND,
   ITEM_GAME3D, ITEM_QUIZ, ITEM_MILLIONAIRE,
 } from "./session.js";
@@ -743,6 +746,9 @@ function AdminView({ onExit }) {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ name: "", team: "", score: 0 });
   const [kickConfirmId, setKickConfirmId] = useState(null);
+  // Lets the host PLAY any mission from the panel to check it before an
+  // event. Must live above the early returns below — see soloStats.
+  const [previewGameId, setPreviewGameId] = useState(null);
 
   // ---- persistent, per-device admin unlock ----
   // Stored in localStorage only (safeSet(..., false)), never synced through
@@ -822,6 +828,16 @@ function AdminView({ onExit }) {
       avgScore: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0,
     };
   }, [players]);
+
+  // Previewing a mission replaces the panel, so the host sees exactly
+  // what a participant sees. Nothing is scored or submitted.
+  if (previewGameId) {
+    return (
+      <Suspense fallback={<Centered><p style={{ color: COLORS.muted }}>Loading the mission…</p></Centered>}>
+        <AdminGamePreview gameId={previewGameId} onExit={() => setPreviewGameId(null)} />
+      </Suspense>
+    );
+  }
 
   if (checkingUnlock) {
     return <Centered><p style={{ color: COLORS.muted }}>Loading…</p></Centered>;
@@ -1198,6 +1214,44 @@ function AdminView({ onExit }) {
                 </p>
               </>
             )}
+          </Panel>
+
+          <Panel title="Check the missions" icon={<Gamepad2 size={18} color={COLORS.orange} />}>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12, lineHeight: 1.55 }}>
+              Play any mission yourself, exactly as a participant sees it, before you run the event.
+              Nothing here is scored, submitted or added to the leaderboard.
+            </p>
+            <div style={{ display: "grid", gap: 6 }}>
+              {ROUND_GAMES.map((gameId) => (
+                <button
+                  key={gameId}
+                  type="button"
+                  onClick={() => setPreviewGameId(gameId)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 11, textAlign: "left",
+                    background: COLORS.surfaceRaised, border: `1px solid ${COLORS.line}`,
+                    borderRadius: 9, padding: "11px 13px", cursor: "pointer", color: COLORS.ink,
+                  }}
+                >
+                  <span style={{
+                    width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+                    background: COLORS.orange + "22", border: `1px solid ${COLORS.orange}66`,
+                    color: COLORS.orange, display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <Play size={14} />
+                  </span>
+                  <span style={{ minWidth: 0, flex: 1 }}>
+                    <span style={{ display: "block", fontWeight: 800, fontSize: 14 }}>
+                      {ROUND_MISSION_NAMES[gameId]}
+                    </span>
+                    <span style={{ display: "block", fontSize: 12, color: COLORS.muted, marginTop: 1 }}>
+                      {ROUND_MISSION_BLURBS[gameId]}
+                    </span>
+                  </span>
+                  <ChevronRight size={18} style={{ color: COLORS.muted, flexShrink: 0 }} />
+                </button>
+              ))}
+            </div>
           </Panel>
 
           <Panel title="3D Gaming Arena" icon={<Gamepad2 size={18} color={COLORS.purple} />}>
@@ -2934,6 +2988,52 @@ const StatCell = React.memo(function StatCell({ label, value, big }) {
  * dealt the five missions in their own order, so "Round 3" is a
  * different mission for different people in the room.
  */
+/**
+ * Lets the host play a mission from the admin panel to check it.
+ *
+ * It runs the SAME GameShell a participant gets, so what the host sees
+ * is what the room will see — but `embedded` keeps the run out of the
+ * Arena leaderboard, and finishing just returns to the panel.
+ */
+function AdminGamePreview({ gameId, onExit }) {
+  const [arenaGame, setArenaGame] = useState(null);
+  const [failed, setFailed] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    import("./arena/arenaConstants.js")
+      .then((mod) => { if (!cancelled) setArenaGame(mod.getGame(gameId) || null); })
+      .catch((e) => { if (!cancelled) setFailed(e.message || "could not load the mission list"); });
+    return () => { cancelled = true; };
+  }, [gameId]);
+
+  if (failed) {
+    return (
+      <Centered>
+        <div style={{ width: "min(100%, 460px)" }}>
+          <p style={{ color: COLORS.red, fontSize: 14 }}>This mission could not be loaded: {failed}</p>
+          <button style={linkBtnStyle} onClick={onExit}>← Back to the admin panel</button>
+        </div>
+      </Centered>
+    );
+  }
+  if (!arenaGame) {
+    return <Centered><p style={{ color: COLORS.muted }}>Loading the mission…</p></Centered>;
+  }
+
+  return (
+    <GameShell
+      game={arenaGame}
+      identity={{ id: "admin-preview", name: "Admin preview", team: null, source: "preview" }}
+      embedded
+      roundLabel="ADMIN PREVIEW — NOT SCORED"
+      onEmbeddedComplete={onExit}
+      onExit={onExit}
+      onOpenLeaderboard={() => {}}
+    />
+  );
+}
+
 const RoundTimeline = React.memo(function RoundTimeline({ releasedRound }) {
   return (
     <>

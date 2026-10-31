@@ -54,6 +54,12 @@ function canvasTexture(key, width, height, draw, { repeat = [1, 1], aniso = 1 } 
   tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(repeat[0], repeat[1]);
   tex.anisotropy = aniso;
+  // Trilinear mipmapping. Without this a tiling texture on a big plane
+  // shimmers and aliases as the camera moves, which reads as cheap no
+  // matter how good the texture itself is.
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
   textureCache.set(cacheKey, tex);
   return tex;
 }
@@ -130,7 +136,7 @@ function dirtTexture(repeat, aniso) {
 }
 
 function concreteTexture(repeat, aniso) {
-  return canvasTexture("concrete", 256, 256, (ctx, w, h) => {
+  return canvasTexture("concrete", 512, 512, (ctx, w, h) => {
     ctx.fillStyle = "#b4b2ab";
     ctx.fillRect(0, 0, w, h);
     noise(ctx, w, h, 2600, ["#a9a7a0", "#bebcb5", "#9d9b95", "#c5c3bc"], 4);
@@ -560,9 +566,60 @@ export function mergedMesh(parts, material, { shadow = true } = {}) {
 
 /* ============================= ground ============================= */
 
-export function buildGround(mat, size = 240) {
+/**
+ * The site ground, with REAL holes cut in it.
+ *
+ * This used to be one solid plane at y = 0 across the whole site, which
+ * meant every excavation was invisible: its walls and floor were built
+ * below grade, and the ground sheet covered them like a lid. You saw
+ * flat earth and then fell into a pit that was never drawn.
+ *
+ * `holes` are world-space rectangles ({ x, z, w, d }) punched out of the
+ * sheet, so an excavation is genuinely open to the sky.
+ */
+export function buildGround(mat, size = 240, { holes = [] } = {}) {
   const group = new THREE.Group();
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat.ground);
+  const half = size / 2;
+
+  let geometry;
+  if (!holes.length) {
+    geometry = new THREE.PlaneGeometry(size, size);
+  } else {
+    const shape = new THREE.Shape();
+    shape.moveTo(-half, -half);
+    shape.lineTo(half, -half);
+    shape.lineTo(half, half);
+    shape.lineTo(-half, half);
+    shape.closePath();
+
+    // The sheet is rotated -90° about X, which maps shape-Y to world -Z.
+    // So a hole at world z sits at shape y = -z.
+    holes.forEach(({ x = 0, z = 0, w = 1, d = 1 }) => {
+      const hw = w / 2;
+      const hd = d / 2;
+      const path = new THREE.Path();
+      path.moveTo(x - hw, -z - hd);
+      path.lineTo(x + hw, -z - hd);
+      path.lineTo(x + hw, -z + hd);
+      path.lineTo(x - hw, -z + hd);
+      path.closePath();
+      shape.holes.push(path);
+    });
+
+    geometry = new THREE.ShapeGeometry(shape);
+    // ShapeGeometry writes UVs in shape units, which would tile the dirt
+    // texture once per metre. Rewrite them to PlaneGeometry's 0..1 so the
+    // material's own repeat still applies.
+    const pos = geometry.attributes.position;
+    const uv = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      uv[i * 2] = pos.getX(i) / size + 0.5;
+      uv[i * 2 + 1] = pos.getY(i) / size + 0.5;
+    }
+    geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  }
+
+  const plane = new THREE.Mesh(geometry, mat.ground);
   plane.rotation.x = -Math.PI / 2;
   plane.receiveShadow = true;
   plane.name = "ground";

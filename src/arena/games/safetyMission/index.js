@@ -105,7 +105,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   addSky(scene, cfg, { top: "#2B6CA3", bottom: "#C9DFEE", fogColor: "#C2D8E8" });
   const sun = addDaylight(scene, cfg, { intensity: 2.0, shadowRadius: 46 });
-  scene.add(buildGround(mat, 260));
+  // The excavation is a REAL hole: its footprint is cut out of the
+  // ground sheet, so the trench is visible from across the site instead
+  // of being hidden under a solid plane.
+  const EXC = { x: 18, z: 24, width: 9, depth: 4.5, trenchDepth: 2.2 };
+  scene.add(buildGround(mat, 260, {
+    holes: [{ x: EXC.x, z: EXC.z, w: EXC.width, d: EXC.depth }],
+  }));
 
   const hoarding = buildHoarding(geo, mat, {
     width: SITE.width, depth: SITE.depth, height: 2.4, gateAt: "north",
@@ -236,7 +242,6 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ---------------------------- excavation ---------------------------- */
 
-  const EXC = { x: 18, z: 24, width: 9, depth: 4.5, trenchDepth: 2.2 };
   const excavation = buildExcavation(geo, mat, {
     width: EXC.width, depth: EXC.depth, trenchDepth: EXC.trenchDepth,
     shored: false, edgeProtection: false,

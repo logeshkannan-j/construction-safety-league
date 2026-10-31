@@ -219,6 +219,63 @@ section("Zoom works in all five games");
  *  Scene content and transform sanity
  * ================================================================ */
 
+section("An excavation is a visible hole, not a hidden pit");
+
+{
+  /* The ground used to be one solid plane across the whole site, so an
+   * excavation built below grade was covered like a lid: the player saw
+   * flat earth and then fell into a trench that was never drawn. The
+   * ground now has the footprint punched out of it. */
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium", fov: 70 });
+  const mat = kit.createMaterials(stage.cfg);
+
+  const HOLE = { x: 18, z: 24, w: 9, d: 4.5 };
+  const solid = kit.buildGround(mat, 260);
+  const holed = kit.buildGround(mat, 260, { holes: [HOLE] });
+
+  /** Fires a ray straight DOWN from high above and reports a ground hit. */
+  function hitsGround(groundGroup, x, z) {
+    const ray = new THREE.Raycaster(
+      new THREE.Vector3(x, 60, z), new THREE.Vector3(0, -1, 0), 0.1, 300);
+    groundGroup.updateMatrixWorld(true);
+    return ray.intersectObject(groundGroup, true).length > 0;
+  }
+
+  check("the old solid ground covers the excavation footprint",
+    hitsGround(solid, HOLE.x, HOLE.z),
+    "a plain ground sheet should cover everything — baseline for the fix");
+  check("ground is still solid away from the excavation",
+    hitsGround(holed, 0, 0));
+  check("the excavation footprint is genuinely OPEN in the ground",
+    !hitsGround(holed, HOLE.x, HOLE.z),
+    "the trench is still hidden under the ground sheet");
+  check("the open area matches the trench, not the whole site",
+    !hitsGround(holed, HOLE.x, HOLE.z)
+    && hitsGround(holed, HOLE.x + HOLE.w, HOLE.z)
+    && hitsGround(holed, HOLE.x, HOLE.z + HOLE.d));
+
+  // And the real mission must actually punch its own hole.
+  const ctx = await boot("safetyMission");
+  runFrames(5);
+  const scene = ctx.instance.__test?.scene;
+  const ground = scene && scene.getObjectByName("ground");
+  check("Safety Mission builds its ground with a hole",
+    !!ground && ground.geometry.type === "ShapeGeometry",
+    ground ? ground.geometry.type : "no ground found");
+  if (ground) {
+    scene.updateMatrixWorld(true);
+    const ray = new THREE.Raycaster(new THREE.Vector3(18, 60, 24), new THREE.Vector3(0, -1, 0), 0.1, 300);
+    check("you can see down into the Safety Mission trench",
+      ray.intersectObject(ground, true).length === 0,
+      "the ground still covers the trench");
+  }
+  ctx.instance.dispose();
+  stage.dispose();
+}
+
+
 section("Scene content");
 
 {

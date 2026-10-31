@@ -96,7 +96,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   addSky(scene, cfg, { top: "#20556F", bottom: "#CFE0DF", fogColor: "#C6D9DC" });
   const sun = addDaylight(scene, cfg, { intensity: 2.0, shadowRadius: 34 });
-  scene.add(buildGround(mat, 200));
+  // Punch the excavation hazard's footprint out of the ground sheet,
+  // or the trench is invisible under it.
+  const excHazard = HAZARDS.find((h) => h.kind === "excavation");
+  const groundHoles = excHazard
+    ? [{ x: excHazard.at.x, z: excHazard.at.z, w: 9.4, d: 3.8 }]
+    : [];
+  scene.add(buildGround(mat, 200, { holes: groundHoles }));
   const hoarding = buildHoarding(geo, mat, { ...COMPOUND, height: 2.4, gateAt: "south" });
   scene.add(hoarding.group);
   scene.add(buildBrandBanners(geo, mat, { ...COMPOUND, panel: 7 }));

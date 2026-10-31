@@ -71,22 +71,27 @@ export const QUALITY_PRESETS = {
     shadowMapSize: 0,
     shadowType: THREE.BasicShadowMap,
     fog: true,
-    anisotropy: 1,
+    anisotropy: 2,
     maxLights: 1,
-    drawDistance: 120,
-    segments: 6,
+    drawDistance: 140,
+    segments: 8,
   },
   medium: {
     maxPixelRatio: 1.5,
-    antialias: false,
+    // Antialiasing was off here, and medium is what every phone and any
+    // 4-core laptop gets — so almost nobody was seeing smooth edges.
+    // MSAA on a scene this simple is cheap; jagged edges are most of
+    // what "low quality" actually looks like.
+    antialias: true,
     shadows: true,
-    shadowMapSize: 1024,
+    shadowMapSize: 1536,
     shadowType: THREE.PCFShadowMap,
     fog: true,
-    anisotropy: 2,
+    // Upper bound only — the real value comes from the GPU, see below.
+    anisotropy: 8,
     maxLights: 2,
-    drawDistance: 220,
-    segments: 10,
+    drawDistance: 240,
+    segments: 12,
   },
   high: {
     maxPixelRatio: 2,
@@ -95,7 +100,7 @@ export const QUALITY_PRESETS = {
     shadowMapSize: 2048,
     shadowType: THREE.PCFSoftShadowMap,
     fog: true,
-    anisotropy: 4,
+    anisotropy: 16,
     maxLights: 3,
     drawDistance: 400,
     segments: 16,
@@ -161,6 +166,15 @@ export function createStage(container, { quality = "medium", fov = 70, near = 0.
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
+
+  // Anisotropy was a hard-coded 2 or 4. The ground is an enormous plane
+  // seen almost edge-on, and at 2 it smears into mush a few metres out.
+  // Take what the GPU actually offers, capped by the tier — it is close
+  // to free and it is the single biggest sharpness win available.
+  try {
+    const maxAniso = renderer.capabilities?.getMaxAnisotropy?.() ?? cfg.anisotropy;
+    cfg.anisotropy = Math.max(1, Math.min(cfg.anisotropy, maxAniso));
+  } catch { /* stub renderer in tests */ }
   renderer.domElement.style.cssText = "display:block;width:100%;height:100%;touch-action:none;outline:none";
   renderer.domElement.tabIndex = -1;
   container.appendChild(renderer.domElement);
