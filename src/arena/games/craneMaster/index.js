@@ -18,11 +18,12 @@ import { createStage, addDaylight, addSky, createZoom } from "../../engine/gfx.j
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
+import { INTERRUPT_SCORING, INTERRUPT_COUNT, interruptById } from "./interrupts.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail,
   buildTowerCrane, updateHoistRope, buildWorker, buildCone, buildSign,
-  buildMaterialPallet, buildZoneMarker, buildSiteHut, buildBarrier,
+  buildMaterialPallet, buildZoneMarker, buildSiteHut, buildBarrier, poseWorker,
 } from "../../engine/kit.js";
 import { sfx, setMotor, stopAllLoops } from "../../audio.js";
 
@@ -56,6 +57,7 @@ export const meta = {
     tips: [
       "Ease the controls on and off. Snatching them is what makes a load swing.",
       "Hoisting in and slewing at the same time is how loads hit scaffolds. Do one, then the other.",
+      "The lift will STOP when something unsafe happens around it. Deal with it before anything moves again.",
       "Safe working load = the moment limit divided by the radius. Long radius, light load.",
       "A load that is still swinging will not land in the target — wait for it.",
       "Emergency stop kills all three motions at once. Use it the moment anything looks wrong.",
@@ -351,9 +353,27 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     pickRing.visible = false;
     scene.add(pickRing);
 
+    // Signage, so the two ends of the lift are readable from the cab
+    // rather than being two rings you have to be told about. A real
+    // lift plan is posted on a board at each end.
+    const pickBoard = buildSign(geo, mat, {
+      text: `PICK UP — ${lift.label}`, kind: "info", height: 2.8, width: 1.5,
+    });
+    pickBoard.position.set(lift.pick.x, 0, lift.pick.z + 3.2);
+    scene.add(pickBoard);
+
+    const landBoard = buildSign(geo, mat, {
+      text: `LAND HERE — LEVEL ${(lift.target.floor ?? 0) + 1}`,
+      kind: "info", height: 2.6, width: 1.5,
+    });
+    landBoard.position.set(lift.target.x, targetY, lift.target.z + 3.2);
+    scene.add(landBoard);
+
     return {
       ...lift,
-      group, pad, ring, pickRing,
+      group, pad, ring, pickRing, pickBoard, landBoard,
+      /** Set once the operator has insisted the bundle is re-rigged. */
+      rigged: false,
       targetY,
       state: "waiting", // waiting | attached | landed
       radiusPick: Math.hypot(lift.pick.x - CRANE.x, lift.pick.z - CRANE.z),
@@ -1046,6 +1066,254 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     return null;
   }
 
+
+  /* ========================= safety interrupts =========================
+   *
+   * The lift is the easy part. What stops a lift in real life is what
+   * happens AROUND the load while it is in the air, so five situations
+   * halt the crane dead and make the operator deal with them before
+   * anything else moves. See interrupts.js for the scenarios.
+   *
+   * Every one of them freezes all crane motion, highlights what the
+   * operator is supposed to be looking at, and refuses to release the
+   * controls until the right control is chosen.
+   */
+
+  const interrupts = {
+    /** The one on screen right now, or null. */
+    open: null,
+    /** ids that have already been raised, so none fires twice. */
+    seen: new Set(),
+    resolved: 0,
+    attempts: 0,
+    wrong: 0,
+    /** Set while a hazard is being resolved, so it cannot re-trigger. */
+    cooldownUntil: 0,
+  };
+
+  // A worker who wanders into the exclusion zone mid-lift. Parked off
+  // site until the moment he is needed, so he cannot be seen coming.
+  const stray = buildWorker(geo, mat, { helmet: true, vest: true, detail: "low" });
+  stray.visible = false;
+  stray.position.set(0, 0, -400);
+  scene.add(stray);
+  const strayState = { active: false, walkedOut: false, phase: 0, from: new THREE.Vector3() };
+
+  // The barricade that is missing from the landing area until the
+  // operator insists on it.
+  const landingBarricade = new THREE.Group();
+  landingBarricade.visible = false;
+  scene.add(landingBarricade);
+  if (lifts[0]) {
+    const t = lifts[0].target;
+    [[-3.2, 0], [3.2, 0], [0, -3.2], [0, 3.2]].forEach(([ox, oz]) => {
+      const bar = buildBarrier(geo, mat, { length: 5.2, color: "orange" });
+      bar.position.set(t.x + ox, lifts[0].targetY + 0.1, t.z + oz);
+      if (ox !== 0) bar.rotation.y = Math.PI / 2;
+      landingBarricade.add(bar);
+    });
+  }
+
+  const highlight = {
+    object: null,
+    mesh: null,
+  };
+
+  function clearHighlight() {
+    if (highlight.mesh?.parent) highlight.mesh.parent.remove(highlight.mesh);
+    highlight.mesh = null;
+    highlight.object = null;
+  }
+
+  /** Rings the thing the operator is supposed to be looking at. */
+  function highlightObject(object, { radius = 3 } = {}) {
+    clearHighlight();
+    if (!object) return;
+    const ring = buildZoneMarker(mat, { radius });
+    ring.position.set(0, 0.06, 0);
+    object.add(ring);
+    highlight.object = object;
+    highlight.mesh = ring;
+  }
+
+  function raiseInterrupt(def, { subject = null, radius = 3 } = {}) {
+    if (interrupts.open || interrupts.seen.has(def.id) || state.finished) return false;
+    interrupts.seen.add(def.id);
+    interrupts.open = { def, attempts: 0 };
+
+    // Everything stops. Not slows — stops.
+    state.slewVel = 0;
+    state.radiusVel = 0;
+    state.hoistVel = 0;
+    stopAllLoops();
+    sfx.alarm();
+    highlightObject(subject, { radius });
+    showInterrupt();
+    pushHud();
+    return true;
+  }
+
+  function showInterrupt() {
+    const open = interrupts.open;
+    if (!open) return;
+    const { def } = open;
+    api.dialog({
+      eyebrow: `LIFT HALTED — SAFETY ${interrupts.resolved + 1} OF ${INTERRUPT_COUNT}`,
+      title: def.title,
+      subtitle: `${def.warning}\n\n${def.question}`,
+      tone: "danger",
+      options: def.options.map((text, index) => ({
+        id: String(index),
+        label: text,
+        badge: String.fromCharCode(65 + index),
+      })),
+      footer: open.attempts > 0
+        ? "Still unresolved. The load stays where it is until it is right."
+        : "Nothing moves until this is dealt with.",
+      dismissable: false,
+    // eslint-disable-next-line no-use-before-define
+      onPick: (id) => answerInterrupt(Number(id)),
+    });
+  }
+
+  function answerInterrupt(pickedIndex) {
+    const open = interrupts.open;
+    if (!open) return;
+    const { def } = open;
+    interrupts.attempts += 1;
+
+    if (pickedIndex !== def.correct) {
+      open.attempts += 1;
+      interrupts.wrong += 1;
+      state.score += INTERRUPT_SCORING.wrongAnswer;
+      state.violations += 1;
+      sfx.wrong();
+      api.toast("That leaves the load in the air over the problem.", "bad",
+        INTERRUPT_SCORING.wrongAnswer);
+      showInterrupt();
+      pushHud();
+      return;
+    }
+
+    const award = open.attempts === 0
+      ? INTERRUPT_SCORING.resolvedFirstTry
+      : INTERRUPT_SCORING.resolvedAfterMiss;
+    state.score += award;
+    interrupts.resolved += 1;
+    interrupts.open = null;
+    interrupts.cooldownUntil = stage.elapsed + 6;
+    api.dialog(null);
+    clearHighlight();
+    sfx.correct();
+    api.toast(def.toast, "good", award);
+    applyInterruptFix(def.id);
+
+    if (interrupts.resolved === INTERRUPT_COUNT) {
+      state.score += INTERRUPT_SCORING.allResolved;
+      api.toast("Every hazard on this lift dealt with properly.", "good",
+        INTERRUPT_SCORING.allResolved);
+    }
+    pushHud();
+  }
+
+  /** Makes the resolution VISIBLE, so the fix is a thing that happened. */
+  function applyInterruptFix(id) {
+    if (id === "person-under-load") {
+      strayState.walkedOut = true;
+    } else if (id === "no-barricade") {
+      landingBarricade.visible = true;
+    } else if (id === "swing") {
+      // "Let it damp out" — so it does, rather than the player having
+      // to wait out a pendulum they were told to stop fighting.
+      state.swingVel.multiplyScalar(0.1);
+      state.swing.multiplyScalar(0.35);
+    } else if (id === "rigging") {
+      const lift = state.attached || lifts[state.liftIndex];
+      if (lift) lift.rigged = true;
+    }
+  }
+
+  /** Walks the stray worker in, and back out once he has been cleared. */
+  function updateStray(dt) {
+    if (!strayState.active) return;
+    strayState.phase += dt;
+    const target = strayState.walkedOut
+      ? strayState.from
+      : loadWorldPosition(_focus);
+    const dx = target.x - stray.position.x;
+    const dz = target.z - stray.position.z;
+    const dist = Math.hypot(dx, dz);
+    const step = Math.min(dist, (strayState.walkedOut ? 3.4 : 1.8) * dt);
+    if (dist > 0.25) {
+      stray.position.x += (dx / dist) * step;
+      stray.position.z += (dz / dist) * step;
+      stray.rotation.y = Math.atan2(dx, dz);
+    }
+    poseWorker(stray, {
+      phase: strayState.phase * 7.4,
+      moving: dist > 0.25,
+      running: strayState.walkedOut,
+    });
+    if (strayState.walkedOut && dist < 0.4) {
+      strayState.active = false;
+      stray.visible = false;
+    }
+  }
+
+  /** Decides, every frame, whether anything should stop the lift. */
+  function checkInterrupts(dt) {
+    if (interrupts.open || state.finished) return;
+    if (stage.elapsed < interrupts.cooldownUntil) return;
+
+    const lift = state.attached;
+    const load = lift ? loadWorldPosition(_focus) : null;
+
+    // 1. Rigging — the moment they take the weight of the first load.
+    if (lift && !interrupts.seen.has("rigging") && load && load.y > 0.6) {
+      raiseInterrupt(interruptById("rigging"), { subject: lift.group, radius: 3.4 });
+      return;
+    }
+
+    // Everything below needs a load actually in the air.
+    if (!lift || !load || load.y < 2.5) return;
+
+    // 2. Somebody walks under it, once it is travelling.
+    if (!interrupts.seen.has("person-under-load")
+        && interrupts.seen.has("rigging")
+        && Math.hypot(load.x - lift.pick.x, load.z - lift.pick.z) > 6) {
+      strayState.active = true;
+      strayState.walkedOut = false;
+      strayState.from.set(load.x + 14, 0, load.z + 10);
+      stray.position.copy(strayState.from);
+      stray.visible = true;
+      // Put him under it, then halt.
+      stray.position.set(load.x, 0, load.z);
+      raiseInterrupt(interruptById("person-under-load"), { subject: stray, radius: 4.2 });
+      return;
+    }
+
+    // 3. The swing gets away from them.
+    if (!interrupts.seen.has("swing") && swingSpeed() > STEADY_LIMIT * 2.6) {
+      raiseInterrupt(interruptById("swing"), { subject: lift.group, radius: 3.6 });
+      return;
+    }
+
+    // 4. The radio call, part way across.
+    if (!interrupts.seen.has("unsafe-instruction")
+        && interrupts.seen.has("person-under-load")
+        && Math.hypot(load.x - lift.target.x, load.z - lift.target.z) < 26) {
+      raiseInterrupt(interruptById("unsafe-instruction"), { subject: lift.group, radius: 3.4 });
+      return;
+    }
+
+    // 5. The landing area, as they bring it in.
+    if (!interrupts.seen.has("no-barricade")
+        && !landingBarricade.visible
+        && Math.hypot(load.x - lift.target.x, load.z - lift.target.z) < 9) {
+      raiseInterrupt(interruptById("no-barricade"), { subject: lift.group, radius: 4 });
+    }
+  }
+
   /* -------------------------------- loop -------------------------------- */
 
   // Show the first pick ring.
@@ -1063,7 +1331,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       }
     }
 
-    if (!state.finished) {
+    updateStray(dt);
+
+    // A halted lift takes no control input at all. Not reduced — none.
+    if (!state.finished && !interrupts.open) {
       if (input.wasPressed("estop")) {
         state.estop = true;
         state.estopTimer = 1.6;
@@ -1092,6 +1363,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       applyMotion(dt);
       updateSwing(dt);
       checkRules(dt);
+      checkInterrupts(dt);
     } else {
       stopAllLoops();
     }
@@ -1166,6 +1438,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
       state, lifts, hookWorldPosition, loadWorldPosition, safeWorkingLoad, CRANE,
+      interrupts, raiseInterrupt, answerInterrupt, checkInterrupts,
+      stray, landingBarricade,
       zoomFov: () => camera.fov,
       camDistance: () => cam.distance,
     },

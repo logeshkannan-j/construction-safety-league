@@ -1037,11 +1037,146 @@ section("Safety Mission Simulator — full playthrough");
  *  Game 2 — crane lift
  * ================================================================ */
 
+/* ================================================================ *
+ *  The lift stops for people
+ *
+ *  Driven directly rather than through a playthrough, so every one of
+ *  the five situations is exercised including the ones a tidy operator
+ *  would never trigger.
+ * ================================================================ */
+
+section("A lift halts for a safety situation and will not resume until it is fixed");
+
+{
+  const { INTERRUPTS, INTERRUPT_COUNT, INTERRUPT_SCORING, interruptById } =
+    await import(`${SRC}/games/craneMaster/interrupts.js`);
+
+  /* ---- the scenarios themselves ---- */
+  check("there are five lifting situations", INTERRUPT_COUNT === 5, `${INTERRUPT_COUNT}`);
+  const badShape = INTERRUPTS.filter((d) => !d.id || !d.title || !d.warning || !d.question
+    || !Array.isArray(d.options) || d.options.length !== 4
+    || !Number.isFinite(d.correct) || d.correct < 0 || d.correct > 3
+    || !d.why || !d.toast);
+  check("every situation is fully written with four options", badShape.length === 0,
+    badShape.map((d) => d.id).join(", "));
+  check("the ids are unique",
+    new Set(INTERRUPTS.map((d) => d.id)).size === INTERRUPT_COUNT);
+  check("an unknown id returns null, it does not throw",
+    interruptById("nope") === null);
+
+  // Nobody should be able to spot the answer by its SHAPE. On this
+  // project the quiz already shipped once with the correct answer as
+  // the longest option 82% of the time, so this is measured, not
+  // assumed: the right answer has to sit in the pack on length.
+  const lengthOutliers = INTERRUPTS.filter((d) => {
+    const lens = d.options.map((o) => o.length);
+    const others = lens.filter((_, i) => i !== d.correct).sort((a, b) => a - b);
+    const median = (others[0] + others[others.length - 1]) / 2;
+    return Math.abs(lens[d.correct] - median) > 12;
+  });
+  check("the right answer cannot be picked out by its length",
+    lengthOutliers.length === 0,
+    lengthOutliers.map((d) => `${d.id}:${d.options.map((o) => o.length).join("/")}`).join(" "));
+
+  const longest = INTERRUPTS.filter((d) => {
+    const lens = d.options.map((o) => o.length);
+    return lens[d.correct] === Math.max(...lens);
+  }).length;
+  check("the right answer is not always the longest option",
+    longest <= 1, `${longest} of ${INTERRUPT_COUNT}`);
+
+  // And not always in the same slot, since the options are shown in
+  // this order.
+  check("the right answer is not always in the same position",
+    new Set(INTERRUPTS.map((d) => d.correct)).size >= 3,
+    INTERRUPTS.map((d) => d.correct).join(","));
+
+  /* ---- and in the game ---- */
+  const { instance } = await boot("craneMaster");
+  const t = instance.__test;
+  runFrames(10);
+
+  check("the crane starts with nothing halting it", t.interrupts.open === null);
+
+  for (const def of INTERRUPTS) {
+    const subject = def.id === "person-under-load" ? t.stray : t.lifts[0].group;
+    const raised = t.raiseInterrupt(def, { subject });
+    check(`${def.id}: halts the lift`, raised && t.interrupts.open?.def.id === def.id);
+
+    // Everything braked, and the controls are dead.
+    check(`${def.id}: all crane motion is stopped`,
+      t.state.slewVel === 0 && t.state.radiusVel === 0 && t.state.hoistVel === 0);
+    instance.input.press("slewRight");
+    const slewBefore = t.state.slew;
+    runFrames(45);
+    instance.input.release("slewRight");
+    check(`${def.id}: the controls do nothing while it is unresolved`,
+      Math.abs(t.state.slew - slewBefore) < 1e-6,
+      `${slewBefore.toFixed(4)} → ${t.state.slew.toFixed(4)}`);
+
+    // A wrong answer costs, and does NOT release the controls.
+    const scoreBefore = t.state.score;
+    const wrong = [0, 1, 2, 3].find((i) => i !== def.correct);
+    t.answerInterrupt(wrong);
+    check(`${def.id}: a wrong answer keeps the lift halted`,
+      t.interrupts.open?.def.id === def.id);
+    check(`${def.id}: a wrong answer costs points`,
+      t.state.score === scoreBefore + INTERRUPT_SCORING.wrongAnswer,
+      `${scoreBefore} → ${t.state.score}`);
+
+    // The right one releases it.
+    t.answerInterrupt(def.correct);
+    check(`${def.id}: the right control resumes the lift`, t.interrupts.open === null);
+    runFrames(5);
+  }
+
+  check("every situation was resolved", t.interrupts.resolved === INTERRUPT_COUNT,
+    `${t.interrupts.resolved}`);
+  check("resolving them all is worth a bonus",
+    t.state.score > INTERRUPT_SCORING.allResolved - 1);
+
+  // The fixes have to be things that visibly HAPPENED, not just text.
+  check("insisting on a barricade puts one at the landing area",
+    t.landingBarricade.visible === true);
+  check("clearing the zone sends the worker out of it",
+    t.stray.userData.rig && (() => {
+      const before = t.stray.position.clone();
+      runFrames(90);
+      return t.stray.position.distanceTo(before) > 1 || t.stray.visible === false;
+    })());
+
+  // And the controls work again once nothing is halting the lift.
+  const slewNow = t.state.slew;
+  instance.input.press("slewRight");
+  runFrames(45);
+  instance.input.release("slewRight");
+  check("the controls come back once everything is resolved",
+    Math.abs(t.state.slew - slewNow) > 1e-4,
+    `${slewNow.toFixed(4)} → ${t.state.slew.toFixed(4)}`);
+
+  instance.dispose();
+}
+
 section("Tower Crane Master — lift a load");
 {
   const { instance, record } = await boot("craneMaster");
   const input = instance.input;
   const { state, lifts, hookWorldPosition, loadWorldPosition, safeWorkingLoad, CRANE } = instance.__test;
+  const { interrupts, answerInterrupt } = instance.__test;
+
+  /* The lift now STOPS when something unsafe happens around it, and
+   * will not take another control input until the operator deals with
+   * it. An operator who answers correctly carries on, so that is what
+   * this does — and the list it builds is the proof the hazards fired
+   * at all, which is asserted at the end. */
+  const interruptsHit = [];
+  function resolveAnyInterrupt() {
+    const open = interrupts.open;
+    if (!open) return false;
+    interruptsHit.push(open.def.id);
+    answerInterrupt(open.def.correct);
+    return true;
+  }
 
   runFrames(10);
   // The mission is ONE lift, done properly — not a queue of them.
@@ -1049,6 +1184,18 @@ section("Tower Crane Master — lift a load");
   check("the one lift targets a floor of the building, not the ground",
     lifts[0].target.floor !== null && lifts[0].targetY > 1, `floor ${lifts[0].target.floor}`);
   check("the HUD reports crane readouts", (record.hud.readouts || []).length >= 5);
+
+  // Both ends of the lift are signed, so an operator can read the plan
+  // off the site instead of being told where to go.
+  check("the pick-up point carries a board", !!lifts[0].pickBoard,
+    "no PICK UP sign in the scene");
+  check("the landing point carries a board", !!lifts[0].landBoard,
+    "no LAND HERE sign in the scene");
+  check("the boards stand at the two ends of the lift",
+    Math.hypot(lifts[0].pickBoard.position.x - lifts[0].pick.x,
+      lifts[0].pickBoard.position.z - lifts[0].pick.z) < 5
+    && Math.hypot(lifts[0].landBoard.position.x - lifts[0].target.x,
+      lifts[0].landBoard.position.z - lifts[0].target.z) < 5);
   check("the capacity chart falls as radius grows",
     safeWorkingLoad(10) > safeWorkingLoad(35), `${safeWorkingLoad(10)} vs ${safeWorkingLoad(35)}`);
 
@@ -1111,6 +1258,12 @@ section("Tower Crane Master — lift a load");
       else if (shouldDrive && error < 0) { input.press(minus); input.release(plus); }
       else { input.release(plus); input.release(minus); }
       runFrames(1);
+      if (resolveAnyInterrupt()) {
+        // Everything was braked when the lift halted, so let the
+        // operator settle before driving again.
+        releaseAll();
+        runFrames(10);
+      }
     }
     input.release(plus); input.release(minus);
     return false;
@@ -1193,6 +1346,18 @@ section("Tower Crane Master — lift a load");
   check("the next lift is queued", state.liftIndex === 1, `${state.liftIndex}`);
   check("landing a load is scored", state.accuracyPoints > 0 || state.steadyPoints > 0,
     `accuracy=${state.accuracyPoints} steady=${state.steadyPoints}`);
+
+  // The lift is not a transport puzzle: things happened around the load
+  // and the operator had to deal with them to get here at all.
+  check("safety situations interrupted the lift", interruptsHit.length >= 3,
+    `fired: ${interruptsHit.join(", ") || "none"}`);
+  check("the rigging was challenged before the load left the ground",
+    interruptsHit[0] === "rigging", interruptsHit.join(", "));
+  check("no hazard fired twice", new Set(interruptsHit).size === interruptsHit.length,
+    interruptsHit.join(", "));
+  check("resolving them is what let the lift finish",
+    interrupts.resolved === interruptsHit.length && interrupts.open === null,
+    `${interrupts.resolved} resolved`);
 
   instance.dispose();
   check("game 2 disposes without throwing", true);

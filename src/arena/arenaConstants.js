@@ -103,7 +103,7 @@ export const GAMES = [
     title: "Tower Crane Master",
     tagline: "Slew, trolley, hoist — without swinging a load over anyone.",
     description:
-      "Take the cab of a tower crane. Rig loads, slew the jib, run the trolley and hoist material to the right floor while keeping the load clear of workers, structures and exclusion zones.",
+      "Take the cab of a tower crane and move one bundle from the marked pick-up board to the marked landing board. The lift is the easy part: five things go wrong AROUND the load while it is in the air — bad rigging, a man under it, an open landing area, a swing you cannot control, and a radio call telling you to cut the corner. Each one stops the crane dead until you deal with it.",
     accent: C.yellow,
     icon: "crane",
     minutes: "5–9 min",
