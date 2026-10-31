@@ -255,6 +255,123 @@ section("A participant can reach the join form");
     run?.stage === "locked" && run?.itemIndex === 0);
 }
 
+/* ------------------- every stage of a participant run ------------------- */
+
+section("Every session stage renders");
+
+{
+  /* A blank page reached admin TWICE before this existed. The cause both
+   * times was a stale identifier used only on one branch — `round?.gameId`
+   * after the variable was removed in a refactor. The build stays green,
+   * the engine tests stay green, and the participant sees nothing.
+   *
+   * So: render SoloSession at EVERY stage and require real content. */
+  const sessionMod = await server.ssrLoadModule("/src/session.js");
+  const { default: SoloSession } = await server.ssrLoadModule("/src/SoloSession.jsx");
+
+  const plan = sessionMod.buildEventPlan();
+  const game = { gameCode: "123456", releasedRound: 4, status: "question" };
+
+  /** Builds a run parked exactly on the wanted stage. */
+  function runAt(stage) {
+    let run = sessionMod.createRun(plan, { now: 0 });
+    if (stage === "locked") return run;
+    let t = 0;
+    const tick = () => (t += 500);
+    let guard = 0;
+    while (run.stage !== stage && run.stage !== "done" && guard++ < 200) {
+      if (run.stage === "locked" || run.stage === "roundDone") {
+        const r = sessionMod.releaseRun(plan, run, {
+          releasedRound: sessionMod.runRoundIndex(plan, run), now: tick(),
+        });
+        if (!r.changed) break;
+        run = r.run;
+        continue;
+      }
+      const item = sessionMod.currentItem(plan, run);
+      if (!item) break;
+      if (item.round === "game3d") {
+        run = sessionMod.completeItemGame(plan, run,
+          { score: 9000, maxScore: 12000, completed: true }, { now: tick() }).run;
+      } else {
+        run = sessionMod.answerItem(plan, run, { pickedIndex: item.correct, now: tick() }).run;
+      }
+      run = sessionMod.advanceRun(plan, run, { now: tick() });
+    }
+    return run;
+  }
+
+  const stageRoot = ReactDOMClient.createRoot(rootEl);
+  const before = reactErrors.length;
+
+  for (const stage of ["locked", "game3d", "quiz", "millionaire", "roundDone", "done"]) {
+    const run = runAt(stage);
+    const me = {
+      id: "p1", name: "Test", score: 0,
+      scores: { game3d: 0, quiz: 0, millionaire: 0 },
+      session: run,
+    };
+    stageRoot.render(React.createElement(SoloSession, {
+      me, game, plan, players: [me], connected: true, serverOffset: 0,
+      // A no-op: this test is about RENDERING each stage, not advancing.
+      onPersist: () => {}, onExit: () => {},
+    }));
+    await settle(450);
+
+    const body = visibleText();
+    check(`stage "${stage}" reaches that stage`, run.stage === stage, `got ${run.stage}`);
+    check(`stage "${stage}" renders something, not a blank page`,
+      rootEl.childElementCount > 0 && body.length > 8,   // blank vs not-blank is the bar; the 3D stage may show its Suspense fallback
+      `${body.length} chars: ${body.slice(0, 80)}`);
+  }
+
+  check("no React errors across every session stage",
+    reactErrors.length === before,
+    reactErrors.slice(before, before + 2).join(" | "));
+
+  stageRoot.unmount();
+}
+
+
+/* --------------------- a crash is never a blank page --------------------- */
+
+section("A render error shows itself");
+
+{
+  /* Three separate blank pages reached the user on this project. Each
+   * time the screen said nothing and the cause had to be reproduced
+   * off-device. The boundary turns a throw into a readable report. */
+  const { default: ErrorBoundary } = await server.ssrLoadModule("/src/ErrorBoundary.jsx");
+
+  function Exploding() {
+    throw new ReferenceError("round is not defined");
+  }
+
+  const boundaryRoot = ReactDOMClient.createRoot(rootEl);
+  const before = reactErrors.length;
+  boundaryRoot.render(React.createElement(ErrorBoundary, null, React.createElement(Exploding)));
+  await settle(400);
+
+  const body = visibleText();
+  check("a thrown render does NOT leave a blank page",
+    rootEl.childElementCount > 0 && body.length > 8, `${body.length} chars`);
+  check("the screen says something broke",
+    /something broke|failed to load/i.test(body), body.slice(0, 120));
+  check("the actual error message is on screen",
+    body.includes("round is not defined"), body.slice(0, 200));
+  check("it reassures the participant their score is safe",
+    /score and your answers are safe/i.test(body));
+  check("it offers a way to recover",
+    [...rootEl.querySelectorAll("button")].some((b) => /reload/i.test(b.textContent)));
+
+  // The boundary logs the throw too, so the console still has the stack.
+  check("the error is still logged for the console",
+    reactErrors.length > before);
+
+  boundaryRoot.unmount();
+}
+
+
 /* ---------------------- hooks above early returns ---------------------- */
 
 section("Hooks never sit below an early return");

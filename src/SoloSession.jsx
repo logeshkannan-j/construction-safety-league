@@ -237,7 +237,7 @@ export default function SoloSession({
     return (
       <Suspense fallback={<Centered><p style={{ color: COLORS.muted }}>Loading the 3D mission…</p></Centered>}>
         <EmbeddedGame
-          gameId={round?.gameId}
+          gameId={item?.gameId}
           roundNumber={index + 1}
           me={me}
           onComplete={(result) => {
@@ -254,7 +254,7 @@ export default function SoloSession({
   }
 
   if (stage === STAGES.DONE) {
-    return <SessionResult me={me} players={players} onExit={onExit} />;
+    return <SessionResult me={me} plan={plan} players={players} onExit={onExit} />;
   }
 
   /* --------------------------- question view --------------------------- */
@@ -630,7 +630,7 @@ function QuestionReveal({ question, result, isFinale, onNext, isLast, endsRound,
   );
 }
 
-function SessionResult({ me, players, onExit }) {
+function SessionResult({ me, plan = [], players, onExit }) {
   const summary = runSummary(plan, me.session);
   const sorted = useMemo(
     () => [...(players || [])].sort((a, b) => (b.score || 0) - (a.score || 0)),
