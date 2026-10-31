@@ -651,7 +651,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   });
 
   const avatar = buildWorker(geo, mat, {
-    helmet: true, vest: true, boots: true, helmetColor: "white",
+    helmet: true, vest: true, boots: true, role: "officer",
   });
   scene.add(avatar);
   let walkPhase = 0;
@@ -668,7 +668,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     walkPhase += dt * (commander.state.running ? 11 : 7.4) * (moving ? 1 : 0);
     avatar.position.set(commander.position.x, commander.position.y, commander.position.z);
     if (moving) avatar.rotation.y = Math.atan2(commander.velocity.x, commander.velocity.z);
-    poseWorker(avatar, { phase: walkPhase, moving, pose: "stand" });
+    poseWorker(avatar, {
+      phase: walkPhase, moving, running: commander.state.running, pose: "stand",
+    });
   }
 
   function updateCamera(dt) {

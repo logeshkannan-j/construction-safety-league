@@ -678,8 +678,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     poseWorker(avatar, {
       phase: walkPhase,
       moving,
-      // Both hands up on the extinguisher while carrying one.
-      pose: state.carrying ? "work" : "stand",
+      running: controller.state.running,
+      // Both hands on the extinguisher while carrying one, walking or not.
+      carrying: !!state.carrying,
+      pose: state.carrying ? "carry" : "stand",
     });
   }
 

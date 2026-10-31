@@ -690,7 +690,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    * body. Walks when they walk.
    */
   const avatar = buildWorker(geo, mat, {
-    helmet: true, vest: true, boots: true, helmetColor: "orange",
+    helmet: true, vest: true, boots: true, role: "officer",
   });
   avatar.visible = false;
   scene.add(avatar);
@@ -707,6 +707,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       poseWorker(avatar, {
         phase: walkPhase,
         moving,
+        running: controller.state.running,
         pose: controller.state.crouching ? "crouch" : "stand",
       });
     }

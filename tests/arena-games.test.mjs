@@ -584,12 +584,45 @@ section("The worker is a person, not a pile of boxes");
   check("standing still puts the legs back under the body",
     Math.abs(rig.legL.rotation.x) < 0.1 && Math.abs(rig.legR.rotation.x) < 0.1);
 
+  /* ---- the safety officer must be tellable from the crew ---- */
+  const officer = kit.buildWorker(geo, mat, { role: "officer" });
+  const crew = kit.buildWorker(geo, mat, {});
+  const matsOf = (o) => { const set = new Set(); o.traverse((c) => { if (c.isMesh) set.add(c.material); }); return set; };
+  const officerMats = matsOf(officer);
+  const crewMats = matsOf(crew);
+  check("the safety officer is visually distinct from the crew",
+    [...officerMats].filter((m) => !crewMats.has(m)).length >= 2,
+    `${[...officerMats].filter((m) => !crewMats.has(m)).length} materials differ`);
+  check("the officer carries a clipboard", !!officer.userData.rig.armL.userData.board);
+  check("the role is recorded on the figure",
+    officer.userData.role === "officer" && crew.userData.role === "worker");
+
+  /* ---- running is not just a fast walk ---- */
+  kit.poseWorker(person, { phase: Math.PI / 2, moving: true, running: false });
+  const walkStride = rig.legL.rotation.x;
+  const walkLean = rig.spine.rotation.x;
+  kit.poseWorker(person, { phase: Math.PI / 2, moving: true, running: true });
+  check("running opens the stride", Math.abs(rig.legL.rotation.x) > Math.abs(walkStride) * 1.3,
+    `${walkStride.toFixed(2)} → ${rig.legL.rotation.x.toFixed(2)}`);
+  check("running leans the body into it", rig.spine.rotation.x > walkLean + 0.1,
+    `${walkLean.toFixed(2)} → ${rig.spine.rotation.x.toFixed(2)}`);
+  check("running bends the arms up", rig.armL.userData.elbow.rotation.x < -1,
+    `${rig.armL.userData.elbow.rotation.x.toFixed(2)}`);
+
+  /* ---- carrying keeps both hands on the load while walking ---- */
+  kit.poseWorker(person, { phase: 0.4, moving: true, carrying: true });
+  const carryL = rig.armL.rotation.x;
+  kit.poseWorker(person, { phase: 2.4, moving: true, carrying: true });
+  check("carrying holds the arms still while the legs walk",
+    Math.abs(rig.armL.rotation.x - carryL) < 0.01 && Math.abs(rig.legL.rotation.x) > 0.1,
+    `arms ${carryL.toFixed(2)}, legs ${rig.legL.rotation.x.toFixed(2)}`);
+
   // Every pose the games ask for must do something, or a figure meant
   // to be kneeling in a trench is just standing in it.
-  const poses = ["stand", "work", "reach", "crouch", "kneel"];
+  const poses = ["stand", "work", "reach", "crouch", "kneel", "carry", "lift", "climb"];
   const hipHeights = poses.map((pose) => {
-    kit.poseWorker(person, { pose, moving: false });
-    return `${pose}:${rig.hips.position.y.toFixed(2)}:${rig.armL.rotation.x.toFixed(2)}`;
+    kit.poseWorker(person, { pose, moving: false, phase: 1 });
+    return `${pose}:${rig.hips.position.y.toFixed(2)}:${rig.armL.rotation.x.toFixed(2)}:${rig.legL.rotation.x.toFixed(2)}`;
   });
   check("every pose the games use is distinct",
     new Set(hipHeights).size === poses.length, hipHeights.join(" "));

@@ -454,7 +454,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   });
 
   const avatar = buildWorker(geo, mat, {
-    helmet: true, vest: true, boots: true, helmetColor: "orange",
+    helmet: true, vest: true, boots: true, role: "officer",
   });
   scene.add(avatar);
   let walkPhase = 0;
@@ -477,7 +477,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Face the way they are actually travelling, not the way the
     // camera happens to be pointing.
     if (moving) avatar.rotation.y = Math.atan2(v.x, v.z);
-    poseWorker(avatar, { phase: walkPhase, moving, pose: "stand" });
+    poseWorker(avatar, {
+      phase: walkPhase, moving, running: walker.state.running, pose: "stand",
+    });
   }
 
   function focusOn(position, { height = 2 } = {}) {

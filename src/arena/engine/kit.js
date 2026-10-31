@@ -1781,7 +1781,13 @@ export function updateHoistRope(parts) {
  */
 export function buildWorker(geo, mat, {
   helmet = true, vest = true, harness = false, boots = true,
-  helmetColor = "yellow", pose = "stand", skin = "skin", scale = 1,
+  helmetColor = null, pose = "stand", skin = "skin", scale = 1,
+  // "officer" has to be recognisable across a site at a glance, so it
+  // is three signals at once, not one: a WHITE hat, an ORANGE vest
+  // where the crew wear hi-vis yellow, and a clipboard. One of those
+  // alone is not enough at distance or on a small screen.
+  role = "worker",
+  vestColor = null,
   // "low" drops the detail you cannot see past about 15 m — eyes, jaw,
   // heels, shoulder caps, the hat ridge — and takes a figure from 32
   // draw calls to 20 while keeping the full skeleton, so a crowd still
@@ -1791,7 +1797,10 @@ export function buildWorker(geo, mat, {
 } = {}) {
   const fine = detail !== "low";
   const group = new THREE.Group();
-  const helmetMat = { yellow: mat.yellow, white: mat.white, blue: mat.blue, orange: mat.orange, green: mat.green }[helmetColor] || mat.yellow;
+  const officer = role === "officer";
+  const palette = { yellow: mat.yellow, white: mat.white, blue: mat.blue, orange: mat.orange, green: mat.green, hiVis: mat.hiVis };
+  const helmetMat = palette[helmetColor] || (officer ? mat.white : mat.yellow);
+  const vestMat = palette[vestColor] || (officer ? mat.orange : mat.hiVis);
   const skinMat = skin === "dark" ? mat.skinDark : mat.skin;
 
   // A capsule of a given length and radius, hanging DOWN from its
@@ -1821,8 +1830,10 @@ export function buildWorker(geo, mat, {
     knee.position.y = -0.44;
     knee.add(limb(mat.denim, 0.072, 0.42));          // shin, knee to ankle
     if (boots) {
-      knee.add(box(geo, mat.black, 0.14, 0.11, 0.26, 0, -0.42, 0.04));
-      if (fine) knee.add(box(geo, mat.black, 0.15, 0.1, 0.14, 0, -0.34, -0.03));
+      // Ankle, foot and a toe box, so the foot has a direction.
+      knee.add(box(geo, mat.black, 0.13, 0.12, 0.15, 0, -0.42, -0.01));
+      knee.add(box(geo, mat.black, 0.14, 0.075, 0.17, 0, -0.455, 0.11));
+      if (fine) knee.add(box(geo, mat.black, 0.125, 0.05, 0.07, 0, -0.47, 0.2));
     }
     leg.add(knee);
     leg.userData.knee = knee;
@@ -1846,7 +1857,7 @@ export function buildWorker(geo, mat, {
   }
 
   if (vest) {
-    const v = limb(mat.hiVis, 0.185, 0.44, { y: 0.32 });
+    const v = limb(vestMat, 0.185, 0.44, { y: 0.32 });
     v.scale.z *= 0.74;
     spine.add(v);
     // Reflective bands round the body, and the two braces over it.
@@ -1879,17 +1890,24 @@ export function buildWorker(geo, mat, {
     const arm = new THREE.Group();
     arm.position.set(sx, 0.50, 0);                   // shoulder
     // Sleeve to the elbow, bare forearm below it.
-    arm.add(limb(vest ? mat.hiVis : mat.denim, 0.062, 0.28));
+    arm.add(limb(vest ? vestMat : mat.denim, 0.062, 0.28));
 
     const elbow = new THREE.Group();
     elbow.position.y = -0.28;
     elbow.add(limb(skinMat, 0.052, 0.26));
-    elbow.add(box(geo, mat.black, 0.09, 0.11, 0.07, 0, -0.29, 0.01));   // glove
+    // Glove: palm, then a thumb off the side. Two boxes, and the hand
+    // stops reading as the end of a stick.
+    const hand = new THREE.Group();
+    hand.position.y = -0.27;
+    hand.add(box(geo, mat.black, 0.075, 0.115, 0.055, 0, -0.045, 0));
+    if (fine) hand.add(box(geo, mat.black, 0.035, 0.06, 0.045, 0.045, -0.015, 0.01, { rotZ: 0.5 }));
+    elbow.add(hand);
+    arm.userData.hand = hand;
     arm.add(elbow);
     arm.userData.elbow = elbow;
 
     // Shoulder cap, so the arm is not socketed into thin air.
-    if (fine) arm.add(limb(vest ? mat.hiVis : mat.denim, 0.075, 0.1, { y: 0.01 }));
+    if (fine) arm.add(limb(vest ? vestMat : mat.denim, 0.075, 0.1, { y: 0.01 }));
     spine.add(arm);
     arms.push(arm);
   });
@@ -1936,10 +1954,25 @@ export function buildWorker(geo, mat, {
     }
   }
 
+  if (officer) {
+    // A clipboard in the left hand. It is the detail that makes
+    // somebody read as the person inspecting rather than the person
+    // working, before you are close enough to see the vest colour.
+    const board = new THREE.Group();
+    board.position.set(0, -0.09, 0.05);
+    board.rotation.set(-1.2, 0, 0.2);
+    board.add(box(geo, mat.timber, 0.2, 0.01, 0.27, 0, 0, 0));
+    board.add(box(geo, mat.white, 0.17, 0.008, 0.23, 0, 0.012, -0.01, { shadow: false }));
+    board.add(box(geo, mat.steel, 0.09, 0.015, 0.03, 0, 0.022, 0.11, { shadow: false }));
+    arms[0].userData.hand.add(board);
+    arms[0].userData.board = board;
+  }
+
   group.userData.rig = {
     hips, spine, neck, head,
     legL: legs[0], legR: legs[1], armL: arms[0], armR: arms[1],
   };
+  group.userData.role = role;
   group.userData.worker = { helmet, vest, harness, boots };
 
   // A standing person is not at attention: break the symmetry so a
@@ -1957,7 +1990,9 @@ export function buildWorker(geo, mat, {
  * @param moving  true to swing the limbs, false to stand
  * @param pose    "stand" | "work" | "reach" | "crouch" | "kneel"
  */
-export function poseWorker(worker, { phase = 0, moving = false, pose = "stand" } = {}) {
+export function poseWorker(worker, {
+  phase = 0, moving = false, pose = "stand", running = false, carrying = false,
+} = {}) {
   const rig = worker?.userData?.rig;
   if (!rig) return;
   const { hips, spine, legL, legR, armL, armR, head } = rig;
@@ -1966,20 +2001,41 @@ export function poseWorker(worker, { phase = 0, moving = false, pose = "stand" }
     // Opposite arm to leg, knees that only bend backwards, and a small
     // bob and sway. Those four things are what make a walk read as a
     // walk rather than a figure sliding along the ground.
+    //
+    // A run is not a fast walk: the stride opens up, the knees come up
+    // much higher, the body leans into it and the arms bend to about a
+    // right angle and pump rather than swing.
     const s = Math.sin(phase);
     const c = Math.cos(phase);
-    legL.rotation.x = s * 0.62;
-    legR.rotation.x = -s * 0.62;
-    legL.userData.knee.rotation.x = -Math.max(0, -s) * 0.95 - 0.05;
-    legR.userData.knee.rotation.x = -Math.max(0, s) * 0.95 - 0.05;
-    armL.rotation.set(-s * 0.52, 0, 0.1);
-    armR.rotation.set(s * 0.52, 0, -0.1);
-    armL.userData.elbow.rotation.x = -0.3 - Math.max(0, s) * 0.3;
-    armR.userData.elbow.rotation.x = -0.3 - Math.max(0, -s) * 0.3;
-    hips.position.y = 0.94 - Math.abs(c) * 0.025;
-    hips.rotation.z = s * 0.03;
-    spine.rotation.set(0.05, -s * 0.07, 0);
-    head.rotation.set(0, 0, 0);
+    const stride = running ? 0.95 : 0.62;
+    const lift = running ? 1.5 : 0.95;
+    const lean = running ? 0.26 : 0.05;
+
+    legL.rotation.x = s * stride;
+    legR.rotation.x = -s * stride;
+    legL.userData.knee.rotation.x = -Math.max(0, -s) * lift - 0.05;
+    legR.userData.knee.rotation.x = -Math.max(0, s) * lift - 0.05;
+    hips.position.y = 0.94 - Math.abs(c) * (running ? 0.05 : 0.025);
+    hips.rotation.z = s * (running ? 0.05 : 0.03);
+    spine.rotation.set(lean, -s * (running ? 0.12 : 0.07), 0);
+    head.rotation.set(-lean * 0.7, 0, 0);
+
+    if (carrying) {
+      // Both hands on the load in front; only the legs do the walking.
+      armL.rotation.set(-1.35, 0, 0.3);
+      armR.rotation.set(-1.35, 0, -0.3);
+      armL.userData.elbow.rotation.x = -0.75;
+      armR.userData.elbow.rotation.x = -0.75;
+      spine.rotation.x = lean - 0.12;        // leaning back against the weight
+      return;
+    }
+
+    const swing = running ? 0.85 : 0.52;
+    armL.rotation.set(-s * swing, 0, 0.1);
+    armR.rotation.set(s * swing, 0, -0.1);
+    const bend = running ? 1.35 : 0.3;
+    armL.userData.elbow.rotation.x = -bend - Math.max(0, s) * 0.3;
+    armR.userData.elbow.rotation.x = -bend - Math.max(0, -s) * 0.3;
     return;
   }
 
@@ -2007,6 +2063,40 @@ export function poseWorker(worker, { phase = 0, moving = false, pose = "stand" }
     armR.userData.elbow.rotation.x = -0.2;
     spine.rotation.x = -0.08;
     head.rotation.x = -0.25;
+  } else if (pose === "carry") {
+    // Standing holding something at chest height.
+    armL.rotation.set(-1.35, 0, 0.3);
+    armR.rotation.set(-1.35, 0, -0.3);
+    armL.userData.elbow.rotation.x = -0.75;
+    armR.userData.elbow.rotation.x = -0.75;
+    spine.rotation.x = -0.1;
+  } else if (pose === "lift") {
+    // Mid-lift, done properly: back straight, knees bent, load close.
+    hips.position.y = 0.70;
+    legL.rotation.x = 0.85;
+    legR.rotation.x = 0.85;
+    legL.userData.knee.rotation.x = -1.4;
+    legR.userData.knee.rotation.x = -1.4;
+    armL.rotation.set(-0.45, 0, 0.26);
+    armR.rotation.set(-0.45, 0, -0.26);
+    armL.userData.elbow.rotation.x = -0.55;
+    armR.userData.elbow.rotation.x = -0.55;
+    spine.rotation.x = 0.18;
+    head.rotation.x = -0.12;
+  } else if (pose === "climb") {
+    // On a ladder: opposite hand and foot, three points of contact.
+    const s = Math.sin(phase);
+    hips.position.y = 0.94;
+    legL.rotation.x = -0.25 + s * 0.5;
+    legR.rotation.x = -0.25 - s * 0.5;
+    legL.userData.knee.rotation.x = -0.5 - Math.max(0, s) * 0.7;
+    legR.userData.knee.rotation.x = -0.5 - Math.max(0, -s) * 0.7;
+    armL.rotation.set(-2.5 - s * 0.35, 0, 0.16);
+    armR.rotation.set(-2.5 + s * 0.35, 0, -0.16);
+    armL.userData.elbow.rotation.x = -0.3;
+    armR.userData.elbow.rotation.x = -0.3;
+    spine.rotation.x = 0.1;
+    head.rotation.x = -0.3;
   } else if (pose === "crouch" || pose === "kneel") {
     hips.position.y = pose === "kneel" ? 0.56 : 0.62;
     legL.rotation.x = pose === "kneel" ? 1.5 : 1.15;
