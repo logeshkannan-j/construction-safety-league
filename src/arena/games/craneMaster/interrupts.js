@@ -32,15 +32,13 @@ export const INTERRUPTS = [
     id: "rigging",
     title: "Stop — check the rigging",
     /** What the player is shown before the question. */
-    warning:
-      "The bundle is choked with a single sling at its centre. It is 3.2 m long, it is already "
-      + "tilting, and nothing is stopping it rotating once it leaves the ground.",
+    warning: "The bundle is slung with a single choker at its middle. It is 3.2 m long, already tilting, and nothing stops it turning once it is off the ground.",
     question: "What do you do before this load leaves the ground?",
     options: [
-      "Lift it just clear of the ground, let it settle, and then carry on with the lift",
-      "Set the load down, re-rig it on two legs and fit a tagline before lifting",
-      "Lift it slowly and have the banksman steady it by hand as it comes clear",
-      "Keep the load low the whole way across, so anything slipping cannot fall far",
+      "Lift it just clear, let it settle, and then carry on",
+      "Set it down and re-rig it on two legs with a tagline",
+      "Lift slowly and let the banksman steady it by hand",
+      "Keep it low the whole way so a slip cannot fall far",
     ],
     correct: 1,
     why:
@@ -48,20 +46,29 @@ export const INTERRUPTS = [
       + "ground, not corrected in the air, and nobody steadies a load by hand — that is how "
       + "hands go between the load and the structure. A tagline is held from outside the zone.",
     toast: "Re-rigged on two legs with a tagline fitted.",
+    ta: {
+      title: "நிறுத்து — கட்டை சரிபாருங்கள்",
+      warning: "3.2 மீட்டர் நீளமான இந்தக் கட்டு நடுவில் ஒரே ஸ்லிங்கில் தொங்குகிறது. ஏற்கனவே சாய்ந்துள்ளது, தரையை விட்டால் சுழல்வதைத் தடுக்க எதுவும் இல்லை.",
+      question: "இந்தச் சுமை தரையை விட்டு எழும் முன் என்ன செய்வீர்கள்?",
+      options: [
+        "சற்றே தூக்கி, நிலைபெறட்டும், பிறகு தொடரவும்",
+        "கீழே இறக்கி, இரண்டு ஸ்லிங்கில் மீண்டும் கட்டி டேக்லைன் போடவும்",
+        "மெதுவாகத் தூக்கி, பேங்க்ஸ்மேன் கையால் பிடிக்கட்டும்",
+        "தாழ்வாகவே கொண்டு செல்லவும், விழுந்தாலும் தூரம் குறைவு",
+      ],
+    },
   },
 
   {
     id: "person-under-load",
-    title: "STOP — a person is under the load",
-    warning:
-      "A worker has walked into the exclusion zone and is directly beneath the suspended bundle. "
-      + "He has not looked up and cannot hear you over the plant.",
-    question: "The load is in the air and a man is under it. What is the FIRST thing you do?",
+    title: "STOP — a man is under the load",
+    warning: "A worker has walked into the exclusion zone and is standing directly under the bundle. He has not looked up and cannot hear you over the plant.",
+    question: "A man is under a load in the air. What do you do FIRST?",
     options: [
-      "Slew away from him, so that the load is no longer hanging over his head",
-      "Sound the horn and keep going once he has looked up and moved himself",
-      "Stop everything and have him walked out of the zone before moving again",
-      "Land the load on the nearest clear slab, straight down, out of his way",
+      "Slew away so the load is no longer over his head",
+      "Sound the horn and carry on once he has moved away",
+      "Stop everything and have him walked out of the zone",
+      "Land it on the nearest clear slab, well out of his way",
     ],
     correct: 2,
     why:
@@ -69,20 +76,29 @@ export const INTERRUPTS = [
       + "swing somewhere you cannot predict, and a horn makes people look UP, not move. The zone "
       + "is cleared by a person on the ground, then the lift continues.",
     toast: "All motion stopped and the zone cleared on the ground.",
+    ta: {
+      title: "நிறுத்து — சுமைக்குக் கீழே ஒருவர்",
+      warning: "ஒரு தொழிலாளி தடைசெய்யப்பட்ட பகுதிக்குள் வந்து சுமைக்கு நேராகக் கீழே நிற்கிறார். அவர் மேலே பார்க்கவில்லை, இயந்திர ஒலியில் உங்கள் குரலும் கேட்காது.",
+      question: "காற்றில் உள்ள சுமைக்குக் கீழே ஒருவர். முதலில் என்ன செய்வீர்கள்?",
+      options: [
+        "அவர் தலைக்கு மேல் இல்லாதபடி சுமையை வேறு பக்கம் திருப்பவும்",
+        "ஹாரன் அடித்து, அவர் நகர்ந்ததும் வேலையைத் தொடரவும்",
+        "அனைத்தையும் நிறுத்தி அவரை வெளியே அழைக்கச் சொல்லவும்",
+        "அருகில் உள்ள காலி தளத்தில் உடனடியாக இறக்கிவிடவும்",
+      ],
+    },
   },
 
   {
     id: "no-barricade",
     title: "Stop — the landing area is open",
-    warning:
-      "The slab you are landing on has no barricade and no banksman. Two operatives are working "
-      + "within a few metres of where this bundle is going to touch down.",
-    question: "The landing area is not controlled. What is the correct action?",
+    warning: "The slab you are landing on has no barrier and no banksman. Two men are working a few metres from where this bundle will touch down.",
+    question: "The landing area is not controlled. What is right?",
     options: [
-      "Land it on the far corner of the slab, as far from the two operatives as it will go",
-      "Ask the two operatives to keep an eye on the load while you bring it down",
-      "Hold the load clear until the area is barricaded and a banksman posted there",
-      "Bring it down very slowly, so that anybody nearby has time to see it and move",
+      "Land on the far corner, well away from the two men",
+      "Ask the two men to watch the load as it comes down",
+      "Hold it clear until the area is barriered and manned",
+      "Bring it down very slowly so people have time to move",
     ],
     correct: 2,
     why:
@@ -90,20 +106,29 @@ export const INTERRUPTS = [
       + "further away, or asking people to watch out are all the same answer: the load is still "
       + "coming down into an uncontrolled area.",
     toast: "Landing area barricaded and a banksman posted.",
+    ta: {
+      title: "நிறுத்து — இறக்கும் இடம் திறந்திருக்கிறது",
+      warning: "நீங்கள் இறக்கப் போகும் தளத்தில் தடுப்போ பேங்க்ஸ்மேனோ இல்லை. சுமை இறங்கும் இடத்திலிருந்து சில மீட்டரில் இருவர் வேலை செய்கிறார்கள்.",
+      question: "இறக்கும் இடம் கட்டுப்பாட்டில் இல்லை. எது சரி?",
+      options: [
+        "இருவரிடமிருந்து விலகி, தூரமான மூலையில் இறக்கவும்",
+        "சுமை இறங்கும் போது கவனிக்கச் சொல்லி இருவரிடம் கேட்கவும்",
+        "தடுப்பும் ஆளும் வரும் வரை சுமையைக் காற்றிலேயே வைக்கவும்",
+        "மிக மெதுவாக இறக்கவும், நகர நேரம் கிடைக்கும்",
+      ],
+    },
   },
 
   {
     id: "swing",
     title: "Stop — the load is swinging",
-    warning:
-      "The bundle has picked up a swing well beyond its footprint. Every slew input is making it "
-      + "worse, and it is heading towards the scaffold.",
-    question: "The load is swinging badly. How do you bring it back under control?",
+    warning: "The bundle has picked up a swing well past its own width. Every slew input is making it worse, and it is heading for the scaffold.",
+    question: "The load is swinging badly. How do you get it back?",
     options: [
-      "Slew against the swing, timing it so that the two cancel each other out",
-      "Stop the slew, let the swing damp out, then start moving again gently",
-      "Hoist up quickly, because a shorter rope swings through a smaller arc",
-      "Carry on to the landing and let the load settle once it is on the slab",
+      "Slew against the swing, timed so as to cancel it out",
+      "Stop, let the swing die down, then start again gently",
+      "Hoist up fast, because a shorter rope swings less far",
+      "Carry on and let it settle once it is down on the slab",
     ],
     correct: 1,
     why:
@@ -111,20 +136,29 @@ export const INTERRUPTS = [
       + "how people cancel a swing in a car park and exactly why loads hit scaffolds. You stop, "
       + "you wait, you start again smoothly.",
     toast: "Motion stopped and the swing allowed to damp out.",
+    ta: {
+      title: "நிறுத்து — சுமை ஆடுகிறது",
+      warning: "சுமை தன் அகலத்தை விட அதிகமாக ஆடுகிறது. ஒவ்வொரு சுழற்சியும் அதை மோசமாக்குகிறது, அது சாரக்கட்டை நோக்கிப் போகிறது.",
+      question: "சுமை மோசமாக ஆடுகிறது. எப்படிக் கட்டுக்குள் கொண்டு வருவீர்கள்?",
+      options: [
+        "ஆட்டத்திற்கு எதிராகச் சுழற்றி அதை ரத்து செய்யவும்",
+        "நிறுத்தி, ஆட்டம் அடங்கட்டும், பிறகு மெதுவாகத் தொடங்கவும்",
+        "வேகமாக மேலே தூக்கவும், கயிறு குறைந்தால் ஆட்டம் குறையும்",
+        "தொடர்ந்து சென்று, தளத்தில் இறங்கியதும் அடங்கட்டும்",
+      ],
+    },
   },
 
   {
     id: "unsafe-instruction",
     title: "Radio — an unsafe instruction",
-    warning:
-      "The site manager calls up: \"Take it straight across over the canteen, it is quicker than "
-      + "going round, nobody is out there at this time.\"",
-    question: "You have been told to swing the load over an occupied area. What do you do?",
+    warning: "The site manager calls up: take it straight across over the canteen, it is quicker than going round, nobody is out there at this time.",
+    question: "You are told to swing a load over an occupied area. What now?",
     options: [
-      "Take the short route but lift higher, so that the load clears the canteen roof",
-      "Check whether anybody is actually in the canteen, and go over if it is empty",
-      "Do as you are instructed, because the site manager is responsible for the call",
-      "Refuse the lift over the canteen, say why, and take the agreed route round",
+      "Take the short way but lift higher over the roof",
+      "Check if anyone is in the canteen, and go over if not",
+      "Do as you are told — the manager made the decision",
+      "Refuse it, say why, and take the agreed route round",
     ],
     correct: 3,
     why:
@@ -132,6 +166,17 @@ export const INTERRUPTS = [
       + "believe is unsafe. Height does not help — a dropped load does not care. And \"nobody is "
       + "in there\" is a guess about a place people walk into without telling anyone.",
     toast: "Lift refused and the agreed route taken.",
+    ta: {
+      title: "ரேடியோ — பாதுகாப்பற்ற உத்தரவு",
+      warning: "தள மேலாளர் அழைக்கிறார்: கேன்டீன் மேலாகவே நேராகக் கொண்டு வா, சுற்றி வருவதை விட வேகம், இந்த நேரத்தில் அங்கே யாரும் இருக்க மாட்டார்கள்.",
+      question: "ஆட்கள் உள்ள இடத்தின் மேல் சுமையைக் கொண்டு செல்லச் சொல்கிறார்கள். என்ன செய்வீர்கள்?",
+      options: [
+        "குறுக்கு வழியில் போகவும், ஆனால் கூரைக்கு மேலே தூக்கவும்",
+        "கேன்டீனில் யாராவது இருக்கிறார்களா பார்த்து, இல்லையேல் போகவும்",
+        "சொன்னபடி செய்யவும் — முடிவு மேலாளருடையது",
+        "மறுத்து, காரணம் சொல்லி, ஒப்புக்கொண்ட வழியில் போகவும்",
+      ],
+    },
   },
 ];
 

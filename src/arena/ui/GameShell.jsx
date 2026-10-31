@@ -19,6 +19,7 @@ import {
 import Joystick from "./Joystick.jsx";
 import TouchLook from "./TouchLook.jsx";
 import ActionButtonCluster, { CraneControls } from "./ActionButtons.jsx";
+import { getLang, setLang, otherLang, LANGS, onLangChange } from "../language.js";
 import ResultsScreen from "./ResultsScreen.jsx";
 
 /* ------------------------------------------------------------------ *
@@ -102,6 +103,8 @@ export default function GameShell({
   const containerRef = useRef(null);
   const rootRef = useRef(null);
   const [fullscreen, setFullscreen] = useState(false);
+  // Mirrored into React state so the HUD re-renders on a change.
+  const [lang, setLangState] = useState(getLang);
   const instanceRef = useRef(null);
   const hudBufferRef = useRef({});
   const hudTimerRef = useRef(0);
@@ -224,6 +227,10 @@ export default function GameShell({
   }, []);
 
   useEffect(() => teardown, [teardown]);
+
+  // The games push their own dialogs when the language changes; this
+  // only keeps the button label and anything React draws in step.
+  useEffect(() => onLangChange(setLangState), []);
 
   /* ------------------------ the back button ------------------------
    *
@@ -597,6 +604,8 @@ export default function GameShell({
               onPause={() => setPaused(true)}
               onFullscreen={fullscreenSupported ? toggleFullscreen : null}
               fullscreen={fullscreen}
+              onLanguage={() => setLang(otherLang())}
+              languageShort={(LANGS.find((l) => l.id === lang) || LANGS[0]).short}
             />
 
             {hud.crosshair && <Crosshair state={hud.crosshair} accent={game.accent} />}

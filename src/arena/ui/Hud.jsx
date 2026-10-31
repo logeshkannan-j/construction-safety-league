@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Clock, Target, Trophy, AlertTriangle, CheckCircle2, XCircle, Pause, Activity, Maximize, Minimize } from "lucide-react";
+import { Clock, Target, Trophy, AlertTriangle, CheckCircle2, XCircle, Pause, Activity, Maximize, Minimize, Languages } from "lucide-react";
 import { C, SITE_NAME, SITE_SUBTITLE } from "../arenaConstants.js";
 
 /* ------------------------------------------------------------------ *
@@ -25,6 +25,7 @@ export function formatClock(ms) {
 export function HudTopBar({
   objective, score = 0, timeMs = null, progress = null, progressLabel,
   accent = C.yellow, onPause, onFullscreen = null, fullscreen = false,
+  onLanguage = null, languageShort = "EN",
   extra = null, mobile = false, danger = false,
 }) {
   const urgent = timeMs !== null && timeMs <= 20000;
@@ -132,6 +133,38 @@ export function HudTopBar({
         color={C.green}
         mobile={mobile}
       />
+
+      {/* Language. The questions, the boards and the signs are all
+          bilingual, so the switch has to be reachable mid-question
+          and not buried in a settings menu. */}
+      {onLanguage && (
+        <button
+          type="button"
+          aria-label="Change language"
+          title="English / தமிழ்"
+          onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); onLanguage(); }}
+          style={{
+            pointerEvents: "auto",
+            height: mobile ? 38 : 42,
+            padding: mobile ? "0 9px" : "0 11px",
+            borderRadius: 10,
+            border: `1px solid ${C.line}`,
+            background: C.surface + "dd",
+            color: C.ink,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            cursor: "pointer",
+            touchAction: "none",
+            flexShrink: 0,
+            fontWeight: 900,
+            fontSize: mobile ? 11 : 12.5,
+          }}
+        >
+          <Languages size={mobile ? 14 : 16} />
+          {languageShort}
+        </button>
+      )}
 
       {onFullscreen && (
         <button

@@ -20,6 +20,7 @@ import { createTopView } from "../../engine/topview.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import { INTERRUPTS, INTERRUPT_SCORING } from "./interrupts.js";
 import { shuffledOrder } from "../../shuffle.js";
+import { t, tOptions, onLangChange } from "../../language.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail,
@@ -1186,14 +1187,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const { def } = open;
     api.dialog({
       eyebrow: "LIFT HALTED — SAFETY CHECK",
-      title: def.title,
-      subtitle: `${def.warning}\n\n${def.question}`,
+      title: t(def, "title"),
+      subtitle: `${t(def, "warning")}\n\n${def.question}`,
       tone: "danger",
       // Shuffled per play; `id` is the REAL index so the answer is
       // scored against the definition, not the slot.
       options: open.order.map((realIndex, slot) => ({
         id: String(realIndex),
-        label: def.options[realIndex],
+        label: tOptions(def)[realIndex],
         badge: String.fromCharCode(65 + slot),
       })),
       footer: open.attempts > 0
@@ -1234,7 +1235,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     api.dialog(null);
     clearHighlight();
     sfx.correct();
-    api.toast(def.toast, "good", award);
+    api.toast(t(def, "toast"), "good", award);
     applyInterruptFix(def.id);
 
     state.score += INTERRUPT_SCORING.allResolved;
@@ -1344,6 +1345,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
     raiseInterrupt(chosenInterrupt, { subject: lift.group, radius: 3.6 });
   }
+
+  const stopLangWatch = onLangChange(() => {
+    if (interrupts.open) showInterrupt();
+    pushHud();
+  });
 
   /* -------------------------------- loop -------------------------------- */
 
@@ -1466,6 +1472,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     dispose() {
+      stopLangWatch();
       stopAllLoops();
       siteView.dispose();
       input.dispose();

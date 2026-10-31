@@ -33,6 +33,7 @@ import {
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
 import { shuffledOrder } from "../../shuffle.js";
+import { t, tOptions, onLangChange, getLang } from "../../language.js";
 
 /* ============================== metadata ============================== */
 
@@ -1357,7 +1358,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     return best;
   }
 
+  /** The decision point whose dialog is on screen, for redrawing it. */
+  let openItem = null;
+
   function openPuzzle(item) {
+    openItem = item;
     const puzzle = PUZZLES[item.key];
     if (!puzzle) return;
     state.dialogOpen = true;
@@ -1368,17 +1373,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     api.dialog({
       eyebrow: puzzle.eyebrow,
-      title: puzzle.title,
-      subtitle: puzzle.subtitle,
+      title: t(puzzle, "title"),
+      subtitle: t(puzzle, "subtitle"),
       tone: "normal",
       // Shown in THIS player's order. `id` still carries the real
       // option id, so the answer is scored against the definition and
       // never against the slot it landed in.
       options: (item.order || puzzle.options.map((_, i) => i)).map((realIndex, slot) => {
         const option = puzzle.options[realIndex];
+        const taLabels = puzzle.ta?.options;
         return {
           id: option.id,
-          label: option.label,
+          label: (taLabels && taLabels.length === puzzle.options.length
+            && getLangForOptions() === "ta") ? taLabels[realIndex] : option.label,
           desc: difficulty.hints || attempts > 0 ? option.desc : undefined,
           badge: String.fromCharCode(65 + slot),
         };
@@ -1650,6 +1657,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     return x > rooms[rooms.length - 1].x1 ? rooms.length - 1 : 0;
   }
 
+  /** The language the option labels should be drawn in. */
+  function getLangForOptions() {
+    return currentLang;
+  }
+
   function pushHud() {
     state.currentArea = areaUnderPlayer();
     const areaKey = AREA_ORDER[state.currentArea];
@@ -1722,6 +1734,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       tasksTitle: "ROUTE OUT",
     });
   }
+
+  /* Switching language redraws whatever is open, so the toggle
+   * works mid-question rather than only on the next one. */
+  let currentLang = getLang();
+  const stopLangWatch = onLangChange((next) => {
+    currentLang = next;
+    if (openItem) openPuzzle(openItem);
+    pushHud();
+  });
 
   /* -------------------------------- loop -------------------------------- */
 
@@ -1901,6 +1922,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     dispose() {
+      stopLangWatch();
       planView.dispose();
       input.dispose();
       stage.dispose();

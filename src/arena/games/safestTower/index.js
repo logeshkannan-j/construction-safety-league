@@ -21,6 +21,7 @@ import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
 import { shuffledOrder } from "../../shuffle.js";
+import { t, tOptions, onLangChange } from "../../language.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
@@ -765,14 +766,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const def = hazard.def;
     api.dialog({
       eyebrow: `GROUND LEVEL — HAZARD ${HAZARDS.indexOf(def) + 1} OF ${HAZARD_COUNT}`,
-      title: def.title,
-      subtitle: `${def.brief}\n\n${def.question}`,
+      title: t(def, "title"),
+      subtitle: `${t(def, "brief")}\n\n${t(def, "question")}`,
       tone: "danger",
       // Shown in this player's own order; `id` carries the REAL index
       // so the answer is scored against the definition, not the slot.
       options: hazard.order.map((realIndex, slot) => ({
         id: String(realIndex),
-        label: def.options[realIndex],
+        label: tOptions(def)[realIndex],
         badge: String.fromCharCode(65 + slot),
       })),
       footer: hazard.attempts > 0
@@ -822,7 +823,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     hazard.marker.visible = false;
 
     sfx.correct();
-    api.toast(def.toast, "good", award);
+    api.toast(t(def, "toast"), "good", award);
     state.openHazard = null;
     pushHud();
 
@@ -943,6 +944,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     ]);
   }
 
+  /* Switching language re-draws what is on screen, so the toggle
+   * works mid-question rather than only on the next one. */
+  const stopLangWatch = onLangChange(() => {
+    if (state.openHazard) showQuestion(state.openHazard);
+    pushHud();
+  });
+
   /* -------------------------------- loop -------------------------------- */
 
   focusOn(hazards[0].world, { height: 2.2 });
@@ -1043,6 +1051,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     dispose() {
+      stopLangWatch();
       siteView.dispose();
       input.dispose();
       stage.dispose();

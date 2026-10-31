@@ -1539,6 +1539,119 @@ section("The answer is never just A");
   }
 }
 
+section("Every 3D question is available in Tamil");
+
+{
+  const lang = await import(`${SRC}/language.js`);
+  const TAMIL = /[஀-௿]/;
+
+  /* ---- the content ---- */
+  const SETS = [
+    ["ground hazards", (await import(`${SRC}/games/safestTower/hazards.js`)).HAZARDS,
+      (h) => h.options],
+    ["crane situations", (await import(`${SRC}/games/craneMaster/interrupts.js`)).INTERRUPTS,
+      (d) => d.options],
+    ["escape rooms", Object.values((await import(`${SRC}/games/escapeChallenge/puzzles.js`)).PUZZLES),
+      (p) => p.options.map((o) => o.label)],
+  ];
+
+  for (const [name, items, optionsOf] of SETS) {
+    const missing = items.filter((d) => !d.ta);
+    check(`${name}: every item has Tamil`, missing.length === 0,
+      missing.map((d) => d.id || d.area).join(", "));
+
+    const mismatched = items.filter((d) => d.ta
+      && (d.ta.options || []).length !== optionsOf(d).length);
+    check(`${name}: the Tamil option lists match the English`,
+      mismatched.length === 0, mismatched.map((d) => d.id || d.area).join(", "));
+
+    const notTamil = items.filter((d) => d.ta
+      && !(d.ta.options || []).every((o) => TAMIL.test(o)));
+    check(`${name}: the Tamil is actually Tamil, not English repeated`,
+      notTamil.length === 0, notTamil.map((d) => d.id || d.area).join(", "));
+
+    // A player should not be able to spot the answer by its shape in
+    // either language.
+    const outliers = [];
+    items.forEach((d) => {
+      const correct = Number.isFinite(d.correct)
+        ? d.correct
+        : (d.options || []).findIndex((o) => o && o.correct);
+      if (correct < 0) return;
+      [["EN", optionsOf(d)], ["TA", d.ta?.options || []]].forEach(([tag, list]) => {
+        if (list.length !== 4) return;
+        const lens = list.map((o) => [...String(o)].length);
+        const others = lens.filter((_, i) => i !== correct).sort((a, b) => a - b);
+        const mid = (others[0] + others[others.length - 1]) / 2;
+        if (Math.abs(lens[correct] - mid) > 14) outliers.push(`${tag}:${d.id || d.area}`);
+      });
+    });
+    check(`${name}: the answer cannot be picked out by length, in either language`,
+      outliers.length === 0, outliers.join(" "));
+  }
+
+  /* ---- the resolver ---- */
+  {
+    const rec = { title: "Hello", ta: { title: "வணக்கம்" }, only: "English only" };
+    check("t() returns Tamil when it is there", lang.t(rec, "title", "ta") === "வணக்கம்");
+    check("t() falls back to English when it is not",
+      lang.t(rec, "only", "ta") === "English only");
+    check("t() on nothing does not throw", lang.t(null, "title", "ta") === "");
+    check("tOptions falls back per LIST, not per item",
+      lang.tOptions({ options: ["a", "b"], ta: { options: ["x"] } }, "ta").join() === "a,b",
+      "a half-translated list must not mix two languages in one question");
+    check("tBoth gives both languages for a sign",
+      lang.tBoth(rec, "title").length === 2);
+    check("tBoth gives one when there is no translation",
+      lang.tBoth(rec, "only").length === 1);
+  }
+
+  /* ---- and it reaches the screen ---- */
+  const SCREENS = [
+    ["safestTower", (inst, record) => {
+      inst.__test.inspect(inst.__test.hazards[0]);
+      return record;
+    }],
+    ["escapeChallenge", (inst, record) => {
+      const item = inst.__test.interactables.find((i) => i.key === "fire") || inst.__test.interactables[0];
+      inst.__test.openPuzzle(item);
+      return record;
+    }],
+    ["craneMaster", (inst, record) => {
+      const def = inst.__test.chosenInterrupt;
+      inst.__test.raiseInterrupt(def, { subject: inst.__test.lifts[0].group });
+      return record;
+    }],
+  ];
+
+  for (const [path, open] of SCREENS) {
+    lang.setLang("en");
+    const { instance, record } = await boot(path);
+    runFrames(5);
+    open(instance, record);
+    runFrames(2);
+    const english = JSON.stringify(record.dialog || {});
+    check(`${path}: the question is in English by default`,
+      !TAMIL.test(english) && english.length > 50, english.slice(0, 80));
+
+    lang.setLang("ta");
+    runFrames(4);
+    const tamil = JSON.stringify(record.dialog || {});
+    check(`${path}: switching language redraws the open question in Tamil`,
+      TAMIL.test(tamil), tamil.slice(0, 120));
+    check(`${path}: it is still four options`,
+      (record.dialog?.options || []).length === 4);
+
+    lang.setLang("en");
+    runFrames(4);
+    check(`${path}: switching back returns to English`,
+      !TAMIL.test(JSON.stringify(record.dialog || {})));
+
+    instance.dispose();
+  }
+  lang.setLang("en");
+}
+
 section("Scene content");
 
 {
