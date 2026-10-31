@@ -19,6 +19,7 @@ import * as THREE from "three";
 import { createStage, addIndoorLight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
+import { shot } from "../../engine/demoTour.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
 import {
   createMaterials, createGeometries, box, cylinder, collider,
@@ -1181,8 +1182,33 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ------------------------------ instance ------------------------------ */
 
+  /* ------------------------------- demo -------------------------------
+   * This mission is indoors, so the demo is the PLAN view: the site
+   * view hides the ceilings once it is a third of the way up, and the
+   * tour then walks the escape route from the first area to the muster
+   * point, one room at a time, as a live evacuation plan.
+   *
+   * It stays steep throughout for that reason. A low shot inside a
+   * building with its roof removed looks through the walls. */
+  const planShot = (x, z, seconds, step, distance = 34) =>
+    shot({ x, y: 0, z }, { yaw: 0, pitch: 1.30, distance, seconds, step });
+
+  const demoTour = [
+    // The whole floor first, so the route is legible before the detail.
+    planShot((rooms[0].x0 + rooms[rooms.length - 1].x1) / 2, 0, 7, 0, 86),
+    ...rooms.map((room, i) => planShot(
+      (room.x0 + room.x1) / 2, room.centreZ,
+      6, Math.min(i + 1, 3), 30
+    )),
+    // Out of the building and across to the muster point.
+    planShot(rooms[rooms.length - 1].x1 + 16, 0, 7, 3, 42),
+    planShot((rooms[0].x0 + rooms[rooms.length - 1].x1) / 2, 0, 7, 4, 90),
+  ];
+
   return {
     input,
+    siteView: planView,
+    demoTour,
 
     setPaused(value) {
       state.paused = !!value;

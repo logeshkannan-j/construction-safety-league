@@ -155,14 +155,42 @@ scored — plus the event's rules and regulations. `src/MissionDemo.jsx` renders
 that as a screen, at `size="tv"` for the projector and `size="compact"` on a
 phone.
 
-The host pastes a **demo video per mission per language** into Admin → *Mission
-demo videos*. They are stored as `missionVideos[gameId][lang]` on the game
+#### The built-in demo
+
+Every mission ships its own demo, so the event works with no video files at all.
+It is **not a recording**: it mounts the mission's real 3D world and flies a
+scripted camera through it, captioned and read aloud, while the scene runs live
+underneath. Roughly 40–50 seconds each.
+
+Each game returns a `demoTour` from `create()` — a shot list built from its own
+scene coordinates, so moving a hazard moves the shot that looks at it and there
+is nothing to keep in sync by hand. The list is handed to the mission's site
+view (`engine/topview.js`), which already owns the camera cleanly while engaged,
+so one tour implementation drives all five games without touching their camera
+controllers again.
+
+A shot's `step` is an INDEX into that mission's briefing steps, not a string.
+The 3D layer says "this shot illustrates step 3" and the player looks step 3 up
+in whichever language the viewer chose — which is how the captions stay
+translated and identical to the voice-over without the 3D layer knowing that
+Tamil exists. `tests/arena-games.test.mjs` asserts every shot points at a step
+that exists **in both languages**, since those are separate files and nothing
+else holds them together.
+
+Input is disabled throughout: it is something to watch, and a viewer grabbing
+the camera would fight the shot list. The host previews any of them from Admin →
+*Mission demo videos* → **Watch the demo**.
+
+#### Host-supplied videos
+
+The host can also paste a **demo video per mission per language** into Admin →
+*Mission demo videos*, and it plays instead of the built-in demo. They are stored as `missionVideos[gameId][lang]` on the game
 record, which is the same storage, the same security rules and the same admin
 flow as the leaderboard media that was already there — no new database paths and
 no rules change. A YouTube link becomes an embed, an MP4 or WebM becomes a
 `<video>`, and anything that is not `http(s)` is refused rather than embedded.
-Until a video is added the screen says so and the written briefing *is* the
-instruction set, so it is useful today.
+Until a video is added, the built-in demo plays instead and the written briefing
+is shown under it either way.
 
 "With voice" is the browser's own speech synthesiser reading the briefing aloud
 in either language, built from the same text that is on screen so the two can
@@ -482,9 +510,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 684 assertions with no browser required, across four suites.
+`npm test` runs 751 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (378 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (443 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of
@@ -550,7 +578,7 @@ and api, exactly as a player or a phone would:
 - live event mode: a live paper is still 10 + 5, still shuffled in place, still never moves the
   correct answer away from its text, and still deals a different paper per game
 
-### `tests/app-render.test.mjs` — the app actually mounts (92 assertions)
+### `tests/app-render.test.mjs` — the app actually mounts (94 assertions)
 
 Mounts the **real** React app in jsdom with effects running, clicks through to the admin panel and
 waits for the live Firebase record to arrive. A blank screen is invisible to every other suite

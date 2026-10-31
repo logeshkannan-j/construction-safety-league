@@ -17,6 +17,7 @@ import * as THREE from "three";
 import { createStage, addDaylight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
+import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail,
@@ -1107,8 +1108,30 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ------------------------------ instance ------------------------------ */
 
+  /* ------------------------------- demo -------------------------------
+   * The lift told as a lift: the whole crane, the stockpile the load is
+   * picked from, the cab's own view of the hook, and the slab it has to
+   * land on. Read from the lift plan, so changing the lift changes the
+   * demo with it. */
+  const firstLift = lifts[0];
+  const demoTour = [
+    establishingShot({ distance: 150, step: 0 }),
+    // Low and close, so a 36 m mast reads as 36 m tall.
+    shot({ x: CRANE.x, y: CRANE.mastHeight * 0.45, z: CRANE.z },
+      { yaw: 0.9, pitch: 0.22, distance: 74, seconds: 7, step: 1 }),
+    firstLift && shot({ x: firstLift.pick.x, y: 1, z: firstLift.pick.z },
+      { yaw: 0.3, pitch: 0.34, distance: 20, seconds: 7, step: 0 }),
+    shot({ x: CRANE.x, y: CRANE.mastHeight, z: CRANE.z },
+      { yaw: 2.2, pitch: 0.5, distance: 36, seconds: 6, step: 2 }),
+    firstLift && shot({ x: firstLift.target.x, y: 6, z: firstLift.target.z },
+      { yaw: -0.6, pitch: 0.42, distance: 28, seconds: 7, step: 7 }),
+    closingShot({ distance: 160, step: 4 }),
+  ].filter(Boolean);
+
   return {
     input,
+    siteView,
+    demoTour,
 
     setPaused(value) {
       state.paused = !!value;

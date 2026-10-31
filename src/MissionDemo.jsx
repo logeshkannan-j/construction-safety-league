@@ -23,7 +23,7 @@
  *  they wait for the host to release the round (compact).
  * ------------------------------------------------------------------ */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Play, Pause, Languages, ListChecks, ShieldAlert, Trophy, Gamepad2, Volume2, VolumeX,
 } from "lucide-react";
@@ -33,6 +33,10 @@ import {
   missionBrief, eventRules, briefSpeech, missionVideoUrl,
 } from "./missionBriefs.js";
 import { SITE_NAME } from "./arena/arenaConstants.js";
+
+// The live 3D demo mounts the real mission world, so it pulls in
+// three.js. Loaded only when somebody actually opens a briefing.
+const MissionDemoPlayer = lazy(() => import("./arena/ui/MissionDemoPlayer.jsx"));
 
 /* --------------------------- the voice-over --------------------------- */
 
@@ -337,21 +341,30 @@ export default function MissionDemo({
         </div>
       </div>
 
-      {/* ---- the host's demo video, when there is one ---- */}
-      {videoUrl
-        ? <DemoVideo url={videoUrl} compact={!tv} />
-        : (
+{/* ---- the demo ----
+          The host's own video if they have pasted one, otherwise the
+          built-in demo, which flies the mission's real 3D world. */}
+      {videoUrl ? (
+        <DemoVideo url={videoUrl} compact={!tv} />
+      ) : (
+        <Suspense fallback={(
           <div style={{
-            border: `1px dashed ${COLORS.line}`, borderRadius: 10,
-            padding: tv ? "14px 18px" : "10px 12px",
-            color: COLORS.muted, fontSize: tv ? 15 : 12,
-            display: "flex", alignItems: "center", gap: 9,
+            height: tv ? 420 : 240, borderRadius: 10,
+            background: COLORS.surface, border: `1px solid ${COLORS.line}`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            color: COLORS.muted, fontSize: 13,
           }}>
-            <Play size={tv ? 17 : 14} />
-            No demo video has been added for this mission yet. The briefing below is the full
-            instruction set, and it can be read aloud.
+            Loading the 3D demo…
           </div>
-        )}
+        )}>
+          <MissionDemoPlayer
+            gameId={gameId}
+            captions={brief.steps}
+            speak={speech}
+            height={tv ? 440 : 240}
+          />
+        </Suspense>
+      )}
 
       {/* ---- what the mission asks ---- */}
       <Section icon={<Gamepad2 size={tv ? 18 : 14} color={COLORS.orange} />}

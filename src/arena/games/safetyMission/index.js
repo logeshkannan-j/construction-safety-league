@@ -15,6 +15,7 @@ import * as THREE from "three";
 import { createStage, addDaylight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
+import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import { createFirstPerson, ladderVolume } from "../../engine/fpsController.js";
 import {
   createMaterials, createGeometries, box, cylinder, collider,
@@ -1054,8 +1055,25 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ------------------------------ instance ------------------------------ */
 
+  /* ------------------------------- demo -------------------------------
+   * The shot list for this mission's built-in demo. Flies the real
+   * site: wide first, then down to eye level at two real hazards and
+   * into the excavation, then back up to the view the player gets from
+   * TOP VIEW. Positions come from the hazards themselves, so they
+   * follow if a hazard moves. */
+  const demoTour = [
+    establishingShot({ step: 0 }),
+    hazards[0] && shot(hazards[0].position, { yaw: 0.9, pitch: 0.28, distance: 15, seconds: 7, step: 1 }),
+    hazards[1] && shot(hazards[1].position, { yaw: -0.7, pitch: 0.32, distance: 14, seconds: 7, step: 2 }),
+    shot({ x: EXC.x, y: 0, z: EXC.z }, { yaw: 0.35, pitch: 0.50, distance: 22, seconds: 7, step: 3 }),
+    hazards[2] && shot(hazards[2].position, { yaw: 1.6, pitch: 0.30, distance: 15, seconds: 6, step: 5 }),
+    closingShot({ step: 4 }),
+  ].filter(Boolean);
+
   return {
     input,
+    siteView,
+    demoTour,
 
     setPaused(value) {
       state.paused = !!value;

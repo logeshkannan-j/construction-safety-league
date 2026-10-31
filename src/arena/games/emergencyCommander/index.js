@@ -28,6 +28,7 @@ import * as THREE from "three";
 import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
+import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail, buildScaffold,
@@ -1105,8 +1106,24 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ------------------------------ instance ------------------------------ */
 
+  /* ------------------------------- demo -------------------------------
+   * The response in the order it has to happen: the incident seen from
+   * a safe standoff, then the muster point and the gate the services
+   * arrive through, then the whole site from above — which is the view
+   * a commander actually needs. */
+  const demoTour = [
+    establishingShot({ distance: 120, step: 0 }),
+    shot(incident.position, { yaw: 2.3, pitch: 0.36, distance: 26, seconds: 7, step: 1 }),
+    shot({ x: MUSTER.x, y: 0, z: MUSTER.z }, { yaw: -0.5, pitch: 0.42, distance: 24, seconds: 7, step: 2 }),
+    shot({ x: GATE.x, y: 0, z: GATE.z }, { yaw: 1.2, pitch: 0.40, distance: 24, seconds: 6, step: 2 }),
+    shot(incident.position, { yaw: 0.6, pitch: 0.30, distance: 19, seconds: 6, step: 4 }),
+    closingShot({ distance: 125, step: 5 }),
+  ];
+
   return {
     input,
+    siteView,
+    demoTour,
 
     setPaused(value) {
       state.paused = !!value;

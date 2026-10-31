@@ -19,6 +19,7 @@ import * as THREE from "three";
 import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
+import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower,
@@ -706,8 +707,25 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ------------------------------ instance ------------------------------ */
 
+  /* ------------------------------- demo -------------------------------
+   * All five hazards in turn, from a low angle so each one is readable,
+   * then the whole compound from above. */
+  const demoTour = [
+    establishingShot({ distance: 96, step: 0 }),
+    ...hazards.slice(0, 5).map((h, i) => shot(h.world, {
+      yaw: 0.5 + i * 1.15,
+      pitch: 0.34,
+      distance: 13,
+      seconds: 6,
+      step: Math.min(i + 1, 4),
+    })),
+    closingShot({ distance: 100, step: 5 }),
+  ];
+
   return {
     input,
+    siteView,
+    demoTour,
 
     setPaused(value) {
       state.paused = !!value;

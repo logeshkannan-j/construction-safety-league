@@ -224,6 +224,105 @@ section("Zoom works in all five games");
  *  camera the renderer is handed, not a flag on the game.
  * ================================================================ */
 
+/* ================================================================ *
+ *  The built-in mission demo
+ *
+ *  Each game ships a shot list through its own scene, which the demo
+ *  player hands to the site view. Nothing in a playthrough touches it,
+ *  so without this section a broken tour would reach the event.
+ * ================================================================ */
+
+section("Every mission has a working built-in demo");
+
+{
+  const briefs = await import(`${new URL("../src/missionBriefs.js", import.meta.url).href}`);
+  const { tourSeconds } = await import(`${SRC}/engine/demoTour.js`);
+
+  for (const [path, id] of GAMES) {
+    const { instance } = await boot(path);
+    runFrames(10);
+
+    const tour = instance.demoTour || [];
+    check(`${id}: the mission exposes its site view to the demo`,
+      !!instance.siteView && typeof instance.siteView.playTour === "function");
+    check(`${id}: the mission has a shot list`, tour.length >= 4, `${tour.length} shots`);
+
+    // Every shot must be real numbers, or the camera ends up at NaN and
+    // the screen goes black with no error.
+    const broken = tour.filter((sh) => !sh
+      || !Array.isArray(sh.center) || sh.center.length !== 3
+      || sh.center.some((v) => !Number.isFinite(v))
+      || ![sh.yaw, sh.pitch, sh.distance, sh.seconds].every(Number.isFinite)
+      || sh.distance <= 0 || sh.seconds <= 0);
+    check(`${id}: every shot is a real camera pose`, broken.length === 0,
+      JSON.stringify(broken.slice(0, 2)));
+
+    // A caption index the briefing does not have shows a blank caption.
+    // The 3D layer and the briefing text are separate files, so this is
+    // the only thing holding them together.
+    const steps = briefs.missionBrief(id, "en")?.steps || [];
+    const outOfRange = tour
+      .map((sh, i) => ({ i, step: sh.step }))
+      .filter((e) => !Number.isFinite(e.step) || e.step < 0 || e.step >= steps.length);
+    check(`${id}: every shot points at a briefing step that exists`,
+      outOfRange.length === 0,
+      `${steps.length} steps, bad: ${JSON.stringify(outOfRange)}`);
+
+    // Same in Tamil, because a translation with fewer steps would blank
+    // the captions for exactly the audience that needs them.
+    const taSteps = briefs.missionBrief(id, "ta")?.steps || [];
+    check(`${id}: the Tamil briefing has a caption for every shot`,
+      tour.every((sh) => sh.step < taSteps.length),
+      `${taSteps.length} Tamil steps vs ${steps.length} English`);
+
+    const runtime = tourSeconds(tour);
+    check(`${id}: the demo is long enough to be useful and short enough to watch`,
+      runtime >= 25 && runtime <= 90, `${runtime}s`);
+
+    /* ---- now actually fly it ---- */
+    const camera = lastRenderer?.lastCamera;
+    const fired = [];
+    let ended = false;
+    const started = instance.siteView.playTour(tour, {
+      onStep: (i) => fired.push(i),
+      onEnd: () => { ended = true; },
+    });
+    check(`${id}: the tour starts`, started);
+
+    const seen = [];
+    const frames = Math.ceil(runtime * 60) + 180;
+    let nan = false;
+    for (let f = 0; f < frames; f++) {
+      runFrames(1);
+      if (camera && !Number.isFinite(camera.position.x + camera.position.y + camera.position.z)) nan = true;
+      if (f % 30 === 0 && camera) {
+        seen.push([camera.position.x, camera.position.y, camera.position.z]
+          .map((v) => Math.round(v)).join(","));
+      }
+    }
+
+    check(`${id}: the camera never goes to NaN during the tour`, !nan);
+    check(`${id}: every shot in the list is reached`, fired.length === tour.length,
+      `${fired.length} of ${tour.length}`);
+    check(`${id}: the shots are played in order`,
+      fired.every((v, i) => v === i), fired.join(","));
+    check(`${id}: the camera actually moves through the scene`,
+      new Set(seen).size > 8, `${new Set(seen).size} distinct positions`);
+    check(`${id}: the tour finishes and hands the camera back`,
+      ended && !instance.siteView.touring);
+
+    // Stopping half way must not leave the camera stuck overhead.
+    instance.siteView.playTour(tour);
+    runFrames(40);
+    instance.siteView.stopTour();
+    runFrames(90);
+    check(`${id}: stopping the demo returns the camera to the game`,
+      !instance.siteView.touring && !instance.siteView.active);
+
+    instance.dispose();
+  }
+}
+
 section("The top view works in all five games");
 
 {

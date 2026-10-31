@@ -85,6 +85,21 @@ export function createTopView(camera, {
   // 0 = the game's own camera, 1 = fully overhead.
   let blend = 0;
 
+  /* ---------------------------- the tour ----------------------------
+   *
+   * A scripted camera move through the real scene, used by the built-in
+   * mission demo. It rides on this object rather than being its own
+   * camera because the aerial already OWNS the camera cleanly while it
+   * is engaged — every game hands it over the same way, so one tour
+   * implementation works in all five without touching their
+   * controllers again.
+   *
+   * While a tour is running the viewer's input is ignored and the
+   * pitch/distance clamps are lifted, so a leg can drop to eye level
+   * for a close look at something and climb back out again.
+   */
+  let tour = null;
+
   function captureFog() {
     if (fogCaptured || !scene?.fog) return;
     base.fogNear = scene.fog.near;
@@ -124,6 +139,68 @@ export function createTopView(camera, {
     }
   }
 
+  /** One frame of a running tour. Sets target/yaw/pitch/distance. */
+  function advanceTour(dt) {
+    const { legs } = tour;
+
+    // Entering a new leg: remember where the camera is now, so the
+    // flight starts from the real current pose rather than snapping.
+    if (tour.index < 0) {
+      tour.index = 0;
+      tour.t = 0;
+      tour.from = { center: target.clone(), yaw: yw, pitch: pit, distance: dist };
+      tour.onStep?.(0, legs[0]);
+    }
+
+    const leg = legs[tour.index];
+    const seconds = Math.max(0.5, Number(leg.seconds) || 5);
+    tour.t += dt;
+
+    // 60% flying, 40% held.
+    const travel = seconds * 0.6;
+    const raw = Math.min(1, tour.t / travel);
+    const e = raw * raw * (3 - 2 * raw);   // smoothstep
+
+    const to = leg;
+    const lerp = (a, b) => a + (b - a) * e;
+    const c = to.center || [0, 0, 0];
+    target.set(
+      lerp(tour.from.center.x, c[0]),
+      lerp(tour.from.center.y, c[1] || 0),
+      lerp(tour.from.center.z, c[2])
+    );
+    // Take the short way round, so a tour never spins 350 degrees to
+    // get somewhere 10 degrees away.
+    const wantYaw = Number.isFinite(to.yaw) ? to.yaw : tour.from.yaw;
+    let delta = (wantYaw - tour.from.yaw) % (Math.PI * 2);
+    if (delta > Math.PI) delta -= Math.PI * 2;
+    if (delta < -Math.PI) delta += Math.PI * 2;
+    yw = tour.from.yaw + delta * e;
+    pit = lerp(tour.from.pitch, Number.isFinite(to.pitch) ? to.pitch : tour.from.pitch);
+    dist = lerp(tour.from.distance, Number.isFinite(to.distance) ? to.distance : tour.from.distance);
+
+    if (tour.t < seconds) return;
+
+    // On to the next shot.
+    tour.t = 0;
+    tour.from = { center: target.clone(), yaw: yw, pitch: pit, distance: dist };
+    const next = tour.index + 1;
+    if (next < legs.length) {
+      tour.index = next;
+      tour.onStep?.(next, legs[next]);
+      return;
+    }
+    if (tour.loop) {
+      tour.index = 0;
+      tour.onStep?.(0, legs[0]);
+      return;
+    }
+    const done = tour.onEnd;
+    tour = null;
+    active = false;
+    done?.();
+  }
+
   return {
     get active() { return active; },
     /** True whenever the camera is not fully back in the game's hands. */
@@ -139,10 +216,37 @@ export function createTopView(camera, {
     toggle() {
       active = !active;
       if (active) captureFog();
+      if (!active) tour = null;
       return active;
     },
 
-    close() { active = false; },
+    close() { active = false; tour = null; },
+
+    get touring() { return !!tour; },
+    /** Which leg of the tour is on screen, or -1. */
+    get tourStep() { return tour ? tour.index : -1; },
+
+    /**
+     * Flies the camera through `waypoints`, in order.
+     *
+     * Each waypoint is { center:[x,y,z], yaw, pitch, distance, seconds }.
+     * `seconds` is the whole time spent on that leg: the camera spends
+     * the first 60% of it travelling and the rest held still, which is
+     * what makes it read as a shot rather than a constant drift.
+     */
+    playTour(waypoints, { onStep = null, onEnd = null, loop = false } = {}) {
+      const legs = (waypoints || []).filter(Boolean);
+      if (!legs.length) return false;
+      captureFog();
+      active = true;
+      tour = { legs, index: -1, t: 0, onStep, onEnd, loop };
+      return true;
+    },
+
+    stopTour() {
+      tour = null;
+      active = false;
+    },
 
     /**
      * @param dt            frame delta in seconds
@@ -165,7 +269,9 @@ export function createTopView(camera, {
 
       captureFog();
 
-      if (active && input) {
+      if (tour) {
+        advanceTour(dt);
+      } else if (active && input) {
         // Drag to swing around the site, wheel or pinch to change height.
         const look = input.consumeLook();
         yw -= look.dx * 0.005;

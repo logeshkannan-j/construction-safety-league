@@ -783,6 +783,7 @@ function AdminView({ onExit }) {
   // Lets the host PLAY any mission from the panel to check it before an
   // event. Must live above the early returns below — see soloStats.
   const [previewGameId, setPreviewGameId] = useState(null);
+  const [demoGameIdPreview, setDemoGameIdPreview] = useState(null);
 
   // ---- persistent, per-device admin unlock ----
   // Stored in localStorage only (safeSet(..., false)), never synced through
@@ -870,6 +871,22 @@ function AdminView({ onExit }) {
       <Suspense fallback={<Centered><p style={{ color: COLORS.muted }}>Loading the mission…</p></Centered>}>
         <AdminGamePreview gameId={previewGameId} onExit={() => setPreviewGameId(null)} />
       </Suspense>
+    );
+  }
+
+  // Watching a mission's briefing exactly as the room will see it on
+  // the TV, including the built-in 3D demo.
+  if (demoGameIdPreview) {
+    return (
+      <div style={{ padding: "16px 16px 50px", minHeight: "100vh" }}>
+        <TopBar title="Mission briefing preview" onExit={() => setDemoGameIdPreview(null)} connected={connected} />
+        <Suspense fallback={<Centered><p style={{ color: COLORS.muted }}>Loading the briefing…</p></Centered>}>
+          <MissionDemo gameId={demoGameIdPreview} game={game} size="tv" roundLabel="ADMIN PREVIEW" />
+        </Suspense>
+        <div style={{ textAlign: "center", marginTop: 18 }}>
+          <button style={linkBtnStyle} onClick={() => setDemoGameIdPreview(null)}>← Back to the admin panel</button>
+        </div>
+      </div>
     );
   }
 
@@ -1176,8 +1193,25 @@ function AdminView({ onExit }) {
             <div style={{ display: "grid", gap: 12 }}>
               {Object.keys(MISSION_BRIEFS).map((id) => (
                 <div key={id}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.ink, marginBottom: 6 }}>
-                    {missionBrief(id, "en")?.title || id}
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    gap: 8, marginBottom: 6,
+                  }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: COLORS.ink }}>
+                      {missionBrief(id, "en")?.title || id}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDemoGameIdPreview(id)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+                        background: COLORS.surfaceRaised, color: COLORS.ink,
+                        border: `1px solid ${COLORS.line}`, borderRadius: 6,
+                        padding: "5px 10px", fontSize: 11, fontWeight: 800,
+                      }}
+                    >
+                      <Play size={12} color={COLORS.yellow} /> Watch the demo
+                    </button>
                   </div>
                   <div style={{ display: "grid", gap: 6 }}>
                     {LANGUAGES.map((l) => (

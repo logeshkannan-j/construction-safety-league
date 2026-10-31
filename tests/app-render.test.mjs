@@ -189,6 +189,9 @@ if (!denied) {
     videoSlots.some((v) => v.includes("English demo video"))
     && videoSlots.some((v) => v.includes("தமிழ் demo video")),
     videoSlots.slice(0, 4).join(" | "));
+  check("the admin can watch each mission's built-in demo",
+    (text.match(/Watch the demo/g) || []).length === 5,
+    `${(text.match(/Watch the demo/g) || []).length} of 5`);
   check("the admin can put a mission briefing on the TV",
     /Show Round \d demo on TV/.test(text), text.slice(0, 200));
 }
@@ -438,11 +441,20 @@ section("The mission briefing renders in both languages");
     gameId: ROUND_GAMES[0], game: emptyGame, size: "tv", lang: "en",
   }));
   await settle(150);
-  check("with no video the screen says so and still briefs",
-    visibleText().includes("No demo video"),
-    visibleText().slice(0, 120));
-  check("with no video no empty player element is left on the page",
+  // With no host video, the BUILT-IN 3D demo takes that slot. jsdom has
+  // no WebGL, so what must be asserted here is that it degrades to a
+  // readable message instead of an exception or an empty black box —
+  // which is exactly what an old laptop at the venue would get.
+  check("with no video the built-in demo takes the slot, not a dead frame",
     !rootEl.querySelector("video") && !rootEl.querySelector("iframe"));
+  // Wait for the lazy chunk, so this cannot pass on the Suspense
+  // placeholder and quietly stop testing the real fallback.
+  for (let i = 0; i < 40 && visibleText().includes("Loading the 3D demo"); i++) await settle(100);
+  check("without WebGL the demo says so rather than failing silently",
+    visibleText().includes("cannot show 3D"),
+    visibleText().slice(0, 220));
+  check("the written briefing is shown whether or not the 3D demo runs",
+    visibleText().includes(briefs.missionBrief(ROUND_GAMES[0], "en").goal));
 
   // And with one, it plays it.
   const withVideo = {
