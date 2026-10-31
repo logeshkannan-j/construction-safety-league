@@ -67,6 +67,7 @@ export const meta = {
     ["W / S", "Run the trolley out and in"],
     ["Q / E", "Hoist up and down"],
     ["Arrows", "Same as A/D/W/S if you prefer"],
+    ["Joystick", "The crane joystick: left and right slew, forward and back run the trolley"],
     ["Space", "Attach the load / release the load"],
     ["X", "EMERGENCY STOP — kills all motion"],
     ["C", "Switch between cab view and site view"],
@@ -76,6 +77,7 @@ export const meta = {
     ["Esc", "Pause"],
   ],
   mobileControls: [
+    ["Joystick", "The crane joystick — slew left and right, trolley in and out"],
     ["SLEW ◀ ▶", "Hold to swing the jib"],
     ["TROLLEY", "Hold IN / OUT to run the trolley"],
     ["HOIST ▲ ▼", "Hold to raise or lower the hook"],
@@ -110,6 +112,11 @@ const CRANE = {
 };
 
 const BUILDING = { x: -12, z: 11, width: 18, depth: 14, floors: 4, floorHeight: 3.4 };
+
+/** Keeps a combined stick + key input inside -1..1. */
+function clampUnit(v) {
+  return Math.max(-1, Math.min(1, v));
+}
 
 /* ============================== the lifts ============================== */
 
@@ -539,8 +546,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       state.estopTimer -= dt;
       if (state.estopTimer <= 0) state.estop = false;
     } else {
-      const slewInput = (input.isHeld("slewRight") ? 1 : 0) - (input.isHeld("slewLeft") ? 1 : 0);
-      const trolleyInput = (input.isHeld("trolleyOut") ? 1 : 0) - (input.isHeld("trolleyIn") ? 1 : 0);
+      // The joystick IS the crane joystick: left and right slew the
+      // jib, forward and back run the trolley. That is how the real
+      // cab works, so it needs no explaining — and it gives this
+      // mission the same control as the walking ones, analogue rather
+      // than the all-or-nothing of a held button.
+      const stickX = input.state.moveX || 0;
+      const stickY = input.state.moveY || 0;
+      const slewInput = clampUnit(
+        (input.isHeld("slewRight") ? 1 : 0) - (input.isHeld("slewLeft") ? 1 : 0) + stickX);
+      const trolleyInput = clampUnit(
+        (input.isHeld("trolleyOut") ? 1 : 0) - (input.isHeld("trolleyIn") ? 1 : 0) + stickY);
       const hoistInput = (input.isHeld("hoistUp") ? 1 : 0) - (input.isHeld("hoistDown") ? 1 : 0);
 
       // Ramped acceleration, so the controls have the weight of a real

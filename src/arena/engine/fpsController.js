@@ -33,6 +33,19 @@ export function createFirstPerson(camera, input, {
   radius = 0.32,
   height = 1.78,
   crouchHeight = 1.15,
+  // Third person puts the camera on a boom behind the player so they
+  // can see their own character. The boom shortens rather than passing
+  // through a wall, which is the one thing a chase camera must do.
+  thirdPerson = false,
+  boomLength = 3.6,
+  boomHeight = 0.65,
+  // Set both false to use this purely as a MOVEMENT solver: it walks a
+  // character with collision, ground and step-up, and leaves the camera
+  // and the look input to whoever asked for it. That is how the two
+  // games with an orbit camera get a walkable character without having
+  // their cameras replaced.
+  ownsCamera = true,
+  ownsLook = true,
   walkSpeed = 3.4,
   runSpeed = 6.0,
   crouchSpeed = 1.6,
@@ -63,6 +76,7 @@ export function createFirstPerson(camera, input, {
     stepTimer: 0,
     bob: 0,
     frozen: false,
+    thirdPerson: !!thirdPerson,
     // The height the player last left solid ground at. Seeded with the
     // spawn height so a mission that starts the player in the air still
     // measures the drop correctly.
@@ -262,6 +276,23 @@ export function createFirstPerson(camera, input, {
 
     setFrozen(value) { state.frozen = !!value; },
 
+    get thirdPerson() { return state.thirdPerson; },
+
+    /** Switches between looking through their eyes and over their shoulder. */
+    setThirdPerson(value) {
+      state.thirdPerson = !!value;
+      controller.syncCamera();
+      return state.thirdPerson;
+    },
+
+    /** True when the player is actually walking, for the walk cycle. */
+    get moving() { return state.speed > 0.35; },
+
+    /** Point the character somewhere, when an outside camera owns the yaw. */
+    setYaw(value) {
+      if (Number.isFinite(value)) state.yaw = value;
+    },
+
     /** Direction the camera is looking, for raycasts and prompts. */
     getLookDirection(target = new THREE.Vector3()) {
       camera.getWorldDirection(target);
@@ -269,12 +300,46 @@ export function createFirstPerson(camera, input, {
     },
 
     syncCamera() {
+      if (!ownsCamera) return;
       const eye = state.crouching ? crouchEyeHeight : eyeHeight;
       const bobAmount = state.grounded ? Math.sin(state.bob) * 0.022 * (state.running ? 1.5 : 1) : 0;
-      camera.position.set(position.x, position.y + eye + bobAmount, position.z);
-      camera.rotation.set(0, 0, 0);
-      camera.rotateY(state.yaw);
-      camera.rotateX(state.pitch);
+      const eyeY = position.y + eye + bobAmount;
+
+      if (!state.thirdPerson) {
+        camera.position.set(position.x, eyeY, position.z);
+        camera.rotation.set(0, 0, 0);
+        camera.rotateY(state.yaw);
+        camera.rotateX(state.pitch);
+        return;
+      }
+
+      // Behind and a little above, along the look direction. Pitch
+      // raises the camera rather than tilting it past the player.
+      const back = Math.cos(state.pitch) * boomLength;
+      const lift = boomHeight + Math.sin(-state.pitch) * boomLength * 0.8;
+      const dirX = Math.sin(state.yaw);
+      const dirZ = Math.cos(state.yaw);
+
+      // Walk the boom outwards and stop before it enters anything, so
+      // the camera never ends up inside a wall looking at the inside of
+      // a hoarding panel.
+      let reach = back;
+      const STEP = 0.3;
+      for (let d = STEP; d <= back; d += STEP) {
+        const cx = position.x + dirX * d;
+        const cz = position.z + dirZ * d;
+        if (collidingWith(aabbAt(cx, eyeY - 0.2, cz, 0.4)).length) {
+          reach = Math.max(0.6, d - STEP);
+          break;
+        }
+      }
+
+      camera.position.set(
+        position.x + dirX * reach,
+        eyeY + lift * (reach / Math.max(0.0001, back)),
+        position.z + dirZ * reach
+      );
+      camera.lookAt(position.x, eyeY + 0.05, position.z);
     },
 
     update(dt) {
@@ -284,7 +349,10 @@ export function createFirstPerson(camera, input, {
       }
 
       // ---- look ----
-      const look = input.consumeLook();
+      // When something else owns the look (an orbit camera), it also
+      // owns the yaw: taking the drag here would steal it, and moving
+      // relative to a yaw nobody is steering sends the player sideways.
+      const look = ownsLook ? input.consumeLook() : { dx: 0, dy: 0 };
       state.yaw -= look.dx * lookSpeed;
       state.pitch -= look.dy * lookSpeed;
       state.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, state.pitch));

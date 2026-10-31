@@ -224,6 +224,54 @@ All three leaderboards share one comparator — score first, then who got there
 fastest on `playingMs`. A missing or zero time means they have not finished a
 round, so it loses the tie-break rather than winning it.
 
+### People
+
+`buildWorker()` builds a **skeleton**, not a pile of boxes at fixed heights:
+hips, spine, shoulders, elbows, knees and neck are nested groups, and every limb
+mesh hangs off the joint it rotates about. Proportions are a real 1.78 m adult
+(shoulder 1.44, elbow 1.16, hip 0.94, knee 0.50). Limbs are capsules rather than
+boxes — a few more triangles, and the single biggest difference between a person
+and some crates stacked up.
+
+`poseWorker(worker, { phase, moving, pose })` drives it: opposite arm to leg,
+knees that only bend backwards, and a small bob and sway. The five poses the
+games use (`stand`, `work`, `reach`, `crouch`, `kneel`) are all distinct, which
+the tests assert — a figure meant to be kneeling in a trench should not be
+standing in it.
+
+A full figure is 32 draw calls, which is too many for a crowd, so
+`detail: "low"` drops what you cannot see past about 15 m (eyes, jaw, heels,
+shoulder caps, the hat ridge) and takes it to 20 while keeping the whole
+skeleton, so the crowd still walks properly. The sixteen workers who evacuate in
+Emergency Response use it; nobody the player stands next to does.
+
+### Moving, in all five missions
+
+Every mission has a joystick:
+
+| Mission | What the stick does |
+|---|---|
+| Safety Mission, Safety Escape | Walks you, first person, with `V` to look over your own shoulder |
+| Spot the Hazards, Emergency Response | Walks you around the compound, orbit camera following |
+| Tower Crane | **Is** the crane joystick: left/right slews the jib, forward/back runs the trolley |
+
+The crane one matters: that is how the real cab works, so it needs no
+explaining, and it gives that mission analogue control instead of the
+all-or-nothing of a held button.
+
+The two games with an orbit camera got a walkable body without having their
+cameras replaced: `createFirstPerson` takes `ownsCamera: false, ownsLook: false`
+and is used purely as a movement solver — collision, ground and step-up — while
+the orbit camera keeps the look and the zoom. The character is steered by the
+camera's yaw (`setYaw(cam.yaw)`), so forward on the stick is always away from
+the camera, and the avatar faces the direction it is actually travelling rather
+than wherever the camera happens to point.
+
+In the two first-person missions the camera rides a boom behind the player in
+third person, and the boom **shortens rather than passing through a wall** —
+the one thing a chase camera has to do. The body is hidden in first person and
+not posed while hidden, since there is no point animating what nobody can see.
+
 ### The top view
 
 Every mission has one, on `T` or the **TOP VIEW** button: the camera lifts off and orbits the
@@ -510,9 +558,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 751 assertions with no browser required, across four suites.
+`npm test` runs 809 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (443 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (501 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of

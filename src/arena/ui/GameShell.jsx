@@ -441,7 +441,10 @@ export default function GameShell({
   const scheme = hud.controlScheme || game.controls;
   const interactive = phase === "playing" && !paused && !dialog && !portraitBlock;
   const showMobileControls = mobile && interactive;
-  const needsJoystick = showMobileControls && scheme === "move-look-interact";
+  // Every mission has a stick now. In the walking ones it walks; in
+  // the crane it IS the crane joystick, slewing the jib and running
+  // the trolley, which is how the real cab works.
+  const needsJoystick = showMobileControls && scheme !== "none";
   // Every scheme aims its camera by dragging, so the look pad covers the
   // play area on touch devices in all of them. On desktop the engine's
   // own mouse handling does the job, so the pad is not rendered there

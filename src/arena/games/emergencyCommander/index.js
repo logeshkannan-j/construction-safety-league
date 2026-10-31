@@ -28,13 +28,14 @@ import * as THREE from "three";
 import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
+import { createFirstPerson } from "../../engine/fpsController.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail, buildScaffold,
   buildTowerCrane, updateHoistRope, buildWorker, buildCone, buildSign,
   buildFireExtinguisher, buildElectricalPanel, buildMaterialPallet,
-  buildSiteHut, buildBarrier, buildZoneMarker, buildCableRun, buildPuddle,
+  buildSiteHut, buildBarrier, buildZoneMarker, buildCableRun, buildPuddle, poseWorker,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PHASES, SCORING, pickScenario } from "./scenarios.js";
@@ -81,6 +82,7 @@ export const meta = {
   desktopControls: [
     ["Click", "Act on whatever you clicked — a station, or the hazard"],
     ["1 – 8", "Swing the camera to a station you cannot find"],
+    ["W A S D", "Walk the site — you are a person standing on it, not a camera"],
     ["Mouse drag", "Look around the site"],
     ["Wheel / Z", "Zoom in on the scene"],
     ["T", "Top view — stand off and see where everyone is"],
@@ -89,6 +91,7 @@ export const meta = {
   ],
   mobileControls: [
     ["Tap", "Act on a station — the beacons show which are left"],
+    ["Joystick", "Walk the site — bottom-left of the screen"],
     ["Drag", "Look around the site"],
     ["Pinch / ZOOM", "Zoom in"],
     ["TOP VIEW", "Stand off and see the whole site from the air"],
@@ -459,6 +462,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       pose: "stand",
       helmetColor: ["yellow", "white", "blue", "orange"][i % 4],
       skin: i % 3 === 0 ? "dark" : "skin",
+      // Sixteen of them, and the commander never stands next to any of
+      // them. Full detail here costs ~200 draw calls for eyelashes
+      // nobody can see from the command post.
+      detail: "low",
     });
     const startX = -26 + Math.random() * 44;
     const startZ = -18 + Math.random() * 40;
@@ -621,7 +628,55 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     desired: incident.position.clone(),
   };
 
+  /* --------------------------- the commander ---------------------------
+   * The commander is a person standing on the site, not a floating
+   * point of view. They walk with the joystick; the orbit camera above
+   * keeps the look and the zoom, so this is used purely as a movement
+   * solver (ownsCamera / ownsLook both off).
+   *
+   * It matters for this mission in particular: "take command from a
+   * position of safety" means something once you can walk into the
+   * wrong place.
+   */
+  const commander = createFirstPerson(camera, input, {
+    colliders: hoarding.colliders,
+    spawn: { x: incident.position.x + 10, y: 0, z: incident.position.z + 14 },
+    yaw: 0,
+    canJump: false,
+    ownsCamera: false,
+    ownsLook: false,
+    walkSpeed: 3.6,
+    runSpeed: 6.2,
+    onStep: () => sfx.step(),
+  });
+
+  const avatar = buildWorker(geo, mat, {
+    helmet: true, vest: true, boots: true, helmetColor: "white",
+  });
+  scene.add(avatar);
+  let walkPhase = 0;
+
+  function updateCommander(dt) {
+    if (state.finished) {
+      poseWorker(avatar, { phase: walkPhase, moving: false, pose: "stand" });
+      return;
+    }
+    commander.setYaw(cam.yaw);
+    commander.update(dt);
+
+    const moving = commander.moving;
+    walkPhase += dt * (commander.state.running ? 11 : 7.4) * (moving ? 1 : 0);
+    avatar.position.set(commander.position.x, commander.position.y, commander.position.z);
+    if (moving) avatar.rotation.y = Math.atan2(commander.velocity.x, commander.velocity.z);
+    poseWorker(avatar, { phase: walkPhase, moving, pose: "stand" });
+  }
+
   function updateCamera(dt) {
+    // Unless the camera has been sent to observe a station, it rides
+    // with the commander.
+    if (!cam.observeDistance && !state.finished) {
+      cam.desired.set(commander.position.x, commander.position.y + 1.2, commander.position.z);
+    }
     const look = input.consumeLook();
     cam.yaw -= look.dx * 0.004;
     cam.pitch -= look.dy * 0.003;
@@ -1091,6 +1146,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       beaconB.visible = !flash;
     }
 
+    updateCommander(dt);
     siteView.update(dt, input, () => updateCamera(dt));
 
     if (cfg.shadows) {
@@ -1144,6 +1200,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
+      walker: commander, avatar,
       camDistance: () => cam.distance,
       state, scenario, crowd,
       STATIONS, STATION_COUNT,

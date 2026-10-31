@@ -26,7 +26,7 @@ import {
   buildGround, buildSign, buildFireExtinguisher, buildElectricalPanel,
   buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadder,
   buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
-  buildZoneMarker, buildAriaMark, buildBrandedTower,
+  buildZoneMarker, buildAriaMark, buildBrandedTower, poseWorker,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
@@ -69,6 +69,7 @@ export const meta = {
     ["W A S D", "Move through the building"],
     ["Mouse", "Look around (click once to capture the mouse)"],
     ["Shift", "Run"],
+    ["V", "First person or over the shoulder"],
     ["E", "Interact — decision point, door, extinguisher, or discharge it"],
     ["Wheel / Z", "Zoom in to read a sign or a tag from across the room"],
     ["T", "Plan view — the floor from above, as an escape plan"],
@@ -79,6 +80,7 @@ export const meta = {
     ["Drag right", "Look around while moving"],
     ["INTERACT", "Use a decision point, door or extinguisher"],
     ["RUN", "Hold to move faster"],
+    ["VIEW", "Watch yourself from behind, or look through your own eyes"],
     ["Pinch / ZOOM", "Zoom in to read a sign or a tag"],
     ["PLAN VIEW", "Look down on the floor plan and find your way out"],
     ["Pause", "Top-right of the HUD"],
@@ -652,11 +654,41 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     onStep: () => sfx.step(),
   });
 
+  /* ----------------------------- the player -----------------------------
+   * The person the player IS. Hidden in first person — you would be
+   * looking at the inside of your own head — and shown the moment they
+   * switch to over-the-shoulder. Walks when they walk, and carries the
+   * extinguisher in front of them when they have one.
+   */
+  const avatar = buildWorker(geo, mat, {
+    helmet: true, vest: true, boots: true, helmetColor: "orange",
+  });
+  avatar.visible = false;
+  scene.add(avatar);
+  let walkPhase = 0;
+
+  function updateAvatar(dt) {
+    const moving = controller.moving && !controller.state.frozen;
+    walkPhase += dt * (controller.state.running ? 11 : 7.4) * (moving ? 1 : 0);
+    avatar.position.set(controller.position.x, controller.position.y, controller.position.z);
+    // The model faces +Z; the camera looks down -Z rotated by yaw.
+    avatar.rotation.y = controller.yaw + Math.PI;
+    avatar.visible = controller.thirdPerson;
+    if (!avatar.visible) return;
+    poseWorker(avatar, {
+      phase: walkPhase,
+      moving,
+      // Both hands up on the extinguisher while carrying one.
+      pose: state.carrying ? "work" : "stand",
+    });
+  }
+
   api.buttons([
     { id: "interact", label: "USE", action: "interact", mode: "tap", color: "#9B7CF2", primary: true },
     { id: "run", label: "RUN", action: "run", mode: "hold", color: "#33C481" },
     { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#59B7FF" },
     { id: "top", label: "PLAN VIEW", action: "topview", mode: "tap", color: "#33C481" },
+    { id: "view", label: "VIEW", action: "viewmode", mode: "tap", color: "#59B7FF" },
   ]);
 
   // The floor seen from above, ceilings removed: a live escape plan of
@@ -1095,6 +1127,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     if (!state.dialogOpen && !state.finished && !planView.active) {
       controller.update(dt);
+      if (input.wasPressed("viewmode")) { controller.setThirdPerson(!controller.thirdPerson); sfx.click(); }
       if (input.wasPressed("zoom")) { zoom.toggle(); sfx.click(); }
       state.target = findTarget();
       if (state.target && input.wasPressed("interact")) {
@@ -1107,6 +1140,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       controller.syncCamera();
     }
 
+    updateAvatar(dt);
     planView.update(dt, input, () => controller.syncCamera());
 
     if (state.consequence && stage.elapsed > state.consequenceUntil) {
@@ -1225,7 +1259,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
       zoomFov: () => camera.fov,
-      state, controller, interactables, doors, rooms, ceilings,
+      state, controller, interactables, doors, rooms, ceilings, avatar,
       get planBlend() { return planView.blend; },
       get fire() { return fire; },
       get finishZone() { return finishZone; },

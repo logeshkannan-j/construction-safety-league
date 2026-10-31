@@ -19,10 +19,11 @@ import * as THREE from "three";
 import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
+import { createFirstPerson } from "../../engine/fpsController.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
-  buildGround, buildHoarding, buildBrandBanners, buildBrandedTower,
+  buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, poseWorker,
   buildTowerCrane, updateHoistRope, buildWorker, buildSign,
   buildMaterialPallet, buildSiteHut, buildBarrier, buildCone,
   buildExcavation, buildGuardrail, buildLadder, buildScaffold,
@@ -67,6 +68,7 @@ export const meta = {
   },
 
   desktopControls: [
+    ["W A S D", "Walk the compound"],
     ["Mouse drag", "Orbit the compound"],
     ["Wheel / Z", "Zoom in and out"],
     ["T", "Top view — the whole compound and the towers beyond it"],
@@ -76,6 +78,7 @@ export const meta = {
     ["Esc", "Pause"],
   ],
   mobileControls: [
+    ["Joystick", "Walk the compound — bottom-left of the screen"],
     ["Drag", "Orbit the compound"],
     ["Pinch / ZOOM", "Zoom in on a hazard"],
     ["TOP VIEW", "See the whole compound from the air"],
@@ -432,11 +435,60 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     distance: 96, minDistance: 44, maxDistance: 170, pitch: 0.80,
   });
 
+  /* ----------------------------- the player -----------------------------
+   * You walk the compound rather than hovering over it. The movement
+   * solver does collision, ground and step-up; the orbit camera above
+   * keeps the look and the zoom, so this is used purely to walk a body
+   * around (ownsCamera / ownsLook both off).
+   */
+  const walker = createFirstPerson(camera, input, {
+    colliders: hoarding.colliders,
+    spawn: { x: 0, y: 0, z: COMPOUND.depth / 2 - 6 },
+    yaw: 0,
+    canJump: false,
+    ownsCamera: false,
+    ownsLook: false,
+    walkSpeed: 3.6,
+    runSpeed: 6.2,
+    onStep: () => sfx.step(),
+  });
+
+  const avatar = buildWorker(geo, mat, {
+    helmet: true, vest: true, boots: true, helmetColor: "orange",
+  });
+  scene.add(avatar);
+  let walkPhase = 0;
+
+  function updateWalker(dt) {
+    if (state.finished || state.openHazard) {
+      // Standing still while reading a hazard card.
+      poseWorker(avatar, { phase: walkPhase, moving: false, pose: "stand" });
+      return;
+    }
+    // Forward on the joystick means away from the camera, so the
+    // character is steered by the yaw the orbit camera is using.
+    walker.setYaw(cam.yaw);
+    walker.update(dt);
+
+    const v = walker.velocity;
+    const moving = walker.moving;
+    walkPhase += dt * (walker.state.running ? 11 : 7.4) * (moving ? 1 : 0);
+    avatar.position.set(walker.position.x, walker.position.y, walker.position.z);
+    // Face the way they are actually travelling, not the way the
+    // camera happens to be pointing.
+    if (moving) avatar.rotation.y = Math.atan2(v.x, v.z);
+    poseWorker(avatar, { phase: walkPhase, moving, pose: "stand" });
+  }
+
   function focusOn(position, { height = 2 } = {}) {
     cam.desired.set(position.x, position.y + height, position.z);
   }
 
   function updateCamera(dt) {
+    // With nothing open, the camera rides with the player.
+    if (!state.openHazard && !state.finished) {
+      cam.desired.set(walker.position.x, walker.position.y + 1.5, walker.position.z);
+    }
     const look = input.consumeLook();
     cam.yaw -= look.dx * 0.004;
     cam.pitch -= look.dy * 0.003;
@@ -658,6 +710,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       }
     }
 
+    updateWalker(dt);
+
     if (!state.finished) {
       if (input.wasPressed("tap")) handleTap();
       if (input.wasPressed("next")) nextUnsolved();
@@ -743,6 +797,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     __test: {
       camDistance: () => cam.distance,
       state, hazards, hazardById, inspect, answer, nextUnsolved,
+      walker, avatar,
       HAZARD_COUNT,
     },
   };

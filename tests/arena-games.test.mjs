@@ -404,6 +404,14 @@ section("The top view works in all five games");
 
     const mod = await import(`${SRC}/games/${path}/index.js`);
     const meta2 = mod.default || mod;
+
+    // The stick is in every mission now, so every mission has to say so
+    // on the phone list — it is the primary control on a phone and it
+    // is invisible until you touch it.
+    check(`${id}: the joystick is documented for mobile`,
+      (meta2.mobileControls || []).some(([k, d]) => /joystick/i.test(k + d)),
+      JSON.stringify((meta2.mobileControls || []).map(([k]) => k)));
+
     const rx = /top view|plan view/i;
     check(`${id}: the top view is documented for desktop`,
       (meta2.desktopControls || []).some(([k, d]) => rx.test(k + d)));
@@ -506,6 +514,195 @@ section("An excavation is a visible hole, not a hidden pit");
 }
 
 
+
+/* ================================================================ *
+ *  People, and moving them
+ *
+ *  Every mission is now played by a person you can see and steer.
+ *  These check the figure is actually built as a skeleton, that the
+ *  walk cycle moves it, and that the joystick does something in all
+ *  five games — including the crane, where the stick IS the crane
+ *  joystick rather than a pair of legs.
+ * ================================================================ */
+
+section("The worker is a person, not a pile of boxes");
+
+{
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium", fov: 70 });
+  const mat = kit.createMaterials(stage.cfg);
+  const geo = kit.createGeometries(stage.cfg);
+
+  const person = kit.buildWorker(geo, mat, {});
+  const rig = person.userData.rig;
+
+  check("the figure has a skeleton, not just meshes",
+    !!rig && ["hips", "spine", "neck", "head", "legL", "legR", "armL", "armR"]
+      .every((j) => !!rig[j]),
+    Object.keys(rig || {}).join(", "));
+  check("the legs have knees and the arms have elbows",
+    !!rig.legL.userData.knee && !!rig.legR.userData.knee
+    && !!rig.armL.userData.elbow && !!rig.armR.userData.elbow);
+
+  // The PPE flags are what three games inspect to score a hazard.
+  check("the PPE state survives the rebuild",
+    person.userData.worker.helmet === true && person.userData.worker.vest === true);
+  const bare = kit.buildWorker(geo, mat, { helmet: false, vest: false });
+  check("a worker with no PPE still reports it",
+    bare.userData.worker.helmet === false && bare.userData.worker.vest === false);
+
+  const box3 = new THREE.Box3().setFromObject(person);
+  check("the figure is a believable height", box3.max.y > 1.7 && box3.max.y < 2.0,
+    `${box3.max.y.toFixed(2)} m`);
+  check("the figure is a believable width",
+    (box3.max.x - box3.min.x) > 0.4 && (box3.max.x - box3.min.x) < 0.8,
+    `${(box3.max.x - box3.min.x).toFixed(2)} m`);
+  check("the figure stands on the ground, not in it",
+    Math.abs(box3.min.y) < 0.05, `feet at ${box3.min.y.toFixed(3)}`);
+
+  /* ---- the walk ---- */
+  const standing = rig.legL.rotation.x;
+  kit.poseWorker(person, { phase: Math.PI / 2, moving: true });
+  const strideA = { l: rig.legL.rotation.x, r: rig.legR.rotation.x, arm: rig.armL.rotation.x };
+  kit.poseWorker(person, { phase: (Math.PI * 3) / 2, moving: true });
+  const strideB = { l: rig.legL.rotation.x, r: rig.legR.rotation.x, arm: rig.armL.rotation.x };
+
+  check("walking moves the legs", Math.abs(strideA.l - standing) > 0.3,
+    `${standing.toFixed(2)} → ${strideA.l.toFixed(2)}`);
+  check("the legs swing in opposition", strideA.l * strideA.r < 0,
+    `${strideA.l.toFixed(2)} / ${strideA.r.toFixed(2)}`);
+  check("the opposite arm swings with each leg", strideA.l * strideA.arm < 0,
+    `leg ${strideA.l.toFixed(2)} arm ${strideA.arm.toFixed(2)}`);
+  check("the stride reverses over the cycle", strideA.l * strideB.l < 0,
+    `${strideA.l.toFixed(2)} → ${strideB.l.toFixed(2)}`);
+  check("knees only bend one way",
+    rig.legL.userData.knee.rotation.x <= 0 && rig.legR.userData.knee.rotation.x <= 0,
+    `${rig.legL.userData.knee.rotation.x.toFixed(2)} / ${rig.legR.userData.knee.rotation.x.toFixed(2)}`);
+
+  kit.poseWorker(person, { moving: false, pose: "stand" });
+  check("standing still puts the legs back under the body",
+    Math.abs(rig.legL.rotation.x) < 0.1 && Math.abs(rig.legR.rotation.x) < 0.1);
+
+  // Every pose the games ask for must do something, or a figure meant
+  // to be kneeling in a trench is just standing in it.
+  const poses = ["stand", "work", "reach", "crouch", "kneel"];
+  const hipHeights = poses.map((pose) => {
+    kit.poseWorker(person, { pose, moving: false });
+    return `${pose}:${rig.hips.position.y.toFixed(2)}:${rig.armL.rotation.x.toFixed(2)}`;
+  });
+  check("every pose the games use is distinct",
+    new Set(hipHeights).size === poses.length, hipHeights.join(" "));
+
+  // The cheap variant for crowds must still be a working skeleton.
+  const crowdMember = kit.buildWorker(geo, mat, { detail: "low" });
+  check("the low-detail figure still has a full skeleton",
+    !!crowdMember.userData.rig?.legL?.userData?.knee);
+  const countMeshesIn = (o) => { let n = 0; o.traverse((c) => { if (c.isMesh) n++; }); return n; };
+  check("the low-detail figure is meaningfully cheaper",
+    countMeshesIn(crowdMember) < countMeshesIn(person) * 0.75,
+    `${countMeshesIn(crowdMember)} vs ${countMeshesIn(person)} meshes`);
+
+  check("poseWorker ignores something that is not a worker",
+    (() => { try { kit.poseWorker(null, {}); kit.poseWorker({}, {}); return true; } catch { return false; } })());
+
+  stage.dispose();
+}
+
+section("Every mission is driven by a joystick");
+
+{
+  // What "the stick did something" means per mission: the walking
+  // games move a body, the crane moves the crane.
+  const PROBES = {
+    "safetyMission": (t) => t.controller.position.clone(),
+    "escapeChallenge": (t) => t.controller.position.clone(),
+    "safestTower": (t) => t.walker.position.clone(),
+    "emergencyCommander": (t) => t.walker.position.clone(),
+    "craneMaster": (t) => ({ slew: t.state.slew, radius: t.state.radius }),
+  };
+
+  for (const [path, id] of GAMES) {
+    const { instance } = await boot(path);
+    const t = instance.__test;
+    runFrames(20);
+
+    const before = PROBES[path](t);
+    instance.input.setJoystick(0.9, 0.9);
+    runFrames(70);
+    instance.input.setJoystick(0, 0);
+    const after = PROBES[path](t);
+
+    if (path === "craneMaster") {
+      check(`${id}: the joystick slews the jib`,
+        Math.abs(after.slew - before.slew) > 0.01,
+        `${before.slew.toFixed(3)} → ${after.slew.toFixed(3)}`);
+      check(`${id}: the joystick runs the trolley`,
+        Math.abs(after.radius - before.radius) > 0.05,
+        `radius ${before.radius.toFixed(2)} → ${after.radius.toFixed(2)}`);
+    } else {
+      const moved = before.distanceTo(after);
+      check(`${id}: the joystick walks the player`, moved > 1,
+        `moved ${moved.toFixed(2)} m`);
+      check(`${id}: the player stays on the ground`, Math.abs(after.y) < 2,
+        `y = ${after.y.toFixed(2)}`);
+      check(`${id}: the player never reaches NaN`,
+        Number.isFinite(after.x + after.y + after.z));
+    }
+
+    instance.dispose();
+  }
+}
+
+section("You can see the person you are playing");
+
+{
+  for (const path of ["safetyMission", "escapeChallenge", "safestTower", "emergencyCommander"]) {
+    const { instance } = await boot(path);
+    const t = instance.__test;
+    runFrames(20);
+
+    check(`${path}: there is an avatar in the scene`, !!t.avatar?.userData?.rig);
+
+    // In the two orbit games the avatar is always on screen; in the two
+    // first-person games it appears when you look over your shoulder.
+    const controller = t.controller;
+    if (controller) {
+      check(`${path}: the avatar is hidden in first person`, t.avatar.visible === false);
+      const eye = lastRenderer.lastCamera.position.clone();
+      controller.setThirdPerson(true);
+      runFrames(10);
+      check(`${path}: switching view shows the body`, t.avatar.visible === true);
+      check(`${path}: the camera pulls back off the player`,
+        lastRenderer.lastCamera.position.distanceTo(eye) > 0.8,
+        `moved ${lastRenderer.lastCamera.position.distanceTo(eye).toFixed(2)} m`);
+      check(`${path}: the avatar stands where the player is`,
+        t.avatar.position.distanceTo(controller.position) < 0.01);
+      controller.setThirdPerson(false);
+      runFrames(10);
+      check(`${path}: switching back hides the body again`, t.avatar.visible === false);
+    } else {
+      check(`${path}: the avatar is on screen`, t.avatar.visible === true);
+      check(`${path}: the avatar stands where the walker is`,
+        t.avatar.position.distanceTo(t.walker.position) < 0.01);
+    }
+
+    // And it must walk rather than slide. The first-person games only
+    // pose the body while it is actually on screen — there is no point
+    // animating something nobody can see — so look at it first.
+    if (controller) controller.setThirdPerson(true);
+    runFrames(5);
+    const legBefore = t.avatar.userData.rig.legL.rotation.x;
+    instance.input.setJoystick(0, 1);
+    runFrames(40);
+    instance.input.setJoystick(0, 0);
+    check(`${path}: the avatar's legs move as it walks`,
+      Math.abs(t.avatar.userData.rig.legL.rotation.x - legBefore) > 0.05,
+      `${legBefore.toFixed(3)} → ${t.avatar.userData.rig.legL.rotation.x.toFixed(3)}`);
+
+    instance.dispose();
+  }
+}
 section("Scene content");
 
 {

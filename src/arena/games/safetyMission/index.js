@@ -23,7 +23,7 @@ import {
   buildLadder, buildTowerCrane, updateHoistRope, buildWorker, buildCone,
   buildBarrier, buildSign, buildFireExtinguisher, buildElectricalPanel,
   buildExcavation, buildMaterialPallet, buildDebris, buildCableRun, buildPuddle,
-  buildPPEStation, buildMaterialHoist, buildZoneMarker, buildSiteHut, makeHighlight,
+  buildPPEStation, buildMaterialHoist, buildZoneMarker, buildSiteHut, makeHighlight, poseWorker,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { HAZARDS, SCORING, categoryOptions, actionOptions } from "./hazards.js";
@@ -68,6 +68,7 @@ export const meta = {
     ["Shift", "Run"],
     ["Space", "Jump"],
     ["C", "Crouch"],
+    ["V", "First person or over the shoulder"],
     ["E", "Inspect and report the hazard you are standing at"],
     ["Wheel / Z", "Zoom in to look closer across the site"],
     ["T", "Top view — lift off the ground and see the whole site"],
@@ -78,6 +79,7 @@ export const meta = {
     ["Drag right", "Look around, at the same time as moving"],
     ["INSPECT", "Report the hazard you are standing at"],
     ["TOP VIEW", "See the whole site from the air — drag to swing around it"],
+    ["VIEW", "Watch yourself from behind, or look through your own eyes"],
     ["Pinch / ZOOM", "Zoom in to look closer"],
     ["RUN", "Hold to move faster"],
     ["JUMP", "Jump"],
@@ -681,6 +683,35 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
   });
 
+  /* ----------------------------- the player -----------------------------
+   * The person the player IS. Hidden in first person — you would be
+   * looking at the inside of your own head — and shown the moment they
+   * switch to over-the-shoulder, which is the whole point of having a
+   * body. Walks when they walk.
+   */
+  const avatar = buildWorker(geo, mat, {
+    helmet: true, vest: true, boots: true, helmetColor: "orange",
+  });
+  avatar.visible = false;
+  scene.add(avatar);
+  let walkPhase = 0;
+
+  function updateAvatar(dt) {
+    const moving = controller.moving && !controller.state.frozen;
+    walkPhase += dt * (controller.state.running ? 11 : 7.4) * (moving ? 1 : 0);
+    avatar.position.set(controller.position.x, controller.position.y, controller.position.z);
+    // The model faces +Z; the camera looks down -Z rotated by yaw.
+    avatar.rotation.y = controller.yaw + Math.PI;
+    avatar.visible = controller.thirdPerson;
+    if (avatar.visible) {
+      poseWorker(avatar, {
+        phase: walkPhase,
+        moving,
+        pose: controller.state.crouching ? "crouch" : "stand",
+      });
+    }
+  }
+
   /* ============================ game state ============================ */
 
   const missionMs = BASE_MISSION_SECONDS * 1000 * difficulty.timeScale;
@@ -722,6 +753,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     { id: "jump", label: "JUMP", action: "jump", mode: "tap", color: "#59B7FF" },
     { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
     { id: "top", label: "TOP VIEW", action: "topview", mode: "tap", color: "#33C481" },
+    { id: "view", label: "VIEW", action: "viewmode", mode: "tap", color: "#59B7FF" },
   ]);
 
   // Lift off the ground and look at the whole site from the air. Walking
@@ -1002,6 +1034,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     if (!state.dialogOpen && !state.finished && !siteView.active) {
       controller.update(dt);
+      if (input.wasPressed("viewmode")) { controller.setThirdPerson(!controller.thirdPerson); sfx.click(); }
       if (input.wasPressed("zoom")) { zoom.toggle(); sfx.click(); }
       setTarget(findTarget());
       if (state.target && input.wasPressed("interact")) {
@@ -1010,6 +1043,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     } else {
       controller.syncCamera();
     }
+
+    updateAvatar(dt);
 
     // Orbit the site from above the player's own position, so coming
     // back down puts them exactly where they left off.
@@ -1090,7 +1125,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs to drive a real
     // playthrough headlessly. Nothing in the app reads this.
     __test: {
-      state, controller, hazards, scene, colliders,
+      state, controller, hazards, scene, colliders, avatar,
       zoomFov: () => camera.fov,
     },
   };

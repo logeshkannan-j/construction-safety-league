@@ -41,6 +41,8 @@ export const DEFAULT_KEYMAP = {
   Tab: "cycle",
   // Lift off the ground and look at the whole site from the air.
   KeyT: "topview",
+  // First person or over the shoulder.
+  KeyV: "viewmode",
 };
 
 const MOVE_KEYS = {
