@@ -21,7 +21,8 @@ const {
   buildEventPlan, renumberPlan, planSummary, planRoundCount, isQuestionItem,
   createRun, isRunValid, currentItem, answerItem, advanceRun, releaseRun,
   completeItemGame, skipItemGame, runRoundIndex,
-  runTotals, runSummary, runProgress, itemRemainingMs,
+  runTotals, runSummary, runProgress, itemRemainingMs, runPlayingMs,
+  roundSpeedBonus, ROUND_SPEED_BONUS, ROUND_SPEED_FLOOR_SECONDS, ROUND_SPEED_PAR_SECONDS,
   applyPermutation, scoreAnswer, game3dPoints, clampQuizPerRound,
   itemsPerRound, totalItems,
   STAGES, QUIZ_SECONDS, MILLIONAIRE_SECONDS, SESSION_VERSION, NOT_RELEASED,
@@ -370,8 +371,9 @@ section("A whole event, played right through");
     totals.game3d === ROUND_COUNT * GAME_POINTS_PER_ROUND, `${totals.game3d}`);
   check("the three sections are tracked separately",
     totals.quiz > 0 && totals.millionaire > 0 && totals.game3d > 0);
-  check("the total is the sum of the three sections",
-    totals.total === totals.game3d + totals.quiz + totals.millionaire);
+  check("the total is the sum of every section, including the speed bonus",
+    totals.total === totals.game3d + totals.quiz + totals.millionaire + totals.speed,
+    `${totals.total} vs ${totals.game3d}+${totals.quiz}+${totals.millionaire}+${totals.speed}`);
 
   const p = runProgress(plan, run);
   check("progress reports every item done",
@@ -438,9 +440,14 @@ section("The participant record end to end");
   }
 
   const totals = runTotals(plan, run);
+  // Mirrors what SoloSession.persist() writes.
   const stored = {
     ...joined, session: run, score: totals.total,
-    scores: { game3d: totals.game3d, quiz: totals.quiz, millionaire: totals.millionaire },
+    scores: {
+      game3d: totals.game3d, quiz: totals.quiz,
+      millionaire: totals.millionaire, speed: totals.speed,
+    },
+    playingMs: runPlayingMs(run),
   };
 
   // The record is re-read from the database verbatim on a refresh.
@@ -457,7 +464,8 @@ section("The participant record end to end");
     !releaseRun(plan, afterRefresh.session, { releasedRound: 0, now: 400 }).changed);
 
   check("player.score is the combined total the leaderboard reads",
-    stored.score === stored.scores.game3d + stored.scores.quiz + stored.scores.millionaire);
+    stored.score === stored.scores.game3d + stored.scores.quiz
+      + stored.scores.millionaire + (stored.scores.speed || 0));
   check("the three section scores are stored separately",
     stored.scores.game3d > 0 && stored.scores.quiz > 0 && stored.scores.millionaire > 0);
 
@@ -501,6 +509,120 @@ section("Question timers");
     itemRemainingMs(plan, { itemIndex: finaleIndex, stageStartedAt: 0 }, 0) === MILLIONAIRE_SECONDS * 1000);
 }
 
+
+/* ================================================================ *
+ *  The race: everyone is released together, so finishing a round
+ *  sooner is worth points and breaks ties.
+ * ================================================================ */
+
+section("Finishing a round sooner is worth points");
+
+{
+  check("a round finished inside the floor is worth the full bonus",
+    roundSpeedBonus(ROUND_SPEED_FLOOR_SECONDS * 1000 - 1) === ROUND_SPEED_BONUS);
+  check("a round finished instantly is worth the full bonus",
+    roundSpeedBonus(0) === ROUND_SPEED_BONUS);
+  check("a round finished at par is worth nothing",
+    roundSpeedBonus(ROUND_SPEED_PAR_SECONDS * 1000) === 0);
+  check("a round finished beyond par is worth nothing, never negative",
+    roundSpeedBonus(ROUND_SPEED_PAR_SECONDS * 1000 * 4) === 0);
+  check("rubbish input is worth nothing",
+    roundSpeedBonus(undefined) === 0 && roundSpeedBonus(-50) === 0 && roundSpeedBonus(NaN) === 0);
+
+  // The bonus has to fall as the round gets slower, with no flat spots
+  // between the floor and par, or being quicker stops paying.
+  const mid = [];
+  for (let sec = ROUND_SPEED_FLOOR_SECONDS; sec <= ROUND_SPEED_PAR_SECONDS; sec += 30) {
+    mid.push(roundSpeedBonus(sec * 1000));
+  }
+  check("the bonus decays all the way from the floor to par",
+    mid.every((v, i) => i === 0 || v < mid[i - 1]), mid.join(", "));
+
+  // Two participants, same answers, released at the same moment: the
+  // one who finishes the round sooner must score more.
+  const plan = buildEventPlan({ quizPerRound: 1 });
+  const roundOne = plan.filter((p) => (p.roundIndex ?? 0) === 0);
+
+  function playRound(finishSeconds) {
+    let run = createRun(plan, { now: 0 });
+    run = releaseRun(plan, run, { releasedRound: 0, now: 1000 }).run;
+    // Walk the round, landing the last advance at the chosen time.
+    const step = (finishSeconds * 1000) / roundOne.length;
+    for (let i = 0; i < roundOne.length; i++) {
+      const at = 1000 + Math.round(step * (i + 1));
+      const item = plan[run.itemIndex];
+      if (item.round === ITEM_GAME3D) {
+        run = completeItemGame(plan, run, {
+          score: 12000, maxScore: 12000, completed: true, accuracy: 100,
+        }, { now: at }).run;
+      } else {
+        run = answerItem(plan, run, { pickedIndex: item.correct, now: at }).run;
+      }
+      run = advanceRun(plan, run, { now: at });
+    }
+    return run;
+  }
+
+  const quick = playRound(200);
+  const slow = playRound(900);
+
+  check("the quick run banked a speed bonus",
+    (quick.rounds?.[0]?.bonus || 0) > 0, JSON.stringify(quick.rounds?.[0]));
+  check("the slow run banked none",
+    (slow.rounds?.[0]?.bonus || 0) === 0, JSON.stringify(slow.rounds?.[0]));
+  check("the quick participant ends the round ahead on points",
+    runTotals(plan, quick).total > runTotals(plan, slow).total,
+    `${runTotals(plan, quick).total} vs ${runTotals(plan, slow).total}`);
+  // Both played the mission perfectly, so the mission half is level and
+  // the gap is time. (The written questions are ALSO scored on how fast
+  // each one was answered, so those totals legitimately differ too.)
+  check("both ran the mission perfectly, so the mission half is level",
+    runTotals(plan, quick).game3d === runTotals(plan, slow).game3d,
+    `${runTotals(plan, quick).game3d} vs ${runTotals(plan, slow).game3d}`);
+  check("the round speed bonus is what separates them",
+    runTotals(plan, quick).speed > runTotals(plan, slow).speed,
+    `${runTotals(plan, quick).speed} vs ${runTotals(plan, slow).speed}`);
+
+  // The round clock must measure the ROUND, not time spent waiting for
+  // the host to release the next one.
+  check("the round clock records how long the round took",
+    Math.abs((quick.rounds[0].elapsedMs || 0) - 200000) < 1500,
+    `${quick.rounds[0].elapsedMs} ms`);
+  check("playing time is the sum of the round clocks",
+    runPlayingMs(quick) === quick.rounds[0].elapsedMs, `${runPlayingMs(quick)}`);
+
+  // The clock must not restart if the participant refreshes and the
+  // host's release is applied again.
+  const reRead = JSON.parse(JSON.stringify(quick));
+  const reReleased = releaseRun(plan, reRead, { releasedRound: 1, now: 9_000_000 }).run;
+  check("a refresh does not reset a round clock that already started",
+    reReleased.rounds[0].startedAt === quick.rounds[0].startedAt,
+    `${reReleased.rounds[0].startedAt} vs ${quick.rounds[0].startedAt}`);
+
+  // And the bonus is banked once, not recomputed on every later write.
+  const bankedBefore = quick.rounds[0].bonus;
+  const advancedAgain = advanceRun(plan, quick, { now: 9_000_000 });
+  check("a banked bonus is never recomputed later",
+    advancedAgain.rounds[0].bonus === bankedBefore,
+    `${advancedAgain.rounds[0].bonus} vs ${bankedBefore}`);
+
+  // Abandoning the mission to bank the bonus must never pay.
+  const skipper = (() => {
+    let run = createRun(plan, { now: 0 });
+    run = releaseRun(plan, run, { releasedRound: 0, now: 1000 }).run;
+    run = skipItemGame(plan, run, { now: 2000 });
+    run = advanceRun(plan, run, { now: 2000 });
+    for (let i = 1; i < roundOne.length; i++) {
+      const item = plan[run.itemIndex];
+      run = answerItem(plan, run, { pickedIndex: item.correct, now: 3000 }).run;
+      run = advanceRun(plan, run, { now: 3000 });
+    }
+    return run;
+  })();
+  check("skipping the mission to grab the bonus loses points overall",
+    runTotals(plan, skipper).total < runTotals(plan, slow).total,
+    `skipper ${runTotals(plan, skipper).total} vs slow-but-complete ${runTotals(plan, slow).total}`);
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   console.log("\nFailures:");

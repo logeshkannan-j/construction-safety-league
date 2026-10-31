@@ -113,6 +113,37 @@ export const GAME_POINTS_PER_ROUND = 1000;
 export const QUIZ_SECONDS = 45;
 export const MILLIONAIRE_SECONDS = 60;
 
+/* ------------------------- the race element -------------------------
+ *
+ * The host releases each round to everybody at once, so every
+ * participant starts a round at the same moment. Finishing it sooner is
+ * then worth something: the round speed bonus decays from the full
+ * amount down to nothing between FLOOR and PAR seconds.
+ *
+ * Deliberately modest next to the 1,000 a mission is worth. It must
+ * reward being quick WITHOUT making it pay to abandon the 3D mission —
+ * skipping a mission to bank the bonus trades 1,000 points for 250,
+ * which is never worth it.
+ *
+ * It is measured from the host's release to the moment the participant
+ * finishes the last row of the round, so time spent waiting for the
+ * host between rounds is not counted against anybody.
+ */
+export const ROUND_SPEED_BONUS = 250;
+export const ROUND_SPEED_FLOOR_SECONDS = 210;
+export const ROUND_SPEED_PAR_SECONDS = 660;
+
+/** The bonus a round finished in `elapsedMs` is worth. */
+export function roundSpeedBonus(elapsedMs) {
+  const elapsed = Number(elapsedMs);
+  if (!Number.isFinite(elapsed) || elapsed < 0) return 0;
+  const floor = ROUND_SPEED_FLOOR_SECONDS * 1000;
+  const par = ROUND_SPEED_PAR_SECONDS * 1000;
+  if (elapsed <= floor) return ROUND_SPEED_BONUS;
+  if (elapsed >= par) return 0;
+  return Math.round(ROUND_SPEED_BONUS * ((par - elapsed) / (par - floor)));
+}
+
 export const STAGES = {
   /** Waiting for the host to release this round. */
   LOCKED: "locked",
@@ -373,6 +404,8 @@ export function createRun(plan, { now = Date.now() } = {}) {
     stageStartedAt: now,
     answers: {},   // keyed by plan item index
     games: {},     // 3D results, keyed by plan item index
+    // { startedAt, finishedAt, bonus } per round index, for the race.
+    rounds: {},
   };
 }
 
@@ -427,8 +460,17 @@ export function releaseRun(plan, run, { releasedRound, now = Date.now() } = {}) 
   if (!item) return { run: { ...run, stage: STAGES.DONE, finishedAt: now }, changed: true };
   if (released < (item.roundIndex ?? 0)) return { run, changed: false };
 
+  // Stamp when this round opened for this participant. Everybody is
+  // released together, so this is the common start line the race is
+  // timed from. Never re-stamped: a rejoin must not reset the clock.
+  const roundIndex = item.roundIndex ?? 0;
+  const rounds = { ...(run.rounds || {}) };
+  if (!rounds[roundIndex]?.startedAt) {
+    rounds[roundIndex] = { ...(rounds[roundIndex] || {}), startedAt: now };
+  }
+
   return {
-    run: { ...run, stage: stageForItem(item), stageStartedAt: now },
+    run: { ...run, rounds, stage: stageForItem(item), stageStartedAt: now },
     changed: true,
   };
 }
@@ -441,13 +483,37 @@ export function advanceRun(plan, run, { now = Date.now() } = {}) {
   const here = plan[run.itemIndex];
   const nextIndex = run.itemIndex + 1;
   const next = plan[nextIndex];
+  const crossesRound = !next || (next.roundIndex ?? 0) !== (here?.roundIndex ?? 0);
+
+  // Leaving a round closes its clock and banks the speed bonus. Done
+  // once, here, so the bonus is fixed at the moment it was earned and
+  // cannot drift if the record is re-read or re-written later.
+  let rounds = run.rounds || {};
+  if (crossesRound && here) {
+    const roundIndex = here.roundIndex ?? 0;
+    const entry = rounds[roundIndex];
+    if (entry?.startedAt && !entry.finishedAt) {
+      rounds = {
+        ...rounds,
+        [roundIndex]: {
+          ...entry,
+          finishedAt: now,
+          elapsedMs: Math.max(0, now - entry.startedAt),
+          bonus: roundSpeedBonus(now - entry.startedAt),
+        },
+      };
+    }
+  }
 
   if (!next) {
-    return { ...run, itemIndex: nextIndex, stage: STAGES.DONE, finishedAt: now, stageStartedAt: now };
+    return {
+      ...run, rounds, itemIndex: nextIndex,
+      stage: STAGES.DONE, finishedAt: now, stageStartedAt: now,
+    };
   }
-  const crossesRound = (next.roundIndex ?? 0) !== (here?.roundIndex ?? 0);
   return {
     ...run,
+    rounds,
     itemIndex: nextIndex,
     stage: crossesRound ? STAGES.ROUND_DONE : stageForItem(next),
     stageStartedAt: now,
@@ -518,7 +584,22 @@ export function runTotals(plan, run) {
   });
   const game3d = Object.values(run?.games || {})
     .reduce((t, g) => t + (Number(g?.points) || 0), 0);
-  return { game3d, quiz, millionaire, total: game3d + quiz + millionaire };
+  const speed = Object.values(run?.rounds || {})
+    .reduce((t, r) => t + (Number(r?.bonus) || 0), 0);
+  return { game3d, quiz, millionaire, speed, total: game3d + quiz + millionaire + speed };
+}
+
+/**
+ * Total time the participant actually spent playing: the sum of their
+ * round clocks, NOT wall-clock since they joined. Waiting for the host
+ * to release the next round is not their time.
+ *
+ * Used to break ties on the leaderboard, so that two people on the same
+ * score are separated by who got there first.
+ */
+export function runPlayingMs(run) {
+  return Object.values(run?.rounds || {})
+    .reduce((t, r) => t + (Number(r?.elapsedMs) || 0), 0);
 }
 
 export function runProgress(plan, run) {
@@ -564,6 +645,8 @@ export function runSummary(plan, run) {
     gameTotal: s.missions,
     games,
     answers: run?.answers || {},
+    rounds: run?.rounds || {},
+    playingMs: runPlayingMs(run),
   };
 }
 

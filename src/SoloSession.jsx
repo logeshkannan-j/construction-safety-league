@@ -2,16 +2,24 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import {
   HardHat, Play, Clock, CheckCircle2, XCircle, Trophy, Gem, Target,
   ChevronRight, Percent, Users, Phone, Ban, Gamepad2, ListChecks,
-  Award, Crown, Loader2, AlertTriangle, SkipForward,
+  Award, Crown, Loader2, AlertTriangle, SkipForward, Zap,
 } from "lucide-react";
 import { COLORS, inputStyle, btnStyle, linkBtnStyle } from "./theme.js";
+
+/** "7m 12s" — playing time, for the speed bonus line. */
+function formatPlayTime(ms) {
+  const total = Math.max(0, Math.round(Number(ms) || 0) / 1000);
+  const m = Math.floor(total / 60);
+  const sec = Math.round(total % 60);
+  return m ? `${m}m ${sec}s` : `${sec}s`;
+}
 import {
   STAGES, QUIZ_SECONDS, MILLIONAIRE_SECONDS, NOT_RELEASED,
   ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS,
   ITEM_GAME3D, ITEM_MILLIONAIRE,
   createRun, isRunValid, currentItem, answerItem, advanceRun, releaseRun,
   completeItemGame, skipItemGame, runRoundIndex, planRoundCount, planSummary,
-  runTotals, runSummary, runProgress, itemRemainingMs,
+  runTotals, runSummary, runProgress, itemRemainingMs, runPlayingMs,
 } from "./session.js";
 
 // The 3D game runs inside the Arena's own shell, loaded on demand so a
@@ -66,8 +74,15 @@ export default function SoloSession({
       ...me,
       ...extra,
       session: nextSession,
-      scores: { game3d: totals.game3d, quiz: totals.quiz, millionaire: totals.millionaire },
+      scores: {
+        game3d: totals.game3d, quiz: totals.quiz,
+        millionaire: totals.millionaire, speed: totals.speed,
+      },
       score: totals.total,
+      // Time actually spent playing, for the leaderboard tie-break.
+      // Two people on the same score are separated by who got there
+      // first, which is the point of releasing rounds together.
+      playingMs: runPlayingMs(nextSession),
     };
     onPersist(updated);
     return updated;
@@ -646,6 +661,10 @@ function SessionResult({ me, plan = [], players, onExit }) {
       detail: `${summary.quizCorrect} of ${summary.quizTotal} correct` },
     { label: `Safety Millionaire (${summary.mqTotal})`, value: totals.millionaire, color: COLORS.purple, icon: <Gem size={14} />,
       detail: `${summary.mqCorrect} of ${summary.mqTotal} correct` },
+    { label: "Speed bonus", value: totals.speed, color: COLORS.yellow, icon: <Zap size={14} />,
+      detail: summary.playingMs
+        ? `${formatPlayTime(summary.playingMs)} of playing time`
+        : "awarded for finishing rounds quickly" },
   ];
 
   return (

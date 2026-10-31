@@ -497,6 +497,27 @@ function computeTeamScores(players, teams, mode) {
     .sort((a, b) => b.score - a.score);
 }
 
+/**
+ * Leaderboard order: score first, then who got there fastest.
+ *
+ * The host releases each round to everybody at once, so finishing it
+ * sooner is a real result rather than an accident, and two people on
+ * the same score should not be separated by whichever record happened
+ * to load first. `playingMs` counts only time INSIDE a round, so
+ * waiting for the host between rounds costs nobody anything.
+ *
+ * A missing or zero `playingMs` means they have not finished a round
+ * yet, so it loses the tie-break rather than winning it.
+ */
+function byScoreThenSpeed(a, b) {
+  const byScore = (b.score || 0) - (a.score || 0);
+  if (byScore) return byScore;
+  const at = Number(a.playingMs) || Infinity;
+  const bt = Number(b.playingMs) || Infinity;
+  if (at !== bt) return at - bt;
+  return String(a.name || "").localeCompare(String(b.name || ""));
+}
+
 /* ============================== APP =============================== */
 
 export default function App() {
@@ -796,7 +817,7 @@ function AdminView({ onExit }) {
     setPinError("PIN recovered. Use the default PIN 1234, then change it in Admin security.");
   }
 
-  const sorted = useMemo(() => [...players].sort((a, b) => (b.score || 0) - (a.score || 0)), [players]);
+  const sorted = useMemo(() => [...players].sort(byScoreThenSpeed), [players]);
   const teamScores = useMemo(
     () => (game?.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : []),
     [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
@@ -1925,7 +1946,7 @@ function PlayerView({ onExit }) {
     await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
   }
 
-  const sorted = useMemo(() => [...players].sort((a, b) => (b.score || 0) - (a.score || 0)), [players]);
+  const sorted = useMemo(() => [...players].sort(byScoreThenSpeed), [players]);
   const teamScores = useMemo(
     () => (game?.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : []),
     [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
@@ -2447,7 +2468,7 @@ function TVView({ onExit }) {
     return () => { mounted = false; clearInterval(syncId); clearInterval(tickId); };
   }, [serverOffset]);
 
-  const sorted = useMemo(() => [...players].sort((a, b) => (b.score || 0) - (a.score || 0)), [players]);
+  const sorted = useMemo(() => [...players].sort(byScoreThenSpeed), [players]);
   const teamScores = useMemo(
     () => (game?.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : []),
     [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
