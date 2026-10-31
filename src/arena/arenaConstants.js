@@ -116,7 +116,7 @@ export const GAMES = [
     title: "Spot the Hazards",
     tagline: "A sign is not a control.",
     description:
-      "Walk the ground-level site compound before the shift starts. Five things down here are wrong. Inspect each one and choose the control that actually removes the risk — not the one that just warns people it is there.",
+      "Walk the ground-level site compound before the shift starts. Ten things down here are wrong — an open riser, an unguarded edge, a live lead in water, loose cylinders, a blocked fire exit and more. Walk up to each one and choose the control that actually removes the risk, not the one that just warns people it is there.",
     accent: C.green,
     icon: "tower",
     minutes: "5–9 min",

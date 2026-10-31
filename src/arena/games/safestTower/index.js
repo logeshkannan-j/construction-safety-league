@@ -27,7 +27,7 @@ import {
   buildTowerCrane, updateHoistRope, buildWorker, buildSign,
   buildMaterialPallet, buildSiteHut, buildBarrier, buildCone,
   buildExcavation, buildGuardrail, buildLadder, buildScaffold,
-  buildCableRun, buildPuddle, buildElectricalPanel, buildZoneMarker,
+  buildCableRun, buildPuddle, buildElectricalPanel, buildZoneMarker, buildDebris,
   collider,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
@@ -72,7 +72,8 @@ export const meta = {
     ["Mouse drag", "Orbit the compound"],
     ["Wheel / Z", "Zoom in and out"],
     ["T", "Top view — the whole compound and the towers beyond it"],
-    ["Click", "Inspect a hazard"],
+    ["Walk up to one", "Walking into a hazard stops you and opens it"],
+    ["Click", "Inspect a hazard from a distance"],
     ["1 – 4", "Answer the open question"],
     ["Tab", "Jump to the next unsolved hazard"],
     ["Esc", "Pause"],
@@ -82,7 +83,8 @@ export const meta = {
     ["Drag", "Orbit the compound"],
     ["Pinch / ZOOM", "Zoom in on a hazard"],
     ["TOP VIEW", "See the whole compound from the air"],
-    ["Tap", "Inspect a hazard"],
+    ["Walk up to one", "Walking into a hazard stops you and opens it"],
+    ["Tap", "Inspect a hazard from a distance"],
     ["Tap an answer", "Choose the control"],
     ["NEXT", "Jump to the next unsolved hazard"],
   ],
@@ -151,6 +153,16 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     scene.add(worker);
     animated.push({ object: worker, phase: Math.random() * 6 });
   });
+
+  /** A fresh shuffled index list, e.g. [2,0,3,1]. */
+  function shuffledOrder(length) {
+    const order = Array.from({ length }, (_, i) => i);
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    return order;
+  }
 
   /* ============================ the hazards ============================ */
 
@@ -230,6 +242,85 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         // Far too shallow, untied, finishing level with the platform.
         const ladder = buildLadder(geo, mat, { height: 4.6, lean: 0.62 });
         group.add(ladder);
+        break;
+      }
+      case "opening": {
+        // A formed riser opening with nothing over it. The shaft below
+        // is modelled so the drop is a real hole, not a dark square.
+        group.add(box(geo, mat.concreteSlab, 4.4, 0.3, 4.4, 0, 0.15, 0));
+        [[-1.6, 0], [1.6, 0], [0, -1.6], [0, 1.6]].forEach(([ox, oz], i) => {
+          const w = i < 2 ? 1.2 : 4.4;
+          const d = i < 2 ? 4.4 : 1.2;
+          group.add(box(geo, mat.concreteSlab, w, 0.32, d, ox, 0.16, oz));
+        });
+        // The void: dark walls dropping away.
+        [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(([ox, oz]) => {
+          group.add(box(geo, mat.concreteDark, ox ? 0.06 : 2, 3.4, oz ? 0.06 : 2,
+            ox, -1.7, oz, { shadow: false }));
+        });
+        group.add(box(geo, mat.black, 2, 0.02, 2, 0, -3.4, 0, { shadow: false }));
+        break;
+      }
+      case "edge": {
+        // A slab that simply stops, with material stacked at the lip.
+        group.add(box(geo, mat.concreteSlab, 7, 0.34, 5, 0, 0.17, -1.4));
+        const pallet = buildMaterialPallet(geo, mat, { type: "block", rows: 2 });
+        pallet.position.set(-1.4, 0.34, 0.6);
+        group.add(pallet);
+        // The drop below, so the edge reads as an edge.
+        group.add(box(geo, mat.concreteDark, 7, 3.2, 0.3, 0, -1.6, 1.05, { shadow: false }));
+        break;
+      }
+      case "housekeeping": {
+        // Offcuts with nails up, banding and broken block, right across
+        // the marked walkway.
+        for (let i = -3; i <= 3; i++) {
+          group.add(box(geo, mat.green, 0.9, 0.02, 1.4, i * 1.4, 0.011, 0, { shadow: false }));
+        }
+        group.add(buildDebris(geo, mat, { spread: 2.6, count: 18 }));
+        for (let i = 0; i < 7; i++) {
+          const a = i * 1.7;
+          const offcut = box(geo, mat.timber, 0.9 + (i % 3) * 0.4, 0.05, 0.09,
+            Math.cos(a) * 1.7, 0.03, Math.sin(a) * 1.1, { rotY: a });
+          group.add(offcut);
+          // Nails, pointing up, which is the whole problem.
+          for (let n = 0; n < 3; n++) {
+            group.add(box(geo, mat.steel, 0.015, 0.07, 0.015,
+              Math.cos(a) * 1.7 + (n - 1) * 0.18, 0.09, Math.sin(a) * 1.1, { shadow: false }));
+          }
+        }
+        break;
+      }
+      case "spill": {
+        // Oil across the plant route and into the walkway beside it.
+        group.add(box(geo, mat.asphalt, 6, 0.03, 3.2, 0, 0.015, 0, { shadow: false }));
+        const slick = buildPuddle(geo, mat, { radius: 1.8, oil: true });
+        slick.position.set(0, 0.035, 0);
+        group.add(slick);
+        [[1.5, 0.7, 0.9], [-1.3, -0.6, 0.7], [2.2, -0.9, 0.5]].forEach(([px, pz, r]) => {
+          const smear = buildPuddle(geo, mat, { radius: r, oil: true });
+          smear.position.set(px, 0.035, pz);
+          group.add(smear);
+        });
+        // The telehandler that is leaking it.
+        group.add(box(geo, mat.craneYellow, 2.4, 1.1, 1.3, -2.6, 0.9, 0));
+        group.add(cylinder(geo, mat.black, 0.42, 0.3, -3.4, 0.42, 0.62, { rotZ: Math.PI / 2 }));
+        group.add(cylinder(geo, mat.black, 0.42, 0.3, -3.4, 0.42, -0.62, { rotZ: Math.PI / 2 }));
+        break;
+      }
+      case "access": {
+        // Board packs and a pallet dumped against the final fire exit.
+        group.add(box(geo, mat.concreteDark, 3.2, 2.9, 0.3, 0, 1.45, -1.4));
+        group.add(box(geo, mat.green, 1.1, 2.2, 0.08, 0, 1.1, -1.22, { shadow: false }));
+        const sign = buildSign(geo, mat, { text: "FIRE EXIT", kind: "emergency", height: 2.6, width: 0.9, post: false });
+        sign.position.set(0, 0, -1.2);
+        group.add(sign);
+        [[-0.5, -0.5, 0], [0.5, -0.3, 0.5], [0, -0.6, 1.0]].forEach(([px, pz, py]) => {
+          group.add(box(geo, mat.plywood, 2.4, 0.45, 1.2, px, 0.22 + py, pz + 0.3));
+        });
+        const pallet = buildMaterialPallet(geo, mat, { type: "block", rows: 2 });
+        pallet.position.set(1.4, 0, 0.6);
+        group.add(pallet);
         break;
       }
       default:
@@ -321,6 +412,74 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         });
         break;
       }
+      case "opening": {
+        group.add(box(geo, mat.concreteSlab, 4.4, 0.3, 4.4, 0, 0.15, 0));
+        [[-1.6, 0], [1.6, 0], [0, -1.6], [0, 1.6]].forEach(([ox, oz], i) => {
+          const w = i < 2 ? 1.2 : 4.4;
+          const d = i < 2 ? 4.4 : 1.2;
+          group.add(box(geo, mat.concreteSlab, w, 0.32, d, ox, 0.16, oz));
+        });
+        // A fixed cover, bolted down and marked.
+        group.add(box(geo, mat.plywood, 2.4, 0.09, 2.4, 0, 0.35, 0));
+        group.add(box(geo, mat.hazard, 2.42, 0.012, 2.42, 0, 0.4, 0, { shadow: false }));
+        [[-1.05, -1.05], [1.05, -1.05], [-1.05, 1.05], [1.05, 1.05]].forEach(([bx, bz]) => {
+          group.add(box(geo, mat.steel, 0.1, 0.06, 0.1, bx, 0.42, bz, { shadow: false }));
+        });
+        break;
+      }
+      case "edge": {
+        group.add(box(geo, mat.concreteSlab, 7, 0.34, 5, 0, 0.17, -1.4));
+        group.add(box(geo, mat.concreteDark, 7, 3.2, 0.3, 0, -1.6, 1.05, { shadow: false }));
+        // Double guardrail and toe board along the open edge.
+        group.add(buildGuardrail(mat, {
+          x: 0, y: 0.34, z: 1.0, length: 7, axis: "x", compliant: true,
+        }).group);
+        // Material moved back off the edge.
+        const pallet = buildMaterialPallet(geo, mat, { type: "block", rows: 2 });
+        pallet.position.set(-1.4, 0.34, -2.4);
+        group.add(pallet);
+        break;
+      }
+      case "housekeeping": {
+        for (let i = -3; i <= 3; i++) {
+          group.add(box(geo, mat.green, 0.9, 0.02, 1.4, i * 1.4, 0.011, 0, { shadow: false }));
+        }
+        // Cleared, with a bin on the walkway and the timber stacked.
+        group.add(cylinder(geo, mat.blue, 0.42, 0.9, 2.6, 0.45, 1.2));
+        group.add(box(geo, mat.timberDark, 1.6, 0.3, 0.6, -2.6, 0.15, 1.2));
+        break;
+      }
+      case "spill": {
+        group.add(box(geo, mat.asphalt, 6, 0.03, 3.2, 0, 0.015, 0, { shadow: false }));
+        // Granules down, bagged, and the machine off the route.
+        group.add(box(geo, mat.white, 2.2, 0.04, 1.6, 0, 0.04, 0, { shadow: false }));
+        group.add(cylinder(geo, mat.yellow, 0.34, 0.7, 1.8, 0.35, 1.0));
+        group.add(box(geo, mat.craneYellow, 2.4, 1.1, 1.3, -2.6, 0.9, -2.6));
+        const cone = buildCone(geo, mat, { height: 0.6 });
+        cone.position.set(1.4, 0, -1.2);
+        group.add(cone);
+        break;
+      }
+      case "access": {
+        group.add(box(geo, mat.concreteDark, 3.2, 2.9, 0.3, 0, 1.45, -1.4));
+        group.add(box(geo, mat.green, 1.1, 2.2, 0.08, 0, 1.1, -1.22, { shadow: false }));
+        const sign = buildSign(geo, mat, { text: "FIRE EXIT", kind: "emergency", height: 2.6, width: 0.9, post: false });
+        sign.position.set(0, 0, -1.2);
+        group.add(sign);
+        // Materials moved well clear, and the route painted and coned.
+        [[-0.6, 0], [0.6, 0], [0, 0]].forEach(([px], i) => {
+          group.add(box(geo, mat.green, 1.2, 0.02, 0.5, px + (i - 1) * 0.1, 0.011, 1.1 + i * 0.7, { shadow: false }));
+        });
+        [[-1.5, 1.4], [1.5, 1.4]].forEach(([cx, cz]) => {
+          const cone = buildCone(geo, mat, { height: 0.6 });
+          cone.position.set(cx, 0, cz);
+          group.add(cone);
+        });
+        const pallet = buildMaterialPallet(geo, mat, { type: "block", rows: 2 });
+        pallet.position.set(3.4, 0, 1.6);
+        group.add(pallet);
+        break;
+      }
       default:
         break;
     }
@@ -381,6 +540,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       fixed: null,
       solved: false,
       attempts: 0,
+      // The order THIS player sees the four controls in. Shuffled per
+      // hazard per play, so the answer is never in the same place twice
+      // and two people stood together cannot read it off each other.
+      order: shuffledOrder(def.options.length),
       world: new THREE.Vector3(def.at.x, 0, def.at.z),
     };
   });
@@ -459,6 +622,29 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   scene.add(avatar);
   let walkPhase = 0;
 
+  /** How close you have to get before a hazard stops you. */
+  const APPROACH_RADIUS = 3.4;
+
+  /**
+   * Walking up to a hazard IS the interaction. You do not have to find
+   * it with a cursor first — get near it and it stops you, exactly as
+   * walking into one on site would.
+   */
+  function checkApproach() {
+    if (state.openHazard || state.finished) return;
+    let nearest = null;
+    let best = APPROACH_RADIUS;
+    for (const hazard of hazards) {
+      if (hazard.solved) continue;
+      const d = Math.hypot(
+        hazard.world.x - walker.position.x,
+        hazard.world.z - walker.position.z
+      );
+      if (d < best) { best = d; nearest = hazard; }
+    }
+    if (nearest) inspect(nearest);
+  }
+
   function updateWalker(dt) {
     if (state.finished || state.openHazard) {
       // Standing still while reading a hazard card.
@@ -480,6 +666,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     poseWorker(avatar, {
       phase: walkPhase, moving, running: walker.state.running, pose: "stand",
     });
+    checkApproach();
   }
 
   function focusOn(position, { height = 2 } = {}) {
@@ -527,10 +714,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       title: def.title,
       subtitle: `${def.brief}\n\n${def.question}`,
       tone: "danger",
-      options: def.options.map((text, index) => ({
-        id: String(index),
-        label: text,
-        badge: String.fromCharCode(65 + index),
+      // Shown in this player's own order; `id` carries the REAL index
+      // so the answer is scored against the definition, not the slot.
+      options: hazard.order.map((realIndex, slot) => ({
+        id: String(realIndex),
+        label: def.options[realIndex],
+        badge: String.fromCharCode(65 + slot),
       })),
       footer: hazard.attempts > 0
         ? "Second attempt — worth half."
@@ -799,7 +988,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     __test: {
       camDistance: () => cam.distance,
       state, hazards, hazardById, inspect, answer, nextUnsolved,
-      walker, avatar,
+      walker, avatar, checkApproach, APPROACH_RADIUS,
       HAZARD_COUNT,
     },
   };

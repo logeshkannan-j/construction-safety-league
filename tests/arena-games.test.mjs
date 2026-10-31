@@ -1375,8 +1375,8 @@ section("Spot the Hazards — clearing the site correctly");
   const { state, hazards, inspect, answer, HAZARD_COUNT } = instance.__test;
 
   runFrames(10);
-  check("the walk-round has exactly 5 ground-level hazards",
-    hazards.length === 5 && HAZARD_COUNT === 5, `${hazards.length}`);
+  check("the walk-round covers ten ground-level hazards",
+    hazards.length === HAZARD_COUNT && HAZARD_COUNT === 10, `${hazards.length}`);
   check("every hazard sits at ground level",
     hazards.every((h) => h.world.y === 0), "a hazard is off the ground");
   check("every hazard asks a question with 4 options",
@@ -1386,8 +1386,38 @@ section("Spot the Hazards — clearing the site correctly");
   check("every hazard explains why", hazards.every((h) => (h.def.why || "").length > 40));
   check("every hazard names the control type",
     hazards.every((h) => ["eliminate", "engineer", "admin", "ppe"].includes(h.def.control)));
-  check("the HUD lists the five hazards as tasks",
-    (record.hud.tasks || []).length === 5, `${(record.hud.tasks || []).length}`);
+  /* ---- walking up to one IS the interaction ---- */
+  {
+    const { walker, checkApproach, APPROACH_RADIUS } = instance.__test;
+    // The LAST one, so the rest of this section starts untouched.
+    const target = hazards[hazards.length - 1];
+    // Stand well away: nothing should open.
+    walker.teleport(target.world.x + 40, 0, target.world.z + 40);
+    checkApproach();
+    check("standing away from a hazard opens nothing", state.openHazard === null);
+
+    // Walk up to it.
+    walker.teleport(target.world.x + APPROACH_RADIUS * 0.5, 0, target.world.z);
+    checkApproach();
+    check("walking up to a hazard stops you and opens it",
+      state.openHazard === target, state.openHazard?.def?.id || "nothing opened");
+    check("approaching shows the question with four options",
+      (record.dialog?.options || []).length === 4,
+      JSON.stringify((record.dialog?.options || []).length));
+    check("the open hazard is highlighted", target.outline.visible !== false);
+
+    // Dismiss it the way a player would, and walk away, so the rest
+    // of this section starts from an untouched walk-round.
+    record.dialog?.onDismiss?.();
+    check("you can back out of a hazard and keep looking",
+      state.openHazard === null && !target.solved);
+    walker.teleport(0, 0, 0);
+    runFrames(2);
+  }
+
+  check("the HUD lists every hazard as a task",
+    (record.hud.tasks || []).length === HAZARD_COUNT,
+    `${(record.hud.tasks || []).length} of ${HAZARD_COUNT}`);
 
   // --- a plausible-but-wrong answer must be refused and cost points ---
   const first = hazards[0];
@@ -1411,20 +1441,22 @@ section("Spot the Hazards — clearing the site correctly");
   // --- clear the rest, all first time ---
   hazards.slice(1).forEach((h) => { inspect(h); answer(h, h.def.correct); runFrames(1); });
   check("every hazard can be cleared", hazards.every((h) => h.solved));
-  check("four of five were cleared first time", state.firstTime === 4, `${state.firstTime}`);
+  check("all but the fumbled one were cleared first time",
+    state.firstTime === HAZARD_COUNT - 1, `${state.firstTime} of ${HAZARD_COUNT - 1}`);
 
   runFrames(5);
   const result = record.finished;
   check("clearing every hazard finishes the walk-round", !!result && result.completed === true);
   if (result) {
     check("accuracy reflects the one hazard that took two attempts",
-      result.accuracy === 80, `${result.accuracy}%`);
+      result.accuracy === Math.round(((HAZARD_COUNT - 1) / HAZARD_COUNT) * 100),
+      `${result.accuracy}%`);
     check("the debrief calls out the hazard that took two attempts",
       (result.lessons || []).length === 1 && result.lessons[0].includes("attempt 2"),
       JSON.stringify(result.lessons));
     check("the score stays under the Arena ceiling", result.score <= 12000, `${result.score}`);
     check("the debrief counts what was cleared",
-      result.stats?.hazardsCleared === 5 && result.stats?.wrongAnswers === 1,
+      result.stats?.hazardsCleared === HAZARD_COUNT && result.stats?.wrongAnswers === 1,
       JSON.stringify(result.stats));
   }
 
@@ -1435,7 +1467,7 @@ section("Spot the Hazards — clearing the site correctly");
 section("Spot the Hazards — answering with the plausible option every time");
 {
   const { instance, record } = await boot("safestTower");
-  const { state, hazards, inspect, answer } = instance.__test;
+  const { state, hazards, inspect, answer, HAZARD_COUNT } = instance.__test;
   runFrames(5);
 
   // Pick a wrong-but-plausible control for every hazard. Nothing is
@@ -1447,7 +1479,8 @@ section("Spot the Hazards — answering with the plausible option every time");
   });
   check("no hazard is controlled by a plausible answer", hazards.every((h) => !h.solved));
   check("every hazard is still flagged", hazards.every((h) => h.flag.visible));
-  check("five wrong calls were counted", state.wrong === 5, `${state.wrong}`);
+  check("a wrong call was counted for every hazard",
+    state.wrong === HAZARD_COUNT, `${state.wrong} of ${HAZARD_COUNT}`);
   check("the walk-round has not finished itself", !record.finished);
 
   instance.dispose();
