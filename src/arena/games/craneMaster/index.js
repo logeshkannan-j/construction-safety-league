@@ -16,6 +16,7 @@
 import * as THREE from "three";
 import { createStage, addDaylight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
+import { createTopView } from "../../engine/topview.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail,
@@ -68,6 +69,7 @@ export const meta = {
     ["Space", "Attach the load / release the load"],
     ["X", "EMERGENCY STOP — kills all motion"],
     ["C", "Switch between cab view and site view"],
+    ["T", "Top view — the whole site and the finished towers from the air"],
     ["Mouse drag", "Orbit the camera"],
     ["Wheel / Z", "Zoom — dollies in site view, narrows the lens in the cab"],
     ["Esc", "Pause"],
@@ -79,6 +81,7 @@ export const meta = {
     ["ATTACH", "Hook on, and release when you have landed"],
     ["E-STOP", "Stops everything immediately"],
     ["VIEW", "Cab view or site view"],
+    ["TOP VIEW", "See the whole site from the air — drag to swing around it"],
     ["Drag screen", "Orbit the camera"],
     ["Pinch / ZOOM", "Zoom in on the load or the landing"],
   ],
@@ -162,7 +165,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const hoarding = buildHoarding(geo, mat, { width: 96, depth: 86, height: 2.4, gateAt: "south" });
   scene.add(hoarding.group);
   scene.add(buildBrandBanners(geo, mat, { width: 96, depth: 86 }));
-  scene.add(buildBrandedTower(geo, mat, { x: 34, z: -112, rotY: -0.22 }).group);
+  scene.add(buildBrandedTower(geo, mat, { x: 34, z: -56, rotY: -0.22 }).group);
 
   // The structure we are feeding.
   const frame = buildConcreteFrame(geo, mat, { ...BUILDING });
@@ -426,9 +429,18 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     { id: "estop", label: "E-STOP", action: "estop", mode: "tap", color: "#EA4F4F" },
     { id: "camera", label: "VIEW", action: "camera", mode: "tap", color: "#59B7FF" },
     { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
+    { id: "top", label: "TOP VIEW", action: "topview", mode: "tap", color: "#33C481" },
   ]);
 
   /* ------------------------------ camera ------------------------------ */
+
+  // The aerial, which takes over from whichever of the cab/site views
+  // is current. Wide, because it has to hold a 36 m mast and a 44 m jib.
+  const siteView = createTopView(camera, {
+    scene,
+    center: new THREE.Vector3(0, 8, -18),
+    distance: 160, minDistance: 70, maxDistance: 260, pitch: 0.72,
+  });
 
   const cam = {
     yaw: state.slew + Math.PI * 0.75,
@@ -991,6 +1003,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       { id: "estop", label: "E-STOP", action: "estop", mode: "tap", color: "#EA4F4F" },
       { id: "camera", label: state.cabView ? "SITE" : "CAB", action: "camera", mode: "tap", color: "#59B7FF" },
       { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
+      { id: "top", label: "TOP VIEW", action: "topview", mode: "tap", color: "#33C481" },
     ]);
   }
 
@@ -1055,6 +1068,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         }
         sfx.click();
       }
+      if (input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
       if (input.wasPressed("attachRelease")) tryAttachRelease();
 
       updateWind(dt);
@@ -1065,7 +1079,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       stopAllLoops();
     }
 
-    updateCamera(dt);
+    siteView.update(dt, input, () => updateCamera(dt));
 
     if (cfg.shadows) {
       const focus = cam.target;
@@ -1105,6 +1119,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     dispose() {
       stopAllLoops();
+      siteView.dispose();
       input.dispose();
       stage.dispose();
     },

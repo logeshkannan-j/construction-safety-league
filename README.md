@@ -162,7 +162,7 @@ mission / on the quiz / on the finale, and how many are waiting on you.
 
 ## The five 3D missions
 
-Every mission is set on the **Casagrand Aira** site — a 19-floor residential tower,
+Every mission is set on the **Casagrand Aria** site — a 19-floor residential tower,
 which stands on the skyline of each outdoor scene, on the hoarding banners and on
 the tower crane's counterweight.
 
@@ -203,7 +203,7 @@ device testing checklist are in **[ARENA.md](ARENA.md)**.
 ```bash
 npm install
 npm run dev
-npm test     # 497 tests: the 3D games, the question bank, rounds, scoring,
+npm test     # 619 tests: the 3D games, the question bank, rounds, scoring,
              # rules, and that the app actually renders
 ```
 

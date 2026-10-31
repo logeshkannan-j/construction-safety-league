@@ -81,7 +81,7 @@ export function getDifficulty(id) {
 // Every mission is set on this development. Kept here (not in kit.js)
 // so the HUD and the briefing screens can show it without pulling
 // three.js into their chunk.
-export const SITE_NAME = "CASAGRAND AIRA";
+export const SITE_NAME = "CASAGRAND ARIA";
 export const SITE_SUBTITLE = "19 FLOORS · RESIDENTIAL TOWER";
 
 export const GAMES = [

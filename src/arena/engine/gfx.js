@@ -73,7 +73,7 @@ export const QUALITY_PRESETS = {
     fog: true,
     anisotropy: 2,
     maxLights: 1,
-    drawDistance: 140,
+    drawDistance: 200,
     segments: 8,
   },
   medium: {
@@ -90,7 +90,7 @@ export const QUALITY_PRESETS = {
     // Upper bound only — the real value comes from the GPU, see below.
     anisotropy: 8,
     maxLights: 2,
-    drawDistance: 240,
+    drawDistance: 300,
     segments: 12,
   },
   high: {

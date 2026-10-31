@@ -127,11 +127,53 @@ alternative would let a refresh buy more time. The waiting screens between round
 
 ### The site
 
-Every mission is set on **Casagrand Aira**, a 19-floor residential tower. `SITE_NAME` lives in
-`arenaConstants.js` (not `kit.js`, so the HUD can use it without pulling three.js into its chunk)
-and shows up in four places: the HUD line above the objective in every mission, the hoarding
-banners inside the compound, the tower crane's counterweight, and the finished 19-floor tower
-itself standing on the skyline of every outdoor scene.
+Every mission is set on **Casagrand Aria**. `SITE_NAME` lives in `arenaConstants.js` (not
+`kit.js`, so the HUD can use it without pulling three.js into its chunk) and the branding shows
+up in five places: the HUD line above the objective in every mission, the hoarding banners inside
+the compound, the tower crane's counterweight, the exit lobby wall of the escape building, and
+the development itself.
+
+`buildBrandedTower()` in `kit.js` builds that development: **three towers** in the stepped L of
+the real site plan, 19 floors each, with the vertical fins, warm facade uplighting, lit podiums,
+rooftop pool, blue and red sports courts, internal road and tree line from the project renders —
+plus the ARIA mark at the entrance as **real extruded geometry** (`buildAriaMark()`), not a decal,
+so it reads from the air as well as from the ground. 60 meshes and about 5,000 triangles in total,
+no shadows and no colliders, because it is scenery.
+
+Its `x`/`z` place the **entrance**, not the centre, so a caller can park it just beyond its own
+hoarding without doing the arithmetic. That matters more than it sounds: the development used to
+sit at `z = -104`, which put it 134–162 m from the player — past the far plane on the low quality
+tier and 64–92% erased by fog on it. It is now 12 m beyond each game's hoarding line, and
+`tests/arena-games.test.mjs` asserts that for every game, on every quality tier, nothing is
+clipped and the towers still read through the fog.
+
+### The top view
+
+Every mission has one, on `T` or the **TOP VIEW** button: the camera lifts off and orbits the
+whole site, drag to swing around it and wheel/pinch to change height. `engine/topview.js` is
+shared by all five.
+
+All five games drive the camera directly from their own controller (first person, crane cab,
+orbit, command view), so rather than teach four controllers about an overhead mode, `createTopView`
+**wraps** whichever one a game has:
+
+```js
+siteView.update(dt, input, () => updateCamera(dt));
+```
+
+The game's own camera code still runs and still puts the camera where it always did; the aerial
+then blends from that pose up to the overhead one. Because the ground pose is recomputed every
+frame, the flight eases in **both** directions — and coming down lands on wherever the game has
+moved on to, not on a stale position.
+
+Two things have to be relaxed on the way up or the view is useless, and both are restored on the
+way out: the **far plane** (90 m up and back puts the far side of the site past the 200 m far
+plane the low tier uses — which is what phones get) and the **fog** (tuned for a camera at head
+height, so from the air it would swallow exactly what the player went up to look at).
+
+The escape mission is indoors, so its version is a **PLAN VIEW**: the ceilings are hidden once the
+camera is a third of the way up, turning it into a live escape plan of the five areas and the way
+out. They come back on the way down.
 
 ---
 
@@ -391,9 +433,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 497 assertions with no browser required, across four suites.
+`npm test` runs 619 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (212 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (378 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of
@@ -427,7 +469,7 @@ and api, exactly as a player or a phone would:
   alarm/isolation/services flags, the workforce actually walking to the muster point, and a textbook
   response saving the casualty
 
-### `tests/session.test.mjs` — questions, rounds and sessions (106 assertions)
+### `tests/session.test.mjs` — questions, rounds and sessions (116 assertions)
 
 - the bank: 24 + 8 questions, unique ids, 4 options each, valid answer indexes, no duplicate
   options, an explanation on every question, and **all twelve required topics covered with at least
@@ -459,7 +501,7 @@ and api, exactly as a player or a phone would:
 - live event mode: a live paper is still 10 + 5, still shuffled in place, still never moves the
   correct answer away from its text, and still deals a different paper per game
 
-### `tests/app-render.test.mjs` — the app actually mounts (22 assertions)
+### `tests/app-render.test.mjs` — the app actually mounts (52 assertions)
 
 Mounts the **real** React app in jsdom with effects running, clicks through to the admin panel and
 waits for the live Firebase record to arrive. A blank screen is invisible to every other suite
@@ -546,7 +588,7 @@ I am not claiming otherwise:
 - [ ] Joystick, touch look and action buttons on Android Chrome
 - [ ] Joystick, touch look and action buttons on iPhone Safari (check the safe-area insets)
 - [ ] Pointer lock and mouse look on desktop
-- [ ] **Casagrand Aira is legible** — the HUD line, the hoarding banners, the crane counterweight
+- [ ] **Casagrand Aria is legible** — the HUD line, the hoarding banners, the crane counterweight
       and the 19-floor tower on the skyline, at phone size as well as desktop
 - [ ] **Sound** in Emergency Response: the opening siren, the radio cue, the decision pips, the
       last-five-seconds countdown and the ambulance (phones need a tap to unlock audio at all)

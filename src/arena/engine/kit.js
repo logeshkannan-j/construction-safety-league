@@ -281,12 +281,54 @@ export function signTexture(text, kind = "warning") {
 export { SITE_NAME, SITE_SUBTITLE };
 
 /** Wide brand banner — used across hoarding panels and the tower crown. */
+/** The ARIA brand orange, shared by the banners and the 3D mark. */
+export const ARIA_ORANGE = "#F4631A";
+
+/**
+ * Draws the ARIA mark — the orange "A" with its orbital ring — onto a
+ * 2D canvas, centred on (cx, cy) at radius `s`.
+ *
+ * The same mark exists as real geometry in buildAriaMark(); this is the
+ * flat version, for hoarding banners and plates where a decal is right.
+ */
+function drawAriaMark(ctx, cx, cy, s) {
+  const grad = ctx.createLinearGradient(cx - s, cy - s, cx + s, cy + s);
+  grad.addColorStop(0, "#FFAE3D");
+  grad.addColorStop(0.55, ARIA_ORANGE);
+  grad.addColorStop(1, "#CE3A05");
+
+  // The ring sweeping around the letter.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-0.36);
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = s * 0.14;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, s * 1.04, s * 0.46, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  // The A: an outer triangle with the counter punched out of it, so the
+  // legs and the crossbar fall out of one path.
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - s * 0.82);
+  ctx.lineTo(cx + s * 0.6, cy + s * 0.82);
+  ctx.lineTo(cx - s * 0.6, cy + s * 0.82);
+  ctx.closePath();
+  ctx.moveTo(cx, cy - s * 0.16);
+  ctx.lineTo(cx + s * 0.21, cy + s * 0.3);
+  ctx.lineTo(cx - s * 0.21, cy + s * 0.3);
+  ctx.closePath();
+  ctx.fill("evenodd");
+}
+
 export function brandTexture(
   { title = SITE_NAME, subtitle = SITE_SUBTITLE, dark = false } = {}
 ) {
   const bg = dark ? "#10161D" : "#F3F1EA";
   const fg = dark ? "#F3F1EA" : "#14202B";
-  const accent = "#C9A227";
+  const accent = ARIA_ORANGE;
   return canvasTexture(`brand:${title}:${subtitle}:${dark}`, 1024, 256, (ctx, w, h) => {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
@@ -296,21 +338,67 @@ export function brandTexture(
     ctx.fillRect(0, 0, w, 7);
     ctx.fillRect(0, h - 7, w, 7);
 
+    // The mark sits on the left of the banner, as it does on the real
+    // hoarding, with the name set beside it rather than under it.
+    drawAriaMark(ctx, 132, h / 2, 76);
+
+    const textCx = (236 + w) / 2;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = fg;
-    ctx.font = "800 92px Georgia, 'Times New Roman', serif";
-    ctx.letterSpacing = "14px";
-    ctx.fillText(title, w / 2, h / 2 - 22);
+    ctx.font = "800 86px Georgia, 'Times New Roman', serif";
+    ctx.letterSpacing = "13px";
+    ctx.fillText(title, textCx, h / 2 - 20);
 
     ctx.fillStyle = accent;
-    ctx.fillRect(w / 2 - 150, h / 2 + 32, 300, 3);
+    ctx.fillRect(textCx - 140, h / 2 + 30, 280, 3);
 
     ctx.fillStyle = dark ? "#9FB0C0" : "#5A6B7A";
-    ctx.font = "600 30px system-ui, sans-serif";
+    ctx.font = "600 29px system-ui, sans-serif";
     ctx.letterSpacing = "7px";
-    ctx.fillText(subtitle, w / 2, h / 2 + 68);
+    ctx.fillText(subtitle, textCx, h / 2 + 64);
   });
+}
+
+/**
+ * The ARIA mark as REAL GEOMETRY, not a picture on a plane.
+ *
+ * The brand is an orange gradient "A" with an orbital ring sweeping
+ * around it. Here the ring is an actual torus tilted off-axis and the
+ * A is extruded, so it catches the light and reads as a sign from any
+ * angle — including from directly above, which a flat decal does not.
+ *
+ * Returns { group, ring } so a caller can slowly rotate the ring.
+ */
+export function buildAriaMark(geo, mat, { size = 3, depth = 0.22 } = {}) {
+  const group = new THREE.Group();
+  const s = size / 3;
+
+  // --- the orbital ring ---
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(1.55 * s, 0.1 * s, 10, 48),
+    mat.ariaOrange
+  );
+  // Tilted and rolled the way the mark sweeps behind the letter.
+  ring.rotation.set(1.16, 0.0, 0.42);
+  group.add(ring);
+
+  // --- the A, built from three extruded bars ---
+  const bar = (w, h, d, x, y, z, rotZ) => {
+    const m = new THREE.Mesh(geo.box, mat.ariaOrange);
+    m.scale.set(w, h, d);
+    m.position.set(x, y, z);
+    if (rotZ) m.rotation.z = rotZ;
+    m.castShadow = false;
+    return m;
+  };
+  const legH = 2.5 * s;
+  const lean = 0.22;
+  group.add(bar(0.30 * s, legH, depth, -0.52 * s, 0, 0, lean));
+  group.add(bar(0.30 * s, legH, depth, 0.52 * s, 0, 0, -lean));
+  group.add(bar(0.86 * s, 0.26 * s, depth * 1.02, 0, -0.30 * s, 0, 0));
+
+  return { group, ring };
 }
 
 /** Square brand plate, for crane counterweights and site huts. */
@@ -318,18 +406,23 @@ export function brandPlateTexture() {
   return canvasTexture("brandPlate", 256, 256, (ctx, w, h) => {
     ctx.fillStyle = "#10161D";
     ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = "#C9A227";
+    ctx.strokeStyle = ARIA_ORANGE;
     ctx.lineWidth = 6;
     ctx.strokeRect(14, 14, w - 28, h - 28);
+
+    // Square plate, so the mark goes above the name rather than beside it.
+    drawAriaMark(ctx, w / 2, 96, 54);
+
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#F3F1EA";
-    ctx.font = "800 42px Georgia, serif";
-    ctx.fillText("CASAGRAND", w / 2, h / 2 - 22);
-    ctx.fillStyle = "#C9A227";
-    ctx.font = "800 54px Georgia, serif";
-    ctx.letterSpacing = "6px";
-    ctx.fillText("AIRA", w / 2, h / 2 + 32);
+    ctx.font = "800 32px Georgia, serif";
+    ctx.letterSpacing = "4px";
+    ctx.fillText("CASAGRAND", w / 2, 182);
+    ctx.fillStyle = ARIA_ORANGE;
+    ctx.font = "800 44px Georgia, serif";
+    ctx.letterSpacing = "7px";
+    ctx.fillText("ARIA", w / 2, 222);
   });
 }
 
@@ -422,12 +515,46 @@ export function createMaterials(cfg) {
     brick: L({ map: brickTexture([3, 2], aniso) }),
     hazard: L({ map: hazardStripeTexture([4, 1]) }),
 
-    // Casagrand Aira branding — hoarding banners, the tower crown and
+    // Casagrand Aria branding — hoarding banners, the tower crown and
     // the crane counterweight all carry it, so the player can see whose
     // site they are standing on from anywhere in every mission.
     brand: L({ map: brandTexture() }),
     brandDark: L({ map: brandTexture({ dark: true }) }),
     brandPlate: L({ map: brandPlateTexture() }),
+    // The ARIA orange. Emissive so the mark reads as lit signage at
+    // dusk rather than a flat orange block.
+    ariaOrange: new THREE.MeshPhongMaterial({
+      color: 0xf4631a, emissive: 0xc23c05, emissiveIntensity: 0.55,
+      shininess: 70, specular: 0x552000,
+    }),
+    // Warm uplight wash on the tower fins, as in the night render.
+    facadeUplight: new THREE.MeshBasicMaterial({
+      color: 0xffc777, transparent: true, opacity: 0.5, depthWrite: false,
+    }),
+
+    /* --- the Casagrand Aria development (scenery, see
+       buildBrandedTower). Pulled from the project renders: a pale
+       stone shell, bronze fins, bright slab edges and lit glazing. --- */
+    towerShell: P({ color: 0xe8e2d6, shininess: 14, specular: 0x2a2825 }),
+    towerFin: P({ color: 0xbfa98c, shininess: 40, specular: 0x4a3f30 }),
+    towerBand: L({ color: 0xf6f3ec }),
+    balconyGlass: new THREE.MeshPhongMaterial({
+      color: 0xa8cfe0, transparent: true, opacity: 0.5, shininess: 90,
+    }),
+    // The glazed podium that glows at the base of each tower.
+    lobbyGlow: new THREE.MeshBasicMaterial({
+      color: 0xffe2a8, transparent: true, opacity: 0.72, depthWrite: false,
+    }),
+    poolWater: new THREE.MeshPhongMaterial({
+      color: 0x3fa9d6, transparent: true, opacity: 0.8, shininess: 130, specular: 0x8fd9f2,
+    }),
+
+    /* --- the grounds: lawn, courts, roads and planting --- */
+    lawn: L({ color: 0x4e7c42 }),
+    foliage: L({ color: 0x386b35 }),
+    asphalt: L({ color: 0x3a3d40 }),
+    courtBlue: L({ color: 0x2d6ea8 }),
+    courtRed: L({ color: 0xa8452f }),
 
     // White interior finishes — the escape building's palette.
     plaster: L({ map: plasterTexture([2, 1], aniso) }),
@@ -706,87 +833,228 @@ export function buildBrandBanners(geo, mat, {
 }
 
 /**
- * The finished 19-floor Casagrand Aira tower, standing beyond the site
- * boundary. It is SCENERY — the player never enters it — so it is built
- * from a handful of merged meshes and carries no colliders.
+ * ONE tower of the Casagrand Aria development, built from the project
+ * renders: a lit podium, a shaft of vertical fins with a warm uplight
+ * wash climbing them, glazing recessed behind the fin line, bright slab
+ * edges, balconies and a crown.
  *
- * Its job is to give every mission a skyline and a reason to be there:
- * this is the building the work is for.
+ * `floors` defaults to 19 — the real building.
+ *
+ * Everything that can be merged is merged: a tower is ~15 draw calls,
+ * because three of these plus the grounds have to sit in the background
+ * of every mission without costing frame rate on a phone.
+ */
+function buildAriaTower(geo, mat, {
+  floors = 19, floorHeight = 3.1, width = 20, depth = 16,
+  pool = false,
+} = {}) {
+  const group = new THREE.Group();
+  const shaftH = floors * floorHeight;
+  const hw = width / 2;
+  const hd = depth / 2;
+  const podiumH = 5.2;
+  const base = 1 + podiumH;
+  const roofY = base + shaftH;
+
+  /* ---- podium: the lit glass base the towers stand on ---- */
+  group.add(box(geo, mat.concrete, width + 6, 1.0, depth + 6, 0, 0.5, 0));
+  group.add(box(geo, mat.concreteDark, width + 3.4, podiumH, depth + 3.4, 0, 1 + podiumH / 2, 0));
+
+  // The continuous glazed strip that makes the base glow at dusk.
+  const glowStrips = [
+    { w: width + 3.2, h: 2.4, d: 0.2, x: 0, y: 2.6, z: hd + 1.75 },
+    { w: width + 3.2, h: 2.4, d: 0.2, x: 0, y: 2.6, z: -hd - 1.75 },
+    { w: 0.2, h: 2.4, d: depth + 3.2, x: hw + 1.75, y: 2.6, z: 0 },
+    { w: 0.2, h: 2.4, d: depth + 3.2, x: -hw - 1.75, y: 2.6, z: 0 },
+  ];
+  const glow = mergedMesh(glowStrips, mat.lobbyGlow, { shadow: false });
+  glow.renderOrder = 1;
+  group.add(glow);
+
+  /* ---- the shaft ---- */
+  group.add(box(geo, mat.towerShell, width, shaftH, depth, 0, base + shaftH / 2, 0));
+
+  // Glazing, set INSIDE the fin line so the fins stand proud of it.
+  const glass = (w, px, pz, ry) => {
+    const face = new THREE.Mesh(geo.plane, mat.curtainWall);
+    face.scale.set(w, shaftH - 1.2, 1);
+    face.position.set(px, base + shaftH / 2, pz);
+    face.rotation.y = ry;
+    group.add(face);
+  };
+  glass(width - 2.2, 0, hd + 0.05, 0);
+  glass(width - 2.2, 0, -hd - 0.05, Math.PI);
+  glass(depth - 2.2, hw + 0.05, 0, Math.PI / 2);
+  glass(depth - 2.2, -hw - 0.05, 0, -Math.PI / 2);
+
+  /* ---- vertical fins: the defining feature of this facade ---- */
+  const fins = [];
+  const finD = 0.75;
+  const finW = 0.85;
+  const perFace = 5;
+  for (let i = 0; i <= perFace; i++) {
+    const fx = -hw + (i / perFace) * width;
+    fins.push({ w: finW, h: shaftH, d: finD, x: fx, y: base + shaftH / 2, z: hd + finD / 2 });
+    fins.push({ w: finW, h: shaftH, d: finD, x: fx, y: base + shaftH / 2, z: -hd - finD / 2 });
+  }
+  for (let i = 0; i <= perFace - 1; i++) {
+    const fz = -hd + (i / (perFace - 1)) * depth;
+    fins.push({ w: finD, h: shaftH, d: finW, x: hw + finD / 2, y: base + shaftH / 2, z: fz });
+    fins.push({ w: finD, h: shaftH, d: finW, x: -hw - finD / 2, y: base + shaftH / 2, z: fz });
+  }
+  group.add(mergedMesh(fins, mat.towerFin, { shadow: false }));
+
+  // The warm uplight washing up every other fin, as in the night render.
+  const wash = mergedMesh(
+    fins.filter((_, i) => i % 2 === 0).map((f) => ({
+      w: f.w * 1.3, h: shaftH * 0.72, d: f.d * 1.3,
+      x: f.x, y: base + shaftH * 0.36, z: f.z,
+    })),
+    mat.facadeUplight,
+    { shadow: false },
+  );
+  wash.renderOrder = 2;
+  group.add(wash);
+
+  /* ---- slab edges and balconies ---- */
+  const bands = [];
+  const balconies = [];
+  for (let f = 0; f < floors; f++) {
+    const y = base + f * floorHeight;
+    bands.push({ w: width + 1.8, h: 0.3, d: depth + 1.8, x: 0, y, z: 0 });
+    if (f % 2 === 1) {
+      balconies.push({ w: width * 0.3, h: 0.2, d: 1.5, x: -width * 0.27, y: y + 0.28, z: hd + 1.1 });
+      balconies.push({ w: width * 0.3, h: 0.2, d: 1.5, x: width * 0.27, y: y + 0.28, z: -hd - 1.1 });
+    }
+  }
+  group.add(mergedMesh(bands, mat.towerBand, { shadow: false }));
+  if (balconies.length) group.add(mergedMesh(balconies, mat.balconyGlass, { shadow: false }));
+
+  /* ---- roof: parapet, lift overrun, warning lights ---- */
+  group.add(box(geo, mat.concreteDark, width + 2.2, 0.8, depth + 2.2, 0, roofY + 0.4, 0));
+  group.add(box(geo, mat.steelDark, 3.4, 2.8, 3.4, -hw + 3.2, roofY + 2.2, -hd + 3.2));
+  group.add(mergedMesh(
+    [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].map(([cx, cz]) => ({
+      w: 0.4, h: 0.4, d: 0.4, x: cx, y: roofY + 1.1, z: cz,
+    })),
+    mat.red,
+    { shadow: false },
+  ));
+
+  if (pool) {
+    // The rooftop pool and deck from the aerial render — the thing that
+    // makes the overhead view of this development recognisable.
+    group.add(box(geo, mat.timber, 11, 0.12, 7.5, 2, roofY + 0.86, 1.5));
+    const water = new THREE.Mesh(geo.plane, mat.poolWater);
+    water.scale.set(7.4, 4.4, 1);
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(2, roofY + 0.95, 1.5);
+    group.add(water);
+  }
+
+  group.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+  return { group, height: roofY + 3 };
+}
+
+/**
+ * The Casagrand Aria development: three 19-floor towers in the stepped
+ * L the site plan uses, on landscaped grounds with the sports courts,
+ * the internal road and the tree line from the aerial render — and the
+ * ARIA mark standing lit at the entrance, as real geometry rather than
+ * a texture.
+ *
+ * This is SCENERY. It sits beyond the hoarding, carries no colliders,
+ * casts no shadows, and reads from any angle the player can get to,
+ * including the overhead view.
+ *
+ * `x`/`z` place the ENTRANCE, not the centre: the grounds are pushed
+ * back behind that anchor so a caller can park the development just
+ * past its hoarding line without doing the arithmetic.
  */
 export function buildBrandedTower(geo, mat, {
-  x = 0, z = -95, floors = 19, floorHeight = 3.1,
-  width = 20, depth = 16, rotY = 0, crown = true,
+  x = 0, z = -95, floors = 19, rotY = 0,
 } = {}) {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
   group.rotation.y = rotY;
 
-  const totalHeight = floors * floorHeight;
-  const hw = width / 2;
-  const hd = depth / 2;
+  // Everything hangs off this, offset so local z = 0 is the entrance.
+  const site = new THREE.Group();
+  site.position.z = -40;
+  group.add(site);
 
-  // --- podium ---
-  group.add(box(geo, mat.concrete, width + 5, 1.2, depth + 5, 0, 0.6, 0));
-  group.add(box(geo, mat.concreteDark, width + 2.4, 4.4, depth + 2.4, 0, 3.4, 0));
+  // Landscaped ground the whole development sits on.
+  site.add(box(geo, mat.lawn, 150, 0.4, 92, 0, 0.2, 0));
 
-  // --- the shaft: one merged core, then glass on all four faces ---
-  group.add(box(geo, mat.concrete, width, totalHeight, depth, 0, 5.6 + totalHeight / 2, 0));
-
-  const glassFace = (w, px, pz, ry) => {
-    const face = new THREE.Mesh(geo.plane, mat.curtainWall);
-    face.scale.set(w, totalHeight - 1, 1);
-    face.position.set(px, 5.6 + totalHeight / 2, pz);
-    face.rotation.y = ry;
-    group.add(face);
-  };
-  glassFace(width - 1.4, 0, hd + 0.06, 0);
-  glassFace(width - 1.4, 0, -hd - 0.06, Math.PI);
-  glassFace(depth - 1.4, hw + 0.06, 0, Math.PI / 2);
-  glassFace(depth - 1.4, -hw - 0.06, 0, -Math.PI / 2);
-
-  // --- floor bands and balconies, merged into two meshes ---
-  const bands = [];
-  const balconies = [];
-  for (let f = 0; f < floors; f++) {
-    const y = 5.6 + f * floorHeight;
-    bands.push({ w: width + 0.5, h: 0.34, d: depth + 0.5, x: 0, y, z: 0 });
-    // Alternating balconies break up the facade without doubling the mesh.
-    if (f % 2 === 1 && f > 1) {
-      balconies.push({ w: width * 0.42, h: 0.22, d: 1.5, x: -width * 0.22, y: y + 0.3, z: hd + 0.75 });
-      balconies.push({ w: width * 0.42, h: 0.22, d: 1.5, x: width * 0.22, y: y + 0.3, z: -hd - 0.75 });
-    }
-  }
-  group.add(mergedMesh(bands, mat.concreteDark));
-  if (balconies.length) group.add(mergedMesh(balconies, mat.white));
-
-  // --- roof and crown signage ---
-  const roofY = 5.6 + totalHeight;
-  group.add(box(geo, mat.concreteDark, width + 1.6, 0.7, depth + 1.6, 0, roofY + 0.35, 0));
-  group.add(box(geo, mat.steelDark, 3.2, 2.6, 3.2, -hw + 3, roofY + 2, -hd + 3));
-
-  if (crown) {
-    // The name across the top of the tower, readable from the whole site.
-    const signW = width * 0.86;
-    const signH = signW / 4;
-    const front = new THREE.Mesh(geo.plane, mat.brandDark);
-    front.scale.set(signW, signH, 1);
-    front.position.set(0, roofY + 1.1 + signH / 2, hd + 0.9);
-    group.add(front);
-
-    const back = new THREE.Mesh(geo.plane, mat.brandDark);
-    back.scale.set(signW, signH, 1);
-    back.position.set(0, roofY + 1.1 + signH / 2, -hd - 0.9);
-    back.rotation.y = Math.PI;
-    group.add(back);
-
-    // Aviation warning lights on the parapet corners.
-    [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].forEach(([cx, cz]) => {
-      group.add(box(geo, mat.red, 0.4, 0.4, 0.4, cx, roofY + 0.9, cz));
+  /* ---- three towers, stepped as the renders show ---- */
+  const towers = [
+    { at: [-38, 6], rot: 0, floors, width: 20, depth: 16, pool: true },
+    { at: [2, -18], rot: -0.42, floors: floors - 2, width: 17, depth: 15 },
+    { at: [44, 10], rot: 0.30, floors, width: 26, depth: 15 },
+  ];
+  towers.forEach((t) => {
+    const tower = buildAriaTower(geo, mat, {
+      floors: t.floors, width: t.width, depth: t.depth, pool: t.pool,
     });
+    tower.group.position.set(t.at[0], 0, t.at[1]);
+    tower.group.rotation.y = t.rot;
+    site.add(tower.group);
+  });
+
+  /* ---- sports courts, straight off the aerial ---- */
+  const courts = [
+    { at: [46, 34], w: 17, d: 11, m: mat.courtBlue },
+    { at: [64, 34], w: 15, d: 11, m: mat.courtRed },
+  ];
+  const courtLines = [];
+  courts.forEach((c) => {
+    const pad = new THREE.Mesh(geo.plane, c.m);
+    pad.scale.set(c.w, c.d, 1);
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(c.at[0], 0.45, c.at[1]);
+    site.add(pad);
+    courtLines.push({ w: c.w, h: 0.04, d: 0.16, x: c.at[0], y: 0.47, z: c.at[1] });
+    courtLines.push({ w: 0.16, h: 0.04, d: c.d, x: c.at[0], y: 0.47, z: c.at[1] });
+  });
+  site.add(mergedMesh(courtLines, mat.white, { shadow: false }));
+
+  /* ---- internal road and the paths between the towers ---- */
+  site.add(mergedMesh([
+    { w: 150, h: 0.08, d: 5, x: 0, y: 0.44, z: 26 },
+    { w: 5, h: 0.08, d: 68, x: -62, y: 0.44, z: 0 },
+  ], mat.asphalt, { shadow: false }));
+  site.add(mergedMesh([
+    { w: 60, h: 0.06, d: 2.4, x: -4, y: 0.44, z: 20 },
+    { w: 2.4, h: 0.06, d: 34, x: 22, y: 0.44, z: 2 },
+  ], mat.concreteDark, { shadow: false }));
+
+  /* ---- tree line, with a gap left open at the entrance ---- */
+  const trunks = [];
+  const canopy = [];
+  for (let i = 0; i < 46; i++) {
+    const ang = (i / 46) * Math.PI * 2;
+    const r = 58 + ((i * 13) % 11);
+    const tx = Math.cos(ang) * r;
+    const tz = Math.sin(ang) * r * 0.55;
+    // Keep the view of the entrance and the mark clear.
+    if (tz > 20 && Math.abs(tx) < 26) continue;
+    const h = 4.5 + ((i * 7) % 4);
+    trunks.push({ w: 0.5, h, d: 0.5, x: tx, y: 0.4 + h / 2, z: tz });
+    canopy.push({ w: 4.6, h: 3.4, d: 4.6, x: tx, y: 0.4 + h + 1.3, z: tz });
   }
+  site.add(mergedMesh(trunks, mat.timberDark, { shadow: false }));
+  site.add(mergedMesh(canopy, mat.foliage, { shadow: false }));
+
+  /* ---- the entrance: name wall with the ARIA mark above it ---- */
+  const wall = box(geo, mat.brandDark, 26, 6.5, 0.6, 0, 3.6, 36, { shadow: false });
+  site.add(wall);
+
+  const mark = buildAriaMark(geo, mat, { size: 7 });
+  mark.group.position.set(0, 12.5, 36);
+  site.add(mark.group);
 
   group.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
-  return { group, height: roofY + 4, floors };
+  return { group, height: 1 + 5.2 + floors * 3.1 + 3, floors, ariaRing: mark.ring };
 }
 
 /* =========================== buildings =========================== */

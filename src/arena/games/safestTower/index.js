@@ -2,7 +2,7 @@
  *  GAME 3 — SPOT THE HAZARDS
  *
  *  Ground level only. Five real hazards are sitting around the
- *  Casagrand Aira site compound. The player orbits the compound, taps a
+ *  Casagrand Aria site compound. The player orbits the compound, taps a
  *  hazard to inspect it, and chooses the control that actually removes
  *  the risk.
  *
@@ -18,6 +18,7 @@
 import * as THREE from "three";
 import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
+import { createTopView } from "../../engine/topview.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower,
@@ -38,7 +39,7 @@ export const meta = {
 
   briefing: {
     role:
-      "You are walking the Casagrand Aira site compound before the shift starts. Five things down "
+      "You are walking the Casagrand Aria site compound before the shift starts. Five things down "
       + "here are wrong. For each one, you decide what actually gets done about it.",
     objectives: [
       "Orbit the compound and tap each flagged hazard to inspect it.",
@@ -67,6 +68,7 @@ export const meta = {
   desktopControls: [
     ["Mouse drag", "Orbit the compound"],
     ["Wheel / Z", "Zoom in and out"],
+    ["T", "Top view — the whole compound and the towers beyond it"],
     ["Click", "Inspect a hazard"],
     ["1 – 4", "Answer the open question"],
     ["Tab", "Jump to the next unsolved hazard"],
@@ -75,6 +77,7 @@ export const meta = {
   mobileControls: [
     ["Drag", "Orbit the compound"],
     ["Pinch / ZOOM", "Zoom in on a hazard"],
+    ["TOP VIEW", "See the whole compound from the air"],
     ["Tap", "Inspect a hazard"],
     ["Tap an answer", "Choose the control"],
     ["NEXT", "Jump to the next unsolved hazard"],
@@ -102,11 +105,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const groundHoles = excHazard
     ? [{ x: excHazard.at.x, z: excHazard.at.z, w: 9.4, d: 3.8 }]
     : [];
-  scene.add(buildGround(mat, 200, { holes: groundHoles }));
+  scene.add(buildGround(mat, 260, { holes: groundHoles }));
   const hoarding = buildHoarding(geo, mat, { ...COMPOUND, height: 2.4, gateAt: "south" });
   scene.add(hoarding.group);
   scene.add(buildBrandBanners(geo, mat, { ...COMPOUND, panel: 7 }));
-  scene.add(buildBrandedTower(geo, mat, { x: -14, z: -86, rotY: 0.26 }).group);
+  scene.add(buildBrandedTower(geo, mat, { x: -14, z: -40, rotY: 0.26 }).group);
 
   // Site dressing. Nothing here is a hazard — it is the compound the
   // five real problems are sitting in.
@@ -420,6 +423,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     desired: new THREE.Vector3(0, 2, 0),
   };
 
+  // Lift off the compound and look at the whole site, including the
+  // finished Casagrand Aria towers beyond the hoarding.
+  const siteView = createTopView(camera, {
+    scene,
+    center: new THREE.Vector3(0, 0, -16),
+    distance: 96, minDistance: 44, maxDistance: 170, pitch: 0.80,
+  });
+
   function focusOn(position, { height = 2 } = {}) {
     cam.desired.set(position.x, position.y + height, position.z);
   }
@@ -620,12 +631,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         { key: "Click", label: "Inspect" },
         { key: "1-4", label: "Answer" },
         { key: "Tab", label: "Next hazard" },
+        { key: "T", label: "Top view" },
       ],
     });
 
     api.buttons([
       { id: "next", label: "NEXT", action: "next", mode: "tap", color: "#FFC629", primary: true },
       { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#59B7FF" },
+      { id: "top", label: "TOP VIEW", action: "topview", mode: "tap", color: "#9B7CF2" },
     ]);
   }
 
@@ -651,6 +664,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         cam.distance = cam.distance > 24 ? 13 : 40;
         sfx.click();
       }
+      if (input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
       if (state.openHazard) {
         [1, 2, 3, 4].forEach((n) => {
           if (input.wasPressed(`answer${n}`)) answer(state.openHazard, n - 1);
@@ -666,7 +680,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       hazard.outline.scale.setScalar(pulse);
     });
 
-    updateCamera(dt);
+    siteView.update(dt, input, () => updateCamera(dt));
 
     if (cfg.shadows) {
       sun.position.set(cam.target.x + 36, 62, cam.target.z + 28);
@@ -702,6 +716,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     dispose() {
+      siteView.dispose();
       input.dispose();
       stage.dispose();
     },

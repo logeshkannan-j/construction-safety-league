@@ -27,6 +27,7 @@
 import * as THREE from "three";
 import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
+import { createTopView } from "../../engine/topview.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail, buildScaffold,
@@ -81,6 +82,7 @@ export const meta = {
     ["1 – 8", "Swing the camera to a station you cannot find"],
     ["Mouse drag", "Look around the site"],
     ["Wheel / Z", "Zoom in on the scene"],
+    ["T", "Top view — stand off and see where everyone is"],
     ["B", "Re-read the incident brief"],
     ["Esc", "Pause"],
   ],
@@ -88,6 +90,7 @@ export const meta = {
     ["Tap", "Act on a station — the beacons show which are left"],
     ["Drag", "Look around the site"],
     ["Pinch / ZOOM", "Zoom in"],
+    ["TOP VIEW", "Stand off and see the whole site from the air"],
     ["BRIEF", "Re-read the incident brief"],
     ["Pause", "Top-right of the HUD"],
   ],
@@ -117,7 +120,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const hoarding = buildHoarding(geo, mat, { width: 92, depth: 80, height: 2.4, gateAt: "north" });
   scene.add(hoarding.group);
   scene.add(buildBrandBanners(geo, mat, { width: 92, depth: 80 }));
-  scene.add(buildBrandedTower(geo, mat, { x: 30, z: -106, rotY: -0.15 }).group);
+  scene.add(buildBrandedTower(geo, mat, { x: 30, z: -52, rotY: -0.15 }).group);
 
   const frame = buildConcreteFrame(geo, mat, { ...BUILDING });
   scene.add(frame.group);
@@ -596,9 +599,18 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   api.buttons([
     { id: "brief", label: "BRIEF", action: "brief", mode: "tap", color: "#59B7FF", primary: true },
     { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
+    { id: "top", label: "TOP VIEW", action: "topview", mode: "tap", color: "#33C481" },
   ]);
 
   /* ------------------------------ camera ------------------------------ */
+
+  // Stand off the whole incident. Commanding a site is much easier when
+  // you can see where everyone is, so this one earns its keep.
+  const siteView = createTopView(camera, {
+    scene,
+    center: new THREE.Vector3(0, 0, -14),
+    distance: 118, minDistance: 52, maxDistance: 200, pitch: 0.82,
+  });
 
   const cam = {
     yaw: 2.4,
@@ -988,6 +1000,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
 
     if (input.wasPressed("brief")) showBrief();
+    if (input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
 
     // ZOOM snaps between a wide view of the whole site and a close look
     // at whatever the current step is about. Wheel and pinch still give
@@ -1077,7 +1090,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       beaconB.visible = !flash;
     }
 
-    updateCamera(dt);
+    siteView.update(dt, input, () => updateCamera(dt));
 
     if (cfg.shadows) {
       sun.position.set(cam.target.x + 40, 60, cam.target.z + 30);
@@ -1107,6 +1120,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     dispose() {
       state.disposed = true;
       clearPendingTimers();
+      siteView.dispose();
       input.dispose();
       stage.dispose();
     },

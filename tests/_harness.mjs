@@ -135,7 +135,16 @@ export function makeRendererStub() {
         getParameter() { return 0; },
       };
     },
-    render() { stub.renderCount += 1; },
+    // Keep what we were handed. It is the only way a test can see the
+    // REAL camera and scene a game is drawing with, without every game
+    // having to export them through its __test seam.
+    lastScene: null,
+    lastCamera: null,
+    render(scene, camera) {
+      stub.renderCount += 1;
+      stub.lastScene = scene || stub.lastScene;
+      stub.lastCamera = camera || stub.lastCamera;
+    },
     dispose() { stub.disposed = true; },
     clear() {},
     setClearColor() {},

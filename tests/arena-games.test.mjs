@@ -216,6 +216,137 @@ section("Zoom works in all five games");
 }
 
 /* ================================================================ *
+ *  The top view — every game, in both directions
+ *
+ *  The player has to be able to lift off the ground, see the whole
+ *  site and the finished towers, swing around them, and come back
+ *  down to exactly where they were. Checked by reading the REAL
+ *  camera the renderer is handed, not a flag on the game.
+ * ================================================================ */
+
+section("The top view works in all five games");
+
+{
+  for (const [path, id] of GAMES) {
+    const { instance, record } = await boot(path);
+    const input = instance.input;
+    runFrames(20);
+
+    const camera = lastRenderer?.lastCamera || null;
+    const scene = lastRenderer?.lastScene || null;
+    check(`${id}: the test can see the real camera`, !!camera);
+    if (!camera) { instance.dispose(); continue; }
+
+    const ground = {
+      y: camera.position.y,
+      far: camera.far,
+      fogNear: scene?.fog ? scene.fog.near : null,
+      fogFar: scene?.fog ? scene.fog.far : null,
+    };
+
+    // --- up ---
+    input.press("topview");
+    runFrames(90);
+
+    const up = { y: camera.position.y, far: camera.far };
+    check(`${id}: the top view actually lifts the camera`, up.y > ground.y + 20,
+      `${ground.y.toFixed(1)} m → ${up.y.toFixed(1)} m`);
+
+    // Looking DOWN at the site, not off at the horizon.
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    check(`${id}: the top view looks down at the site`, dir.y < -0.35,
+      `camera.y direction ${dir.y.toFixed(2)}`);
+
+    // The far plane has to reach the far side of the site, or the view
+    // is a wall of fog with the towers missing.
+    check(`${id}: the far plane opens up for the aerial`, up.far >= ground.far,
+      `${ground.far} → ${up.far}`);
+    check(`${id}: the far plane reaches past the camera height`,
+      up.far > up.y * 1.8, `far ${up.far.toFixed(0)} vs height ${up.y.toFixed(0)}`);
+    if (scene?.fog) {
+      check(`${id}: the fog is pushed back for the aerial`,
+        scene.fog.far > ground.fogFar, `${ground.fogFar.toFixed(0)} → ${scene.fog.far.toFixed(0)}`);
+    }
+
+    // --- swing around it ---
+    const beforeSwing = camera.position.clone();
+    input.addLook(260, 0);
+    runFrames(30);
+    check(`${id}: the aerial can be swung around the site`,
+      camera.position.distanceTo(beforeSwing) > 4,
+      `moved ${camera.position.distanceTo(beforeSwing).toFixed(1)} m`);
+
+    // Still above the site after swinging, not flung off somewhere.
+    check(`${id}: swinging keeps the camera above the site`,
+      camera.position.y > ground.y + 20 && Number.isFinite(camera.position.x),
+      `y=${camera.position.y.toFixed(1)}`);
+
+    // --- and back down ---
+    input.press("topview");
+    runFrames(140);
+
+    check(`${id}: leaving the top view returns to ground level`,
+      Math.abs(camera.position.y - ground.y) < 6,
+      `${up.y.toFixed(1)} m → ${camera.position.y.toFixed(1)} m (was ${ground.y.toFixed(1)})`);
+    check(`${id}: the far plane is restored`, Math.abs(camera.far - ground.far) < 0.01,
+      `${camera.far} vs ${ground.far}`);
+    if (scene?.fog) {
+      check(`${id}: the fog is restored`,
+        Math.abs(scene.fog.far - ground.fogFar) < 0.01,
+        `${scene.fog.far} vs ${ground.fogFar}`);
+    }
+
+    // Discoverable: a button for thumbs, a key for desktop, and it has
+    // to be written down on BOTH control lists or nobody finds it.
+    const hasButton = record.buttons.some((b) => /top view|plan view/i.test(b.label));
+    check(`${id}: there is a TOP VIEW action button`, hasButton,
+      JSON.stringify(record.buttons.map((b) => b.label)));
+
+    const mod = await import(`${SRC}/games/${path}/index.js`);
+    const meta2 = mod.default || mod;
+    const rx = /top view|plan view/i;
+    check(`${id}: the top view is documented for desktop`,
+      (meta2.desktopControls || []).some(([k, d]) => rx.test(k + d)));
+    check(`${id}: the top view is documented for mobile`,
+      (meta2.mobileControls || []).some(([k, d]) => rx.test(k + d)));
+
+    instance.dispose();
+  }
+}
+
+/* ----------------------------------------------------------------- *
+ *  The escape game is INDOORS, so its overhead view is only useful if
+ *  the ceilings come off. Without that it is a view of the top of a
+ *  plasterboard lid.
+ * ----------------------------------------------------------------- */
+
+{
+  const { instance } = await boot("escapeChallenge");
+  const t = instance.__test;
+  runFrames(20);
+
+  check("escape: the floor has ceilings to begin with",
+    (t.ceilings || []).length >= 5 && t.ceilings.every((c) => c.visible),
+    `${(t.ceilings || []).length} ceilings`);
+
+  instance.input.press("topview");
+  runFrames(90);
+
+  check("escape: the plan view cuts the ceilings away",
+    t.ceilings.every((c) => !c.visible));
+
+  instance.input.press("topview");
+  runFrames(140);
+
+  check("escape: the ceilings come back on the way down",
+    t.ceilings.every((c) => c.visible) && t.planBlend === 0,
+    `blend=${t.planBlend}`);
+
+  instance.dispose();
+}
+
+/* ================================================================ *
  *  Scene content and transform sanity
  * ================================================================ */
 
@@ -343,6 +474,101 @@ section("Scene content");
   stage.dispose();
   check("stage.dispose empties the scene", stage.scene.children.length === 0,
     `${stage.scene.children.length} left`);
+}
+
+/* ================================================================ *
+ *  The Casagrand Aria development
+ *
+ *  It is scenery, so no playthrough touches it — which means without
+ *  this section a broken development would never fail a test. It has
+ *  to be VISIBLE (inside the far plane, clear of the fog, not hidden
+ *  behind the hoarding) in every game, or the branding is pointless.
+ * ================================================================ */
+
+section("The Casagrand Aria development is visible in every mission");
+
+{
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium", fov: 70 });
+  const mat = kit.createMaterials(stage.cfg);
+  const geo = kit.createGeometries(stage.cfg);
+
+  const dev = kit.buildBrandedTower(geo, mat, { x: 0, z: -48 });
+  const box = new THREE.Box3().setFromObject(dev.group);
+
+  check("the development reports 19 floors", dev.floors === 19, `${dev.floors}`);
+  check("it stands about 68 m tall", box.max.y > 60 && box.max.y < 80, `${box.max.y.toFixed(1)} m`);
+  check("the ARIA mark is real geometry, not a texture", !!dev.ariaRing);
+
+  // Three towers: each is a group with a shaft, fins, bands and a roof.
+  const towers = dev.group.children[0].children.filter((c) => c.isGroup && c.children.length > 8);
+  check("there are three towers", towers.length === 3, `${towers.length}`);
+  check("the towers are stepped, not in a row",
+    new Set(towers.map((t) => Math.round(t.position.z))).size === 3,
+    towers.map((t) => t.position.z).join(", "));
+
+  // The rooftop pool is what makes the overhead view recognisable.
+  const poolMats = [];
+  dev.group.traverse((o) => { if (o.isMesh && o.material === mat.poolWater) poolMats.push(o); });
+  check("one tower has the rooftop pool", poolMats.length === 1, `${poolMats.length}`);
+
+  // The sports courts from the aerial render.
+  const courts = [];
+  dev.group.traverse((o) => {
+    if (o.isMesh && (o.material === mat.courtBlue || o.material === mat.courtRed)) courts.push(o);
+  });
+  check("both sports courts are laid out", courts.length === 2, `${courts.length}`);
+
+  check("it stays cheap enough to be scenery", countMeshes(dev.group) < 90,
+    `${countMeshes(dev.group)} meshes`);
+  const devBad = findBadTransforms(dev.group);
+  check("no NaN or Infinity anywhere in the development", devBad.length === 0,
+    devBad.slice(0, 3).join(", "));
+
+  // --- the part that actually matters: can the player SEE it? ---
+  // Mirrors gfx.js: fog runs from drawDistance*0.35 to *0.85.
+  const PLACEMENTS = [
+    { id: "safety-mission", z: -48, hoardBack: -36 },
+    { id: "crane-master", z: -56, hoardBack: -43 },
+    { id: "safest-tower", z: -40, hoardBack: -27 },
+    { id: "emergency-commander", z: -52, hoardBack: -40 },
+  ];
+  const FAR = { low: 200, medium: 300, high: 400 };
+
+  PLACEMENTS.forEach((p) => {
+    const d = kit.buildBrandedTower(geo, mat, { x: 0, z: p.z });
+    const bb = new THREE.Box3().setFromObject(d.group);
+
+    check(`${p.id}: the development clears the hoarding`, bb.max.z < p.hoardBack,
+      `front edge ${bb.max.z.toFixed(0)} vs hoarding ${p.hoardBack}`);
+
+    // Real world distances — the towers hang off an offset site group,
+    // so their local .position.z is NOT their distance from the player.
+    d.group.updateWorldMatrix(true, true);
+    const towerZ = d.group.children[0].children
+      .filter((c) => c.isGroup && c.children.length > 8)
+      .map((c) => Math.abs(c.getWorldPosition(new THREE.Vector3()).z));
+    const furthest = Math.max(...towerZ);
+    const nearest = Math.min(...towerZ);
+
+    Object.entries(FAR).forEach(([quality, far]) => {
+      check(`${p.id}: nothing is clipped by the ${quality} far plane`,
+        Math.abs(bb.min.z) < far, `${Math.abs(bb.min.z).toFixed(0)} vs far ${far}`);
+
+      // Fog is wanted here — it gives the development aerial perspective.
+      // What is not wanted is fog ERASING it, which is what happened when
+      // the development sat out at z = -104.
+      const fogAt = (dist) => Math.max(0, Math.min(1,
+        (dist - far * 0.35) / (far * 0.85 - far * 0.35)));
+      check(`${p.id}: the near tower is barely fogged on ${quality}`,
+        fogAt(nearest) < 0.25, `${Math.round(fogAt(nearest) * 100)}% at ${nearest.toFixed(0)} m`);
+      check(`${p.id}: the far tower still reads on ${quality}`,
+        fogAt(furthest) < 0.5, `${Math.round(fogAt(furthest) * 100)}% at ${furthest.toFixed(0)} m`);
+    });
+  });
+
+  stage.dispose();
 }
 
 /* ================================================================ *

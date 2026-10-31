@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------ *
  *  GAME 3 — SPOT THE HAZARDS (ground level)
  *
- *  Five real ground-level hazards around the Casagrand Aira compound.
+ *  Five real ground-level hazards around the Casagrand Aria compound.
  *  The player inspects each one and chooses the control that actually
  *  removes the risk.
  *

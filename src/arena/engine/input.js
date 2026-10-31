@@ -39,6 +39,8 @@ export const DEFAULT_KEYMAP = {
   KeyX: "stop",
   Enter: "confirm",
   Tab: "cycle",
+  // Lift off the ground and look at the whole site from the air.
+  KeyT: "topview",
 };
 
 const MOVE_KEYS = {

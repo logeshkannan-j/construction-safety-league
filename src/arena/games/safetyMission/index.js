@@ -14,6 +14,7 @@
 import * as THREE from "three";
 import { createStage, addDaylight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
+import { createTopView } from "../../engine/topview.js";
 import { createFirstPerson, ladderVolume } from "../../engine/fpsController.js";
 import {
   createMaterials, createGeometries, box, cylinder, collider,
@@ -68,12 +69,14 @@ export const meta = {
     ["C", "Crouch"],
     ["E", "Inspect and report the hazard you are standing at"],
     ["Wheel / Z", "Zoom in to look closer across the site"],
+    ["T", "Top view — lift off the ground and see the whole site"],
     ["Esc", "Pause the mission"],
   ],
   mobileControls: [
     ["Joystick", "Walk — bottom-left of the screen, full 360° analogue"],
     ["Drag right", "Look around, at the same time as moving"],
     ["INSPECT", "Report the hazard you are standing at"],
+    ["TOP VIEW", "See the whole site from the air — drag to swing around it"],
     ["Pinch / ZOOM", "Zoom in to look closer"],
     ["RUN", "Hold to move faster"],
     ["JUMP", "Jump"],
@@ -118,8 +121,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   });
   scene.add(hoarding.group);
   scene.add(buildBrandBanners(geo, mat, { width: 92, depth: 72 }));
-  // The tower this site is building — Casagrand Aira, 19 floors.
-  scene.add(buildBrandedTower(geo, mat, { x: -26, z: -104, rotY: 0.18 }).group);
+  // The tower this site is building — Casagrand Aria, 19 floors.
+  scene.add(buildBrandedTower(geo, mat, { x: -26, z: -48, rotY: 0.18 }).group);
   colliders.push(...hoarding.colliders);
 
   /* ---------------------------- building ---------------------------- */
@@ -717,7 +720,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     { id: "run", label: "RUN", action: "run", mode: "hold", color: "#33C481" },
     { id: "jump", label: "JUMP", action: "jump", mode: "tap", color: "#59B7FF" },
     { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
+    { id: "top", label: "TOP VIEW", action: "topview", mode: "tap", color: "#33C481" },
   ]);
+
+  // Lift off the ground and look at the whole site from the air. Walking
+  // is frozen while it is up: in first person there is no avatar to
+  // watch, so moving from up here would just be disorientating.
+  const siteView = createTopView(camera, {
+    scene,
+    center: new THREE.Vector3(0, 0, -14),
+    distance: 118, minDistance: 50, maxDistance: 200, pitch: 0.80,
+  });
 
   /* ---------------------------- interaction ---------------------------- */
 
@@ -981,7 +994,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       }
     }
 
-    if (!state.dialogOpen && !state.finished) {
+    if (!state.dialogOpen && !state.finished && input.wasPressed("topview")) {
+      siteView.toggle();
+      sfx.click();
+    }
+
+    if (!state.dialogOpen && !state.finished && !siteView.active) {
       controller.update(dt);
       if (input.wasPressed("zoom")) { zoom.toggle(); sfx.click(); }
       setTarget(findTarget());
@@ -991,6 +1009,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     } else {
       controller.syncCamera();
     }
+
+    // Orbit the site from above the player's own position, so coming
+    // back down puts them exactly where they left off.
+    siteView.setCenter(controller.position.x, 0, controller.position.z - 14);
+    siteView.update(dt, input, () => controller.syncCamera());
 
     // Keep the sun's shadow frustum centred on the player so a 2k
     // shadow map covers the area that is actually visible.
@@ -1041,6 +1064,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     dispose() {
+      siteView.dispose();
       input.dispose();
       stage.dispose();
     },

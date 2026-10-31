@@ -18,13 +18,14 @@
 import * as THREE from "three";
 import { createStage, addIndoorLight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
+import { createTopView } from "../../engine/topview.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
 import {
   createMaterials, createGeometries, box, cylinder, collider,
   buildGround, buildSign, buildFireExtinguisher, buildElectricalPanel,
   buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadder,
   buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
-  buildZoneMarker,
+  buildZoneMarker, buildAriaMark, buildBrandedTower,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
@@ -37,7 +38,7 @@ export const meta = {
 
   briefing: {
     role:
-      "You are alone in a newly fitted-out floor of Casagrand Aira when the fire alarm sounds. " +
+      "You are alone in a newly fitted-out floor of Casagrand Aria when the fire alarm sounds. " +
       "The way out runs through five areas, and each one holds a decision.",
     objectives: [
       "Work through the building: electrical room, construction floor, plant room, scaffold access, exit lobby.",
@@ -69,6 +70,7 @@ export const meta = {
     ["Shift", "Run"],
     ["E", "Interact — decision point, door, extinguisher, or discharge it"],
     ["Wheel / Z", "Zoom in to read a sign or a tag from across the room"],
+    ["T", "Plan view — the floor from above, as an escape plan"],
     ["Esc", "Pause"],
   ],
   mobileControls: [
@@ -77,6 +79,7 @@ export const meta = {
     ["INTERACT", "Use a decision point, door or extinguisher"],
     ["RUN", "Hold to move faster"],
     ["Pinch / ZOOM", "Zoom in to read a sign or a tag"],
+    ["PLAN VIEW", "Look down on the floor plan and find your way out"],
     ["Pause", "Top-right of the HUD"],
   ],
 };
@@ -142,6 +145,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ----------------------------- geometry ----------------------------- */
 
+  // Held so the overhead view can hide them and show the floor as an
+  // evacuation plan — which is the only way an aerial of an interior
+  // shows anything at all.
+  const ceilings = [];
+
   function addWall(x, z, w, d, { material = mat.plaster, height = WALL_HEIGHT, solid = true } = {}) {
     const wall = box(geo, material, w, height, d, x, height / 2, z);
     scene.add(wall);
@@ -188,6 +196,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       room.x1 - room.x0, 0.3, room.z1 - room.z0,
       (room.x0 + room.x1) / 2, WALL_HEIGHT + 0.15, centreZ);
     scene.add(ceiling);
+    ceilings.push(ceiling);
 
     // Skirting, and a strip light down the middle of each room. Both are
     // what stop a white box from reading as an empty white box.
@@ -540,6 +549,23 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
   }
 
+  // The developer's name on the exit lobby wall, as it would be in the
+  // finished building. It is the one point in this mission where the
+  // player is standing INSIDE the development, so it is worth saying so.
+  {
+    const lobby = rooms[rooms.length - 1];
+    const wallZ = lobby.z0 + 0.2;
+
+    const plate = new THREE.Mesh(geo.plane, mat.brandPlate);
+    plate.scale.set(2.2, 2.2, 1);
+    plate.position.set(lobby.x0 + 5.5, 1.9, wallZ);
+    scene.add(plate);
+
+    const lobbyMark = buildAriaMark(geo, mat, { size: 1.5, depth: 0.12 });
+    lobbyMark.group.position.set(lobby.x0 + 9.4, 1.9, wallZ + 0.1);
+    scene.add(lobbyMark.group);
+  }
+
   // Beyond the final door: daylight and the muster point, so the exit
   // is visibly somewhere rather than a wall.
   {
@@ -549,6 +575,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const musterSign = buildSign(geo, mat, { text: "Muster point A", kind: "emergency", height: 2.6, width: 1.3 });
     musterSign.position.set(yardX + 4, 0, last.centreZ);
     scene.add(musterSign);
+
+    // The development itself, standing in the yard beyond the muster
+    // point. This floor is one of its floors, so getting out of the
+    // building is also the moment the player sees what they are
+    // building — which is the whole reason this mission is set here.
+    const development = buildBrandedTower(geo, mat, { x: 165, z: last.centreZ, rotY: -Math.PI / 2 });
+    scene.add(development.group);
     [[-3, -3], [-3, 3], [3, -3]].forEach(([ox, oz]) => {
       const worker = buildWorker(geo, mat, { helmet: true, vest: true, pose: "stand" });
       worker.position.set(yardX + 6 + ox, 0, last.centreZ + oz);
@@ -620,7 +653,18 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     { id: "interact", label: "USE", action: "interact", mode: "tap", color: "#9B7CF2", primary: true },
     { id: "run", label: "RUN", action: "run", mode: "hold", color: "#33C481" },
     { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#59B7FF" },
+    { id: "top", label: "PLAN VIEW", action: "topview", mode: "tap", color: "#33C481" },
   ]);
+
+  // The floor seen from above, ceilings removed: a live escape plan of
+  // the five areas and the way out. Steep, because the floor is a long
+  // run of rooms rather than an open site.
+  const planView = createTopView(camera, {
+    scene,
+    center: new THREE.Vector3(37, 0, 0),
+    distance: 82, minDistance: 38, maxDistance: 130,
+    pitch: 1.30, minPitch: 0.80, maxPitch: 1.50,
+  });
 
   /* ============================ game state ============================ */
 
@@ -1032,7 +1076,21 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       }
     }
 
-    if (!state.dialogOpen && !state.finished) {
+    if (!state.dialogOpen && !state.finished && input.wasPressed("topview")) {
+      planView.toggle();
+      sfx.click();
+    }
+
+    // Cut the ceilings away for the plan view and put them back on the
+    // way down. Done a third of the way up rather than the instant the
+    // button is pressed, so the roof is not yanked off over the
+    // player's head while the camera is still at eye level.
+    const wantCeilings = planView.blend < 0.3;
+    if (ceilings.length && ceilings[0].visible !== wantCeilings) {
+      ceilings.forEach((c) => { c.visible = wantCeilings; });
+    }
+
+    if (!state.dialogOpen && !state.finished && !planView.active) {
       controller.update(dt);
       if (input.wasPressed("zoom")) { zoom.toggle(); sfx.click(); }
       state.target = findTarget();
@@ -1045,6 +1103,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     } else {
       controller.syncCamera();
     }
+
+    planView.update(dt, input, () => controller.syncCamera());
 
     if (state.consequence && stage.elapsed > state.consequenceUntil) {
       state.consequence = null;
@@ -1129,6 +1189,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     },
 
     dispose() {
+      planView.dispose();
       input.dispose();
       stage.dispose();
     },
@@ -1136,7 +1197,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
       zoomFov: () => camera.fov,
-      state, controller, interactables, doors, rooms,
+      state, controller, interactables, doors, rooms, ceilings,
+      get planBlend() { return planView.blend; },
       get fire() { return fire; },
       get finishZone() { return finishZone; },
       extinguishers,

@@ -370,7 +370,7 @@ console.log("\n== textures are not shared across scenes ==");
       font: "", textAlign: "", textBaseline: "",
       fillRect: noop, strokeRect: noop, clearRect: noop,
       beginPath: noop, closePath: noop, moveTo: noop, lineTo: noop,
-      bezierCurveTo: noop, quadraticCurveTo: noop, arc: noop,
+      bezierCurveTo: noop, quadraticCurveTo: noop, arc: noop, ellipse: noop,
       stroke: noop, fill: noop, fillText: noop, save: noop, restore: noop,
       translate: noop, rotate: noop, scale: noop,
       createLinearGradient: () => ({ addColorStop: noop }),
