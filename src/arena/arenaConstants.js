@@ -129,7 +129,7 @@ export const GAMES = [
     title: "Safety Escape Challenge",
     tagline: "Five areas. One safe way out.",
     description:
-      "The alarm has gone off on a newly fitted-out floor. Work your way out through the electrical room, the construction floor, the plant room and the scaffold access — solving a real safety problem to unlock each door, putting out a fire with your own hands, and reaching the assembly area before the clock kills the run.",
+      "The alarm has gone off on a newly fitted-out floor. Five areas stand between you and the way out, and each door is locked. Deal with the safety problem in an area and a key is cut for it — then you have to find that key, pick it up, carry it to the door and unlock it yourself. Put a real fire out with your own hands on the way, and reach the assembly area before the clock kills the run.",
     accent: C.purple,
     icon: "escape",
     minutes: "6–11 min",

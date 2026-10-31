@@ -26,7 +26,7 @@ import {
   buildGround, buildSign, buildFireExtinguisher, buildElectricalPanel,
   buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadder,
   buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
-  buildZoneMarker, buildAriaMark, buildBrandedTower, poseWorker,
+  buildZoneMarker, buildAriaMark, buildBrandedTower, poseWorker, buildKey,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
@@ -47,6 +47,7 @@ export const meta = {
       "A correct decision unlocks the door to the next area.",
       "A wrong decision costs you score and 25 seconds of a clock you cannot afford.",
       "In the plant room, pick an extinguisher off the rack, carry it to the fire and discharge it.",
+      "Solving an area does NOT open its door. It cuts a key — find it, pick it up, and take it to the door.",
       "Open the final exit, then WALK INTO the marked assembly area outside. The door is not the finish line.",
     ],
     scoring: [
@@ -70,7 +71,7 @@ export const meta = {
     ["Mouse", "Look around (click once to capture the mouse)"],
     ["Shift", "Run"],
     ["V", "First person or over the shoulder"],
-    ["E", "Interact — decision point, door, extinguisher, or discharge it"],
+    ["E", "Interact — decision point, key, door, extinguisher, or discharge it"],
     ["Wheel / Z", "Zoom in to read a sign or a tag from across the room"],
     ["T", "Plan view — the floor from above, as an escape plan"],
     ["Esc", "Pause"],
@@ -78,7 +79,7 @@ export const meta = {
   mobileControls: [
     ["Joystick", "Move — bottom-left of the screen"],
     ["Drag right", "Look around while moving"],
-    ["INTERACT", "Use a decision point, door or extinguisher"],
+    ["INTERACT", "Use a decision point, pick up a key, unlock a door, or use an extinguisher"],
     ["RUN", "Hold to move faster"],
     ["VIEW", "Watch yourself from behind, or look through your own eyes"],
     ["Pinch / ZOOM", "Zoom in to read a sign or a tag"],
@@ -309,6 +310,86 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     if (index >= 0) colliders.splice(index, 1);
     controller.setColliders(colliders);
     sfx.doorOpen();
+  }
+
+
+  /* ============================ keys and gates ============================
+   *
+   * Solving a room does NOT open its door. It cuts a key, and the key
+   * drops somewhere in the room you have to walk to. You pick it up,
+   * you carry it to the door, and you use it there.
+   *
+   * That is three deliberate beats instead of one: the task, the walk,
+   * and the door. It is what stops a room being a multiple-choice
+   * question with a corridor attached, and it is how the player ends up
+   * crossing the space they have just made safe.
+   */
+
+  const keys = [];
+
+  /** Where a room's key lands. Across the room from the hazard. */
+  function keyDropFor(room) {
+    return {
+      x: room.x0 + (room.x1 - room.x0) * 0.32,
+      z: room.centreZ + (room.z1 - room.centreZ) * 0.55,
+    };
+  }
+
+  function spawnKey(roomKey) {
+    if (keys.some((k) => k.roomKey === roomKey)) return null;
+    const room = roomByKey(roomKey);
+    if (!room) return null;
+    const drop = keyDropFor(room);
+
+    const object = buildKey(geo, mat);
+    object.position.set(drop.x, 0.95, drop.z);
+    scene.add(object);
+
+    const entry = {
+      roomKey,
+      object,
+      position: object.position.clone(),
+      collected: false,
+      phase: 0,
+    };
+    keys.push(entry);
+    sfx.pickup();
+    api.toast("A key has been cut for this door. Find it and pick it up.", "info");
+    return entry;
+  }
+
+  function keyFor(roomKey) {
+    return keys.find((k) => k.roomKey === roomKey) || null;
+  }
+
+  function hasKey(roomKey) {
+    return !!state.keysHeld[roomKey];
+  }
+
+  function collectKey(entry) {
+    if (!entry || entry.collected) return;
+    entry.collected = true;
+    entry.object.visible = false;
+    state.keysHeld[entry.roomKey] = true;
+    sfx.interact();
+    const puzzle = PUZZLES[entry.roomKey];
+    api.toast(
+      `Key collected. Now take it to the ${puzzle ? puzzle.area.toLowerCase() : "next"} door.`,
+      "good"
+    );
+    pushHud();
+  }
+
+  /** Bobs and turns the uncollected keys, so they catch the eye. */
+  function updateKeys(dt) {
+    for (const entry of keys) {
+      if (entry.collected) continue;
+      entry.phase += dt;
+      entry.object.rotation.y += dt * 1.6;
+      entry.object.position.y = 0.95 + Math.sin(entry.phase * 2.2) * 0.08;
+      const halo = entry.object.userData.key?.halo;
+      if (halo) halo.scale.setScalar(0.9 + Math.sin(entry.phase * 3) * 0.12);
+    }
   }
 
   /* ========================== area dressing ========================== */
@@ -725,6 +806,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // The plant room is played out rather than answered: pick an
     // extinguisher up, carry it to the fire, discharge it.
     carrying: null,
+    /** roomKey -> true once its key is in your pocket. */
+    keysHeld: {},
     fireAttempts: 0,
     doorsOpen: false,
   };
@@ -750,6 +833,20 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       if (facing < 0.1) continue;
       const rank = facing * 2 - distance / item.radius;
       if (rank > bestRank) { bestRank = rank; best = { kind: "puzzle", item }; }
+    }
+
+    // A key lying in the room. Offered ahead of everything else at
+    // close range, because if one is out it is the thing to do next.
+    for (const entry of keys) {
+      if (entry.collected) continue;
+      toTarget.copy(entry.position).sub(camera.position);
+      const distance = toTarget.length();
+      if (distance > 2.8) continue;
+      toTarget.normalize();
+      const facing = toTarget.dot(lookDir);
+      if (facing < 0.1) continue;
+      const rank = facing * 2 - distance / 2.8 + 1.5;
+      if (rank > bestRank) { bestRank = rank; best = { kind: "key", entry }; }
     }
 
     // Extinguishers on the rack — only worth offering while the fire is
@@ -835,11 +932,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       if (attempts === 0) state.firstTryCount += 1;
       item.done = true;
       item.marker.visible = false;
-      unlockDoor(item.key);
       closeDialog();
       sfx.correct();
       api.toast(`${option.feedback}`, "good", points);
-      api.toast(`${puzzle.area} clear — the door is open.`, "info");
+      // The task is done. The door is NOT open — a key has been cut.
+      spawnKey(item.key);
       state.currentArea = Math.min(AREA_ORDER.length - 1, AREA_ORDER.indexOf(item.key) + 1);
       return;
     }
@@ -876,10 +973,24 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   function useDoor(door) {
     if (door.locked) {
-      sfx.locked();
       const puzzle = PUZZLES[door.roomKey];
+      const key = keyFor(door.roomKey);
+
+      if (hasKey(door.roomKey)) {
+        // Key in hand, at the door: this is the moment it opens.
+        unlockDoor(door.roomKey);
+        api.toast(`${puzzle ? puzzle.area : "The door"} unlocked. Go through.`, "good");
+        state.currentArea = Math.min(
+          AREA_ORDER.length - 1, AREA_ORDER.indexOf(door.roomKey) + 1);
+        pushHud();
+        return;
+      }
+
+      sfx.locked();
       api.toast(
-        `This door is secured. ${puzzle ? `Deal with ${puzzle.area.toLowerCase()} first.` : ""}`,
+        key
+          ? "Locked. The key for this door is in the room — go and pick it up."
+          : `This door is secured. ${puzzle ? `Deal with ${puzzle.area.toLowerCase()} first.` : ""}`,
         "warn"
       );
       return;
@@ -972,10 +1083,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     state.solved += 1;
     if (state.fireAttempts === 0) state.firstTryCount += 1;
     if (item) { item.done = true; if (item.marker) item.marker.visible = false; }
-    unlockDoor("fire");
     sfx.correct();
     api.toast("Fire out. CO2 is non-conductive and leaves no residue on electrical gear.", "good", points);
-    api.toast("Plant room clear — the door is open.", "info");
+    spawnKey("fire");
     state.currentArea = Math.min(AREA_ORDER.length - 1, AREA_ORDER.indexOf("fire") + 1);
   }
 
@@ -1047,7 +1157,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const urgent = state.remainingMs < 90000;
 
     let prompt = null;
-    if (target?.kind === "puzzle") {
+    if (target?.kind === "key") {
+      prompt = {
+        text: mobile ? "Tap USE — pick up the key" : "Press E — pick up the key",
+        tone: "good", key: "E",
+      };
+    } else if (target?.kind === "puzzle") {
       prompt = { text: mobile ? `Tap USE — ${target.item.label}` : `Press E — ${target.item.label}`, tone: "good", key: "E" };
     } else if (target?.kind === "pickup") {
       prompt = { text: mobile ? `Tap USE — take the ${target.ext.label} extinguisher` : `Press E — take the ${target.ext.label} extinguisher`, tone: "good", key: "E" };
@@ -1059,9 +1174,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       prompt = { text: "Take an extinguisher off the rack", tone: "normal", key: "" };
     } else if (state.doorsOpen && !state.escaped) {
       prompt = { text: "Walk into the assembly area", tone: "good", key: "" };
+    } else if (keys.some((k) => !k.collected)) {
+      prompt = { text: "A key has been cut — find it in this area", tone: "good", key: "" };
     } else if (target?.kind === "door") {
       prompt = target.door.locked
-        ? { text: "Secured — solve this area first", tone: "bad", key: "E" }
+        ? (hasKey(target.door.roomKey)
+          ? { text: mobile ? "Tap USE — unlock it with the key" : "Press E — unlock it with the key", tone: "good", key: "E" }
+          : { text: "Locked — you need the key for this door", tone: "bad", key: "E" })
         : { text: target.door.isFinal ? (mobile ? "Tap USE to open the final exit" : "Press E to open the final exit") : "Open", tone: "good", key: "E" };
     }
 
@@ -1133,7 +1252,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       if (input.wasPressed("zoom")) { zoom.toggle(); sfx.click(); }
       state.target = findTarget();
       if (state.target && input.wasPressed("interact")) {
-        if (state.target.kind === "puzzle") openPuzzle(state.target.item);
+        if (state.target.kind === "key") collectKey(state.target.entry);
+        else if (state.target.kind === "puzzle") openPuzzle(state.target.item);
         else if (state.target.kind === "pickup") pickUpExtinguisher(state.target.ext);
         else if (state.target.kind === "fire") dischargeAtFire();
         else useDoor(state.target.door);
@@ -1142,6 +1262,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       controller.syncCamera();
     }
 
+    updateKeys(dt);
     updateAvatar(dt);
     planView.update(dt, input, () => controller.syncCamera());
 
@@ -1262,6 +1383,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     __test: {
       zoomFov: () => camera.fov,
       state, controller, interactables, doors, rooms, ceilings, avatar,
+      keys, spawnKey, collectKey, hasKey, keyFor, useDoor, doorFor, unlockDoor,
       get planBlend() { return planView.blend; },
       get fire() { return fire; },
       get finishZone() { return finishZone; },

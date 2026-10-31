@@ -1495,6 +1495,10 @@ section("Safety Escape Challenge — escape the building");
   const { instance, record } = await boot("escapeChallenge");
   const input = instance.input;
   const { state, controller, interactables, doors } = instance.__test;
+  // Press USE at a door. Going through the game's own useDoor is the
+  // same path the interact button takes, without having to line the
+  // camera up on a door leaf to the degree.
+  const useDoorDirect = (door) => instance.__test.useDoor(door);
 
   runFrames(10);
   check("there are 5 areas to clear", interactables.length === 5, `${interactables.length}`);
@@ -1604,12 +1608,58 @@ section("Safety Escape Challenge — escape the building");
   }
 
   check("all 5 areas end up cleared", state.solved === 5, `${state.solved}/5`);
-  check("solving an area unlocks its door", doors.every((d) => !d.locked),
-    `${doors.filter((d) => d.locked).length} still locked`);
   check("the only mistake was the deliberate wrong extinguisher", state.mistakes === 1, `${state.mistakes}`);
+
+  /* ---- the key and gate sequence ----
+   *
+   * Solving a room must NOT open its door. It cuts a key, which drops
+   * in the room; the player walks to it, picks it up, carries it to the
+   * door and uses it there. Three beats, not one. */
+  const { keys, hasKey } = instance.__test;
+
+  check("solving every area did NOT open any door",
+    doors.every((d) => d.locked),
+    `${doors.filter((d) => !d.locked).length} opened by themselves`);
+  check("solving every area cut a key for it", keys.length === doors.length,
+    `${keys.length} keys for ${doors.length} doors`);
+  check("the keys are lying in the world, not in your pocket",
+    keys.every((k) => !k.collected) && doors.every((d) => !hasKey(d.roomKey)));
+
+  for (const door of doors) {
+    const key = keys.find((k) => k.roomKey === door.roomKey);
+
+    // Standing at the door with no key gets you nothing.
+    controller.teleport(door.position.x - 1.6, 0, door.position.z, -Math.PI / 2);
+    controller.state.pitch = 0;
+    runFrames(3);
+    useDoorDirect(door);
+    check(`${door.roomKey}: the door stays locked without its key`, door.locked);
+
+    // Walk to the key and pick it up.
+    controller.teleport(key.position.x - 1.1, 0, key.position.z, -Math.PI / 2);
+    controller.state.pitch = 0;
+    runFrames(4);
+    check(`${door.roomKey}: the key can be targeted by walking to it`,
+      state.target?.kind === "key", `target=${state.target?.kind}`);
+    input.press("interact"); runFrames(2); input.release("interact"); runFrames(3);
+    check(`${door.roomKey}: the key is collected`, key.collected && hasKey(door.roomKey));
+
+    // Now the door opens — at the door, with the key.
+    controller.teleport(door.position.x - 1.6, 0, door.position.z, -Math.PI / 2);
+    controller.state.pitch = 0;
+    runFrames(3);
+    useDoorDirect(door);
+    check(`${door.roomKey}: the door unlocks once the key is brought to it`, !door.locked);
+  }
+
+  runFrames(30);
+  check("the doors animate open rather than vanishing",
+    doors.every((d) => d.openProgress > 0.1),
+    doors.map((d) => d.openProgress.toFixed(2)).join(", "));
 
   // Use the final door to escape.
   const finalDoor = doors[doors.length - 1];
+  useDoorDirect(finalDoor);
   controller.teleport(finalDoor.position.x - 1.6, 0, finalDoor.position.z, -Math.PI / 2);
   controller.state.pitch = 0;
   runFrames(3);

@@ -2120,6 +2120,37 @@ export function poseWorker(worker, {
   }
 }
 
+/**
+ * A door key, big enough to spot across a room.
+ *
+ * Deliberately oversized and bright: it is a thing the player has to
+ * FIND and walk to, so it has to read as "pick me up" from the far
+ * side of a plant room, not as a detail on the floor.
+ */
+export function buildKey(geo, mat) {
+  const group = new THREE.Group();
+
+  // Bow (the ring you hold), shank, and two bits at the end.
+  const bow = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.035, 8, 20), mat.yellow);
+  bow.position.y = 0.11;
+  group.add(bow);
+  group.add(cylinder(geo, mat.yellow, 0.025, 0.3, 0, -0.07, 0, { rotX: 0 }));
+  group.add(box(geo, mat.yellow, 0.09, 0.035, 0.03, 0.045, -0.15, 0));
+  group.add(box(geo, mat.yellow, 0.06, 0.035, 0.03, 0.03, -0.21, 0));
+
+  // A soft halo so it is visible against a dark floor or a bright one.
+  const halo = new THREE.Mesh(geo.sphere, new THREE.MeshBasicMaterial({
+    color: 0xffc629, transparent: true, opacity: 0.16, depthWrite: false,
+  }));
+  halo.scale.setScalar(0.9);
+  halo.position.y = 0.02;
+  group.add(halo);
+
+  group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+  group.userData.key = { halo };
+  return group;
+}
+
 /* ====================== site objects & hazards ====================== */
 
 export function buildCone(geo, mat, { height = 0.6 } = {}) {
