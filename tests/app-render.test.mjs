@@ -449,8 +449,20 @@ section("The mission briefing renders in both languages");
       for (let i = 0; i < 40 && !visibleText().includes(want); i++) await settle(60);
       const body = visibleText();
       check(`${id} briefing renders at size "${size}"`,
-        body.includes(briefs.missionBrief(id, "en").title) && body.length > 300,
+        body.includes(briefs.missionBrief(id, "en").title) && body.length > 200,
         `${body.length} chars: ${body.slice(0, 90)}`);
+
+      /* It has to FIT. A briefing that runs to three panels and a
+       * rules list does not fit a phone in landscape, so nobody reads
+       * it and the demo video scrolls off the top. The rules are the
+       * same every round, so they collapse behind a button. */
+      check(`${id} briefing at "${size}" is short enough for one screen`,
+        body.length < 900, `${body.length} chars`);
+      check(`${id} briefing at "${size}" keeps the rules out of the way`,
+        !body.includes("One phone, one player"),
+        "the full rules list is expanded by default");
+      check(`${id} briefing at "${size}" still offers the rules`,
+        /rules and regulations/i.test(body), body.slice(-120));
     }
   }
 

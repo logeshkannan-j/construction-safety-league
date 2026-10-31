@@ -528,9 +528,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // looking for "something wrong" with no idea what you are looking
     // at is a hunt, not an inspection.
     const plate = buildNameplate(def.title.toUpperCase(), {
-      sub: `HAZARD ${HAZARDS.indexOf(def) + 1} OF ${HAZARD_COUNT}`,
+      sub: `HAZARD ${HAZARDS.indexOf(def) + 1} / ${HAZARD_COUNT}`,
+      ta: def.ta?.title || "",
       accent: "#EA4F4F",
-      width: 3.6,
+      width: 4.0,
     });
     plate.position.set(def.at.x, 3.1, def.at.z);
     scene.add(plate);

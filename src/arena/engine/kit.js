@@ -2405,11 +2405,11 @@ export function buildBarrier(geo, mat, { length = 2, color = "orange" } = {}) {
  * The HUD was naming the next objective — "Command post, 4 m N" —
  * while nothing in the world said which object that was.
  */
-export function nameplateTexture(text, { sub = "", accent = "#FFC629" } = {}) {
-  return canvasTexture(`nameplate:${text}:${sub}:${accent}`, 512, 160, (ctx, w, h) => {
+export function nameplateTexture(text, { sub = "", ta = "", accent = "#FFC629" } = {}) {
+  return canvasTexture(`nameplate:${text}:${ta}:${sub}:${accent}`, 512, 208, (ctx, w, h) => {
     // Rounded pill. Drawn by hand rather than with arcTo, which is not
     // in the 2D stub the headless tests use.
-    const r = 46;
+    const r = 52;
     const pill = () => {
       ctx.beginPath();
       ctx.moveTo(r, 6);
@@ -2423,7 +2423,7 @@ export function nameplateTexture(text, { sub = "", accent = "#FFC629" } = {}) {
       ctx.quadraticCurveTo(6, 6, r, 6);
       ctx.closePath();
     };
-    ctx.fillStyle = "rgba(10,14,18,0.88)";
+    ctx.fillStyle = "rgba(10,14,18,0.9)";
     pill();
     ctx.fill();
     ctx.strokeStyle = accent;
@@ -2433,35 +2433,51 @@ export function nameplateTexture(text, { sub = "", accent = "#FFC629" } = {}) {
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = "#FFFFFF";
-    ctx.letterSpacing = "1px";
-    const mainY = sub ? h / 2 - 16 : h / 2;
-    fitFont(ctx, text, w - 60, 62, 20, (px) => {
-      ctx.font = `900 ${px}px system-ui, sans-serif`;
-    });
-    ctx.fillText(text, w / 2, mainY);
 
+    // Small line of context first — the step number, or PRESS E.
     if (sub) {
       ctx.fillStyle = accent;
       ctx.letterSpacing = "3px";
-      fitFont(ctx, sub, w - 70, 30, 12, (px) => {
+      fitFont(ctx, sub, w - 70, 26, 11, (px) => {
         ctx.font = `800 ${px}px system-ui, sans-serif`;
       });
-      ctx.fillText(sub, w / 2, h / 2 + 38);
+      ctx.fillText(sub, w / 2, 38);
+    }
+
+    // English, then Tamil under it. Signage on a real multilingual
+    // site shows both at once, because the person who needs the second
+    // language is not going to tap a toggle first.
+    const enY = ta ? (sub ? 92 : 78) : (sub ? 112 : h / 2);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.letterSpacing = "1px";
+    fitFont(ctx, text, w - 56, 58, 18, (px) => {
+      ctx.font = `900 ${px}px system-ui, sans-serif`;
+    });
+    ctx.fillText(text, w / 2, enY);
+
+    if (ta) {
+      ctx.fillStyle = "#CFE0EE";
+      ctx.letterSpacing = "0px";
+      fitFont(ctx, ta, w - 56, 46, 15, (px) => {
+        ctx.font = `700 ${px}px system-ui, sans-serif`;
+      });
+      ctx.fillText(ta, w / 2, enY + 60);
     }
     ctx.letterSpacing = "0px";
   });
 }
 
 /** A floating, always-facing name over an interactable. */
-export function buildNameplate(text, { sub = "", accent = "#FFC629", width = 3.2 } = {}) {
+export function buildNameplate(text, {
+  sub = "", ta = "", accent = "#FFC629", width = 3.2,
+} = {}) {
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: nameplateTexture(text, { sub, accent }),
+    map: nameplateTexture(text, { sub, ta, accent }),
     transparent: true,
     depthWrite: false,
   }));
-  sprite.scale.set(width, width * (160 / 512), 1);
-  sprite.userData.nameplate = { text, sub };
+  sprite.scale.set(width, width * (208 / 512), 1);
+  sprite.userData.nameplate = { text, sub, ta };
   return sprite;
 }
 
@@ -2478,8 +2494,8 @@ export function buildNameplate(text, { sub = "", accent = "#FFC629", width = 3.2
  * content comes from the scenario files and nobody writing those should
  * have to count characters.
  */
-export function boardTexture(title, lines = [], { accent = ARIA_ORANGE } = {}) {
-  const key = `board:${title}:${lines.join("|")}:${accent}`;
+export function boardTexture(title, lines = [], { accent = ARIA_ORANGE, ta = [], taTitle = "" } = {}) {
+  const key = `board:${title}:${lines.join("|")}:${taTitle}:${ta.join("|")}:${accent}`;
   return canvasTexture(key, 768, 512, (ctx, w, h) => {
     ctx.fillStyle = "#11161B";
     ctx.fillRect(0, 0, w, h);
@@ -2487,26 +2503,34 @@ export function boardTexture(title, lines = [], { accent = ARIA_ORANGE } = {}) {
     ctx.lineWidth = 10;
     ctx.strokeRect(5, 5, w - 10, h - 10);
 
-    // Heading bar.
+    // Heading bar: both languages, English then Tamil.
     ctx.fillStyle = accent;
-    ctx.fillRect(10, 10, w - 20, 92);
+    ctx.fillRect(10, 10, w - 20, taTitle ? 112 : 92);
     ctx.fillStyle = "#11161B";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     ctx.letterSpacing = "2px";
-    fitFont(ctx, title, w - 72, 54, 20, (px) => {
+    fitFont(ctx, title, w - 72, taTitle ? 44 : 54, 18, (px) => {
       ctx.font = `900 ${px}px system-ui, sans-serif`;
     });
-    ctx.fillText(title, 36, 57);
+    ctx.fillText(title, 36, taTitle ? 44 : 57);
+    if (taTitle) {
+      ctx.letterSpacing = "0px";
+      fitFont(ctx, taTitle, w - 72, 34, 14, (px) => {
+        ctx.font = `800 ${px}px system-ui, sans-serif`;
+      });
+      ctx.fillText(taTitle, 36, 92);
+    }
 
-    // Body, wrapped to the width rather than to a character count.
-    ctx.fillStyle = "#E8EDF2";
+    // Body: the English lines, then the Tamil ones under a rule.
+    const all = ta.length ? [...lines, "\u0000", ...ta] : lines;
     ctx.letterSpacing = "0px";
-    const size = lines.length > 4 ? 28 : 33;
+    const size = all.length > 4 ? 26 : 31;
     ctx.font = `600 ${size}px system-ui, sans-serif`;
     const maxWidth = w - 76;
     const wrapped = [];
-    lines.forEach((line) => {
+    all.forEach((line) => {
+      if (line === "\u0000") { wrapped.push("\u0000"); return; }
       let current = "";
       String(line).split(/\s+/).forEach((word) => {
         const next = current ? `${current} ${word}` : word;
@@ -2520,10 +2544,22 @@ export function boardTexture(title, lines = [], { accent = ARIA_ORANGE } = {}) {
       if (current) wrapped.push(current);
       wrapped.push("");
     });
-    let y = 150;
-    wrapped.slice(0, 10).forEach((line) => {
-      if (line) ctx.fillText(line, 38, y);
-      y += line ? size * 1.34 : size * 0.6;
+
+    let y = taTitle ? 164 : 150;
+    let inTamil = false;
+    wrapped.slice(0, 12).forEach((line) => {
+      if (line === "\u0000") {
+        ctx.fillStyle = "#2B343C";
+        ctx.fillRect(38, y - 6, w - 76, 2);
+        y += 22;
+        inTamil = true;
+        return;
+      }
+      if (line) {
+        ctx.fillStyle = inTamil ? "#BFD3E4" : "#E8EDF2";
+        ctx.fillText(line, 38, y);
+      }
+      y += line ? size * 1.3 : size * 0.5;
     });
   });
 }
@@ -2535,12 +2571,15 @@ export function boardTexture(title, lines = [], { accent = ARIA_ORANGE } = {}) {
  */
 export function buildInfoBoard(geo, mat, {
   title = "NOTICE", lines = [], width = 2.6, accent = null, legs = true, height = 1.1,
+  // The same board, in Tamil, under a rule. Both at once: a sign that
+  // needs a toggle is no use to the person who needs the toggle.
+  taTitle = "", ta = [],
 } = {}) {
   const group = new THREE.Group();
   const h = width * (512 / 768);
 
   const face = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({
-    map: boardTexture(title, lines, accent ? { accent } : {}),
+    map: boardTexture(title, lines, { ...(accent ? { accent } : {}), ta, taTitle }),
     side: THREE.DoubleSide,
   }));
   face.scale.set(width, h, 1);

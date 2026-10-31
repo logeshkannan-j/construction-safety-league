@@ -233,6 +233,9 @@ export default function MissionDemo({
   showRules = true,
 }) {
   const [ownLang, setOwnLang] = useState(DEFAULT_LANGUAGE);
+  // Collapsed by default: the rules are the same every round, and
+  // they were the main reason this screen did not fit.
+  const [rulesOpen, setRulesOpen] = useState(false);
   const active = isLanguage(lang) ? lang : ownLang;
   const setLang = (id) => { setOwnLang(id); onLang?.(id); };
 
@@ -366,33 +369,58 @@ export default function MissionDemo({
         </Suspense>
       )}
 
-      {/* ---- what the mission asks ---- */}
+      {/* ---- one screen: what it is, what to do, how it scores ----
+          The briefing used to run to three panels and a rules list,
+          which does not fit a phone in landscape — so nobody read it
+          and the demo video scrolled off the top. Everything below is
+          what you need before you start; the detail is in the game. */}
       <Section icon={<Gamepad2 size={tv ? 18 : 14} color={COLORS.orange} />}
-        title="THE MISSION" color={COLORS.orange} size={size}>
+        title="WHAT YOU ARE DOING" color={COLORS.orange} size={size}>
         <p style={{
-          margin: 0, color: COLORS.ink, lineHeight: 1.6,
-          fontSize: tv ? 20 : 14,
+          margin: 0, color: COLORS.ink, lineHeight: 1.5,
+          fontSize: tv ? 19 : 13.5,
         }}>
           {brief.goal}
         </p>
       </Section>
 
-      <div style={{
-        display: "grid", gap: tv ? 16 : 11,
-        gridTemplateColumns: tv ? "1.35fr 1fr" : "1fr",
-      }}>
-        <Section icon={<ListChecks size={tv ? 18 : 14} color={COLORS.green} />}
-          title="HOW TO PLAY IT" color={COLORS.green} size={size}>
-          <Bullets items={brief.steps} color={COLORS.green} numbered size={size} />
-        </Section>
+      <Section icon={<ListChecks size={tv ? 18 : 14} color={COLORS.green} />}
+        title="HOW TO PLAY" color={COLORS.green} size={size}>
+        {/* The first three steps only. The rest are discoverable in
+            the game and were pushing the video off the screen. */}
+        <Bullets items={brief.steps.slice(0, 3)} color={COLORS.green} numbered size={size} />
+      </Section>
 
-        <Section icon={<Trophy size={tv ? 18 : 14} color={COLORS.yellow} />}
-          title="HOW IT IS SCORED" color={COLORS.yellow} size={size}>
-          <Bullets items={brief.scoring} color={COLORS.yellow} size={size} />
-        </Section>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 10,
+        padding: tv ? "12px 16px" : "9px 12px",
+        background: COLORS.surface, border: `1px solid ${COLORS.line}`,
+        borderRadius: 10, color: COLORS.muted, fontSize: tv ? 15 : 12,
+        lineHeight: 1.45,
+      }}>
+        <Trophy size={tv ? 17 : 14} color={COLORS.yellow} style={{ flexShrink: 0 }} />
+        <span>{brief.scoring[0]}</span>
       </div>
 
       {showRules && (
+        <button
+          type="button"
+          onClick={() => setRulesOpen((v) => !v)}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            width: "100%", cursor: "pointer",
+            padding: tv ? "11px 16px" : "9px 12px",
+            background: "transparent", color: COLORS.muted,
+            border: `1px dashed ${COLORS.line}`, borderRadius: 10,
+            fontSize: tv ? 14 : 12, fontWeight: 700,
+          }}
+        >
+          <ShieldAlert size={tv ? 16 : 13} color={COLORS.red} />
+          {rulesOpen ? "Hide the rules" : rules.title}
+        </button>
+      )}
+
+      {showRules && rulesOpen && (
         <Section icon={<ShieldAlert size={tv ? 18 : 14} color={COLORS.red} />}
           title={rules.title.toUpperCase()} color={COLORS.red} size={size}>
           <Bullets items={rules.items} color={COLORS.red} size={size} />

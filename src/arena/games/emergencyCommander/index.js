@@ -231,6 +231,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
      * refer to. */
     const step = STATIONS.indexOf(station);
     const plate = buildNameplate(station.label.toUpperCase(), {
+      ta: station.ta?.label || "",
       sub: step >= 0 ? `STEP ${step + 1} — ${station.action.toUpperCase()}` : "",
       accent: `#${accent.toString(16).padStart(6, "0")}`,
       width: 3.8,

@@ -114,6 +114,22 @@ const ROOMS = [
   { key: "alarm", x0: 66, x1: 80, z0: -5, z1: 5, floor: 0, label: "Exit lobby" },
 ];
 
+/** Area names and decision-point labels in Tamil, for the signage. */
+const AREA_TA = {
+  electrical: "மின் அறை",
+  ppe: "கட்டுமான தளம்",
+  fire: "இயந்திர அறை",
+  signage: "சாரக்கட்டு வழி",
+  alarm: "வெளியேறும் வரேவேற்பு",
+};
+const LABEL_TA = {
+  electrical: "கதவு சர்க்யூட்டைப் பாதுகாப்பாக்கவும்",
+  ppe: "உங்கள் PPE ஐத் தேர்ந்தெடுக்கவும்",
+  fire: "தீயணைப்பானைத் தேர்ந்தெடுக்கவும்",
+  signage: "சாரக்கட்டு டேக்ஐப் பார்க்கவும்",
+  alarm: "வெளியேறும் முன் அலாரம்",
+};
+
 /* ============================== the game ============================== */
 
 export function create({ container, difficulty, quality, settings, mobile, api }) {
@@ -603,6 +619,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const board = buildInfoBoard(geo, mat, {
       title: `${index + 1}. ${puzzle.area.toUpperCase()}`,
       lines: [puzzle.title, puzzle.subtitle],
+      taTitle: puzzle.ta?.title ? `${index + 1}. ${AREA_TA[key] || ""}` : "",
+      ta: puzzle.ta ? [puzzle.ta.title, puzzle.ta.subtitle] : [],
       width: 3.0,
       height: 1.0,
       legs: false,
@@ -638,12 +656,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Name the decision point, so it is obvious which object in the
     // room is the one you are meant to deal with.
     const plate = buildNameplate(String(label).toUpperCase(), {
-      sub: "PRESS E", accent: "#9B7CF2", width: 2.3,
+      sub: "PRESS E", ta: LABEL_TA[key] || "", accent: "#9B7CF2", width: 2.6,
     });
     // Most decision points are given as { x, z } with no y at all, so
     // `position.y + 1` is NaN and the plate ends up nowhere. Default
     // it the same way the ring below does.
-    plate.position.set(position.x, (position.y ?? 0.12) + 1.75, position.z);
+    // Above the tallest thing a decision point sits on — the burning
+    // switchgear cabinet is 2.2 m, and a plate at 1.87 m was inside it.
+    // Still under the 3.2 m ceiling.
+    plate.position.set(position.x, Math.max((position.y ?? 0.12) + 1.75, 2.62), position.z);
     scene.add(plate);
     scene.add(marker);
     animated.push({ kind: "ring", object: marker, phase: Math.random() * 6 });
@@ -684,7 +705,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     );
 
     const mainPlate = buildNameplate("MAIN BOARD", {
-      sub: "ISOLATOR INSIDE", accent: "#EA4F4F", width: 2.4,
+      sub: "ISOLATOR INSIDE", ta: "மெயின் போர்டு",
+      accent: "#EA4F4F", width: 2.6,
     });
     mainPlate.position.set(MAIN.x, 2.75, MAIN.z);
     scene.add(mainPlate);
@@ -924,6 +946,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
      * one for a fire whose class you were never told. */
     const fireBoard = buildInfoBoard(geo, mat, {
       title: "FIRE — LIVE ELECTRICAL",
+      taTitle: "தீ — மின்சாரம் உள்ளது",
+      ta: [
+        "எரிவது: 415 V ஸ்விட்ச்கியர் பெட்டி. மின்சாரம் இன்னும் இருக்கிறது.",
+        "தீ வகை: மின். தண்ணீரும் நுரையும் மின்சாரத்தைக் கடத்தும்.",
+        "எடுக்கும் முன் தீயணைப்பானின் நிற பட்டையைப் பாருங்கள்.",
+      ],
       lines: [
         "Burning: 415 V switchgear cabinet. The supply to it is STILL ON.",
         "Class of fire: electrical. Water and foam conduct. Wet chemical is for cooking oils.",

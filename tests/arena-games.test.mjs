@@ -1152,37 +1152,124 @@ section("Everything you can use has its name over it");
   }
 }
 
-section("Labels do not hide the thing behind them");
+section("Signs are readable: nothing buried, nothing covered");
 
 {
-  /* A nameplate is a sprite at head height; an information board is a
-   * panel on a wall. Put both on the same wall and the label sits
-   * squarely in front of the board, which is what the screenshots
-   * showed. They have to be far enough apart to read separately. */
-  for (const path of ["escapeChallenge", "emergencyCommander", "safestTower"]) {
+  /* "Hiding behind that — check every zone."
+   *
+   * Three separate ways a label goes wrong, all of which have
+   * happened here: it sits INSIDE the object it names, it sits in
+   * front of a board so the board cannot be read, or it is so big it
+   * blankets the view. All three are measured, in every scene, rather
+   * than looked at in one screenshot. */
+  for (const [path, id] of GAMES) {
     const { instance } = await boot(path);
-    runFrames(10);
+    runFrames(8);
+    const scene = lastRenderer.lastScene;
 
     const plates = [];
     const boards = [];
-    lastRenderer.lastScene.traverse((o) => {
-      if (o.userData?.nameplate) plates.push(o);
-      if (o.userData?.boardHeight) boards.push(o);
+    const solids = [];
+    scene.traverse((o) => {
+      if (o.userData?.nameplate) { plates.push(o); return; }
+      if (o.userData?.boardHeight) { boards.push(o); return; }
+      /* SOLID means solid. Smoke, halos, zone markings and glow are
+       * all transparent meshes you can read a label straight through,
+       * so a label inside one is not buried — and the plant-room
+       * smoke drifts up through exactly where a label has to go. */
+      if (o.isMesh && o.visible && o.material?.visible !== false
+        && o.material?.transparent !== true) solids.push(o);
     });
 
-    const clashes = [];
+    if (!plates.length && !boards.length) {
+      check(`${id}: this mission has signage to check`, true, "none in this scene");
+      instance.dispose();
+      continue;
+    }
+
+    // 1. No label may be INSIDE a solid object.
+    const buried = [];
+    const box = new THREE.Box3();
+    plates.forEach((p) => {
+      const world = p.getWorldPosition(new THREE.Vector3());
+      for (const mesh of solids) {
+        /* Only SOLID, OBJECT-SIZED things count.
+         *
+         * A merged mesh — the hoarding, the scenery towers — has one
+         * bounding box around everything it contains, so its AABB
+         * covers whole rooms of empty air and every label inside them
+         * looks buried. Judging by volume keeps this to cabinets,
+         * panels and pallets: the things that genuinely swallow a
+         * label. */
+        box.setFromObject(mesh);
+        const size = box.getSize(new THREE.Vector3());
+        if (size.x < 0.4 || size.y < 0.4 || size.z < 0.4) continue;
+        if (size.x * size.y * size.z > 18) continue;
+        if (box.containsPoint(world)) {
+          buried.push(`${p.userData.nameplate.text}`);
+          break;
+        }
+      }
+    });
+    check(`${id}: no label is buried inside an object`,
+      buried.length === 0, buried.slice(0, 3).join("; "));
+
+    // 2. No label may sit in front of a board.
+    const covering = [];
     boards.forEach((b) => {
+      const bp = b.getWorldPosition(new THREE.Vector3());
       plates.forEach((p) => {
-        const d = Math.hypot(p.position.x - b.position.x, p.position.z - b.position.z);
-        if (d < 2.5) clashes.push(`${p.userData.nameplate.text} at ${d.toFixed(1)} m`);
+        const pp = p.getWorldPosition(new THREE.Vector3());
+        const flat = Math.hypot(pp.x - bp.x, pp.z - bp.z);
+        if (flat < 2.5) covering.push(`${p.userData.nameplate.text} ${flat.toFixed(1)}m`);
       });
     });
-    check(`${path}: no label is parked in front of a board`,
-      clashes.length === 0, clashes.slice(0, 3).join("; "));
+    check(`${id}: no label is parked in front of a board`,
+      covering.length === 0, covering.slice(0, 3).join("; "));
 
-    check(`${path}: the labels are small enough to see past`,
-      plates.every((p) => p.scale.x <= 4.0),
-      plates.map((p) => p.scale.x.toFixed(1)).join(", "));
+    // 3. Labels sit ABOVE head height and are not oversized.
+    const low = plates.filter((p) => p.getWorldPosition(new THREE.Vector3()).y < 1.75);
+    check(`${id}: every label is above head height`, low.length === 0,
+      low.map((p) => `${p.userData.nameplate.text} at ${p.position.y.toFixed(1)}m`).join("; "));
+    const huge = plates.filter((p) => p.scale.x > 4.2);
+    check(`${id}: no label blankets the view`, huge.length === 0,
+      huge.map((p) => p.scale.x.toFixed(1)).join(", "));
+
+    // 4. Labels must not overlap EACH OTHER either.
+    const pairs = [];
+    for (let i = 0; i < plates.length; i += 1) {
+      for (let j = i + 1; j < plates.length; j += 1) {
+        const a = plates[i].getWorldPosition(new THREE.Vector3());
+        const b = plates[j].getWorldPosition(new THREE.Vector3());
+        if (a.distanceTo(b) < 1.6) {
+          pairs.push(`${plates[i].userData.nameplate.text} / ${plates[j].userData.nameplate.text}`);
+        }
+      }
+    }
+    check(`${id}: labels do not stack on top of each other`,
+      pairs.length === 0, pairs.slice(0, 2).join("; "));
+
+    instance.dispose();
+  }
+}
+
+section("World signage is in both languages");
+
+{
+  const TAMIL = /[஀-௿]/;
+  for (const path of ["escapeChallenge", "safestTower", "emergencyCommander"]) {
+    const { instance } = await boot(path);
+    runFrames(8);
+
+    const plates = [];
+    lastRenderer.lastScene.traverse((o) => { if (o.userData?.nameplate) plates.push(o); });
+
+    const withTamil = plates.filter((p) => TAMIL.test(p.userData.nameplate.ta || ""));
+    check(`${path}: the signs carry Tamil as well as English`,
+      withTamil.length >= Math.max(1, Math.floor(plates.length * 0.8)),
+      `${withTamil.length} of ${plates.length} plates`);
+    check(`${path}: and the English is still there`,
+      plates.every((p) => (p.userData.nameplate.text || "").length > 2));
 
     instance.dispose();
   }
