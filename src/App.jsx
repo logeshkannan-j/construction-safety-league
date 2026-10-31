@@ -5,7 +5,7 @@ import {
   ChevronRight, Shield, Zap, Crown, QrCode, LogIn, Volume2, VolumeX,
   Target, Upload, Trash2, MapPin, ImagePlus, X, Percent, Phone, Gem, Ban,
   Pencil, UserMinus, Save, AlertTriangle, ListChecks, Lock, Gamepad2,
-  Projector, Languages
+  Projector, Languages, Copy, Monitor
 } from "lucide-react";
 
 // The 3D Safety Gaming Arena is loaded on demand. Everything it needs
@@ -41,6 +41,7 @@ import {
   ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS, NOT_RELEASED,
   QUIZ_PER_ROUND, QUIZ_PER_ROUND_OPTIONS, MQ_PER_ROUND,
   ITEM_GAME3D, ITEM_QUIZ, ITEM_MILLIONAIRE,
+  STAGES, runProgress, runSummary, runPlayingMs, planRoundCount,
 } from "./session.js";
 import {
   LANGUAGES, MISSION_BRIEFS, emptyMissionVideos, missionBrief,
@@ -542,13 +543,21 @@ export default function App() {
       if (p.get("role") === "player") return "player";
       // Lets the Gaming Arena be linked to or QR-coded directly.
       if (p.get("role") === "arena") return "arena";
+      /* The TV and the admin panel are addressable too, so the host can
+       * open either in a second window — on the projector, or just to
+       * watch — without leaving the one they are running the event
+       * from. Both are read-only on the game record until the host
+       * presses something, so a second window cannot interrupt a round
+       * that is in progress. */
+      if (p.get("role") === "tv") return "tv";
+      if (p.get("role") === "admin") return "admin";
     } catch {}
     return null;
   });
 
   return (
     <div style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.ink, fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif", overflowX: "hidden" }}>
-      <style>{`*, *::before, *::after { box-sizing: border-box; } html, body, #root { margin: 0; min-width: 0; width: 100%; overflow-x: hidden; } .csl-player-stage { width: 100%; min-width: 0; padding: clamp(12px, 3vw, 28px); } .csl-hazard-question { width: min(100%, 560px); margin: 0 auto; } .csl-hazard-question img { max-width: 100%; } @media (min-width: 700px) { .csl-player-stage { padding: 28px 40px; } } @media (max-width: 520px) { .csl-player-stage { padding: 12px; } } /* Answer buttons must never look pre-selected. A mouse or touch tap leaves no ring at all; only real keyboard navigation shows one, and it is a dashed outline rather than a filled highlight so it cannot be mistaken for "this is the answer". */ .csl-answer:focus { outline: none; } .csl-answer:focus-visible { outline: 2px dashed #909AA3; outline-offset: 2px; } .csl-answer::-moz-focus-inner { border: 0; }`}</style>
+      <style>{`*, *::before, *::after { box-sizing: border-box; } html, body, #root { margin: 0; min-width: 0; width: 100%; overflow-x: hidden; } .csl-player-stage { width: 100%; min-width: 0; padding: clamp(12px, 3vw, 28px); } .csl-hazard-question { width: min(100%, 560px); margin: 0 auto; } .csl-hazard-question img { max-width: 100%; } @media (min-width: 700px) { .csl-player-stage { padding: 28px 40px; } } @media (max-width: 520px) { .csl-player-stage { padding: 12px; } } /* Answer buttons must never look pre-selected. A mouse or touch tap leaves no ring at all; only real keyboard navigation shows one, and it is a dashed outline rather than a filled highlight so it cannot be mistaken for "this is the answer". */ .csl-answer:focus { outline: none; } .csl-answer:focus-visible { outline: 2px dashed #909AA3; outline-offset: 2px; } .csl-answer::-moz-focus-inner { border: 0; } /* The TV view is projected, but it is also opened in a laptop window — by the host watching, or by anybody given the link. The live board is two columns on a wide screen and stacked below about 900px, and the results sheet scrolls sideways rather than spilling off the edge. */ .csl-tv-live { display: grid; grid-template-columns: minmax(280px, 2fr) 3fr; gap: 16px; flex: 1; min-height: 0; } .csl-tv-sheet { min-width: 760px; } @media (max-width: 900px) { .csl-tv-live { grid-template-columns: 1fr; } }`}</style>
       {!role && <RoleSelect onSelect={setRole} />}
       {role === "admin" && <AdminView onExit={() => setRole(null)} />}
       {role === "player" && <PlayerView onExit={() => setRole(null)} />}
@@ -582,7 +591,7 @@ function RoleSelect({ onSelect }) {
 
       <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, width: "100%", maxWidth: 900 }}>
         <RoleCard icon={<Users size={22} />} title="Join as player" sub="Enter the game code and your details — 3D missions and questions in one session" color={COLORS.green} onClick={() => onSelect("player")} />
-        <RoleCard icon={<Trophy size={22} />} title="Show the arena" sub="Project the live questions and racing leaderboard" color={COLORS.yellow} onClick={() => onSelect("tv")} />
+        <RoleCard icon={<Trophy size={22} />} title="Show the arena" sub="Project the live session: who is playing, the race, and the results" color={COLORS.yellow} onClick={() => onSelect("tv")} />
         <RoleCard icon={<Shield size={22} />} title="Run the event" sub="Create games, control rounds, and manage players" color={COLORS.orange} onClick={() => onSelect("admin")} />
       </div>
       <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 8, marginTop: 28, color: COLORS.muted, fontSize: 12 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.green, boxShadow: `0 0 0 5px ${COLORS.green}22` }} /> LIVE EVENT MODE · Firebase sync enabled</div>
@@ -951,6 +960,24 @@ function AdminView({ onExit }) {
       await patchGame({ status: "question", qIndex: nextIdx, questionStartedAt: Date.now() + offset, revealed: false });
     }
   }
+  /* The same app, addressed as a different station. Built from the
+   * CURRENT location rather than the hosted URL so it works on a laptop
+   * running the dev server as well as on the published site. */
+  function secondScreenUrl(which) {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set("role", which);
+      u.hash = "";
+      return u.toString();
+    } catch {
+      return `?role=${which}`;
+    }
+  }
+
+  function openSecondScreen(which) {
+    try { window.open(secondScreenUrl(which), "_blank", "noopener"); } catch { /* popup blocked */ }
+  }
+
   async function showLeaderboard() { await patchGame({ status: "leaderboard" }); }
   async function backToLobby() { await patchGame({ status: "lobby" }); }
   async function endGame() { await patchGame({ status: "ended" }); }
@@ -1180,6 +1207,52 @@ function AdminView({ onExit }) {
                 </p>
               </>
             )}
+          </Panel>
+
+
+          {/* The host runs the event from this window. Everything here
+              opens in a SEPARATE window, so the projector, a spectator
+              view and the host's own go at the game all run alongside
+              the controls without any of them touching the live game
+              record. Nothing on this panel writes to the database. */}
+          <Panel title="Second screen" icon={<Monitor size={18} color={COLORS.purple} />}>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12, lineHeight: 1.55 }}>
+              Open any of these in their own window. The event carries on exactly as it is —
+              these are views, not controls, and closing one changes nothing.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <ActionBtn
+                icon={<Projector size={15} />}
+                label="Open the TV display"
+                color={COLORS.yellow}
+                dark
+                onClick={() => openSecondScreen("tv")}
+              />
+              <ActionBtn
+                icon={<Users size={15} />}
+                label="Play it myself as a player"
+                color={COLORS.green}
+                onClick={() => openSecondScreen("player")}
+              />
+              <ActionBtn
+                icon={<Gamepad2 size={15} />}
+                label="Open the 3D arena on its own"
+                color={COLORS.surfaceRaised}
+                onClick={() => openSecondScreen("arena")}
+              />
+              <ActionBtn
+                icon={<Copy size={15} />}
+                label="Copy the TV link"
+                color={COLORS.surfaceRaised}
+                onClick={() => { try { navigator.clipboard.writeText(secondScreenUrl("tv")); } catch {} }}
+              />
+            </div>
+            <p style={{ color: COLORS.muted, fontSize: 12, marginTop: 10, lineHeight: 1.5 }}>
+              Put <b style={{ color: COLORS.ink }}>the TV display</b> on the projector. While a round
+              is open it shows who is playing, what they are on and the score as it moves. Joining
+              as a player gives you a normal participant session — it will appear on the
+              leaderboard like anybody else, so use a test employee number.
+            </p>
           </Panel>
 
           <Panel title="Mission demo videos" icon={<Projector size={18} color={COLORS.purple} />}>
@@ -1860,6 +1933,43 @@ function AddQuestionForm({ onAdd, busy }) {
 
 /* ------------------------------ PLAYER VIEW ------------------------------ */
 
+/**
+ * The rules for joining, kept out of the click handler so they can be
+ * tested: a name AND an employee number are both required, and one
+ * employee number joins once.
+ *
+ * Returns an error message for the participant, or "" when they are good
+ * to go.
+ */
+export function validateJoinDetails({ name = "", employeeId = "", team = "" } = {},
+  { game, players = [] } = {}) {
+  const trimmedName = String(name).trim();
+  const trimmedId = String(employeeId).trim();
+
+  /* Both are required. The employee number is how a score is matched
+   * back to a real person afterwards, and a results sheet full of first
+   * names is no use to anybody. */
+  if (!trimmedName) return "Please enter your name.";
+  if (!trimmedId) {
+    return "Please enter your employee number — it is needed to record your score.";
+  }
+  if (game?.teamModeEnabled && !team) return "Please choose your team.";
+
+  /* One record per employee number per game. Two records for the same
+   * person means two scores and two places on the leaderboard, so a
+   * second attempt is refused and pointed back at the first device
+   * rather than quietly creating a duplicate. */
+  const clash = players.find((p) =>
+    String(p.gameCode) === String(game?.gameCode)
+    && String(p.employeeId || "").trim().toLowerCase() === trimmedId.toLowerCase());
+  if (clash) {
+    return `Employee number ${trimmedId} has already joined as ${clash.name}. `
+      + "If that is you, carry on from the device you joined on — reopening the "
+      + "link there picks your session up where you left it.";
+  }
+  return "";
+}
+
 function PlayerView({ onExit }) {
   const { game, questions, players, connected, dbError } = useGamePoll();
   const [me, setMe] = useState(null);
@@ -1892,6 +2002,7 @@ function PlayerView({ onExit }) {
     }
   }
   const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState("");
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -1946,12 +2057,21 @@ function PlayerView({ onExit }) {
   }, [players]); // eslint-disable-line
 
   async function join() {
-    if (!form.name.trim()) return;
-    if (game.teamModeEnabled && !form.team) return;
+    const name = form.name.trim();
+    const employeeId = form.employeeId.trim();
+    const problem = validateJoinDetails(
+      { name, employeeId, team: form.team },
+      { game, players: players || [] }
+    );
+    if (problem) {
+      setJoinError(problem);
+      return;
+    }
+    setJoinError("");
     setJoining(true);
     const id = genId();
     const player = {
-      id, name: form.name.trim(), employeeId: form.employeeId.trim(), company: form.company.trim(),
+      id, name, employeeId, company: form.company.trim(),
       team: form.team || null, gameCode: game.gameCode, score: 0, joinedAt: Date.now(), answers: {},
       lifelines: { fifty: false, audience: false, phone: false },
       lifelineData: {},
@@ -2111,17 +2231,26 @@ function PlayerView({ onExit }) {
     return (
       <Centered>
         <Panel title="Join the game" icon={<LogIn size={20} color={COLORS.green} />}>
-          <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 14 }}>Game code <b style={{ color: COLORS.yellow }}>{game.gameCode}</b></p>
-          <input style={inputStyle} placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 14 }}>Game code <b style={{ color: COLORS.yellow }}>{game.gameCode}</b> · your name and employee number are both required</p>
+          <input style={inputStyle} placeholder="Your name *" value={form.name} onChange={(e) => { setForm({ ...form, name: e.target.value }); setJoinError(""); }} />
+          <input style={inputStyle} placeholder="Employee number *" value={form.employeeId} onChange={(e) => { setForm({ ...form, employeeId: e.target.value }); setJoinError(""); }} />
           {game.teamModeEnabled && (
             <select style={inputStyle} value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })}>
               <option value="">Select your team…</option>
               {(game.teams || []).map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           )}
-          <input style={inputStyle} placeholder="Employee ID (optional)" value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })} />
           <input style={inputStyle} placeholder="Company (optional)" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
-          <button disabled={joining || !form.name.trim() || (game.teamModeEnabled && !form.team)} style={btnStyle(COLORS.green)} onClick={join}>{joining ? "Joining…" : "JOIN GAME"}</button>
+          {joinError && (
+            <p style={{ color: COLORS.red, fontSize: 13, lineHeight: 1.5, margin: "-4px 0 10px" }}>{joinError}</p>
+          )}
+          <button
+            disabled={joining || !form.name.trim() || !form.employeeId.trim() || (game.teamModeEnabled && !form.team)}
+            style={btnStyle(COLORS.green)}
+            onClick={join}
+          >
+            {joining ? "Joining…" : "JOIN GAME"}
+          </button>
           <button style={linkBtnStyle} onClick={onExit}>← Back</button>
         </Panel>
         {scannerOpen && <QRScanner onDetected={handleScanDetected} onClose={() => setScannerOpen(false)} />}
@@ -2564,6 +2693,30 @@ function WinnerBlock({ players, me, rank, teamScores = [] }) {
 
 /* -------------------------------- TV VIEW -------------------------------- */
 
+/**
+ * Which screen the TV should be showing.
+ *
+ * Worth naming, because getting it wrong is how the TV ended up with
+ * nothing to project: once the event moved to one plan per participant,
+ * releasing a round set the status to "question", and the TV took that
+ * to mean "show plan row 0 as a multiple-choice question" — row 0 being
+ * a 3D mission. The statuses the host sets by hand still win, because
+ * putting the join code or the race up is a deliberate act; otherwise an
+ * open round means show the room.
+ */
+export function tvScreenFor(game) {
+  if (!game) return "none";
+  const released = Number.isFinite(game.releasedRound) ? game.releasedRound : NOT_RELEASED;
+  if (game.status === "ended") return "results";
+  if (game.status === "leaderboard") return "leaderboard";
+  if (game.status === "demo") return "demo";
+  if (game.status === "lobby") return "lobby";
+  if (released >= 0) return "live";
+  if (game.status === "question") return "question";
+  if (game.status === "reveal") return "reveal";
+  return "lobby";
+}
+
 function TVView({ onExit }) {
   const { game, questions, players, connected, dbError } = useGamePoll();
   const [now, setNow] = useState(Date.now());
@@ -2606,6 +2759,14 @@ function TVView({ onExit }) {
 
   const curQ = questions[game.qIndex ?? 0];
   const millionaireQs = questions.filter((q) => q.round === "millionaire");
+  /* Once a round is open, every participant is working through their own
+   * session rather than all answering one question together, so the TV
+   * shows the room: who is playing, what they are on, and the score as
+   * it moves. The old lock-step displays are kept for the statuses the
+   * host can still put up by hand. */
+  const releasedRound = Number.isFinite(game.releasedRound) ? game.releasedRound : NOT_RELEASED;
+  const screen = tvScreenFor(game);
+  const anySessions = players.some((p) => p.session);
 
   return (
     <div style={{ minHeight: "100vh", padding: "26px 40px", display: "flex", flexDirection: "column" }}>
@@ -2617,8 +2778,8 @@ function TVView({ onExit }) {
         <ConnBadge connected={connected} />
       </div>
 
-      {game.status === "lobby" && <LobbyDisplay game={game} players={players} />}
-      {game.status === "demo" && (
+      {screen === "lobby" && <LobbyDisplay game={game} players={players} />}
+      {screen === "demo" && (
         <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px 30px" }}>
           <Suspense fallback={<div style={{ color: COLORS.muted, textAlign: "center", padding: 40 }}>Loading the briefing…</div>}>
             <MissionDemo
@@ -2630,11 +2791,333 @@ function TVView({ onExit }) {
           </Suspense>
         </div>
       )}
-      {game.status === "question" && curQ && curQ.round === "millionaire" && <MillionaireDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} ladder={millionaireQs} />}
-      {game.status === "question" && curQ && curQ.round !== "millionaire" && <QuestionDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} />}
-      {game.status === "reveal" && curQ && <RevealDisplay q={curQ} qIndex={game.qIndex} total={questions.length} players={players} />}
-      {game.status === "leaderboard" && <LeaderboardDisplay players={sorted} teamScores={teamScores} mediaUrl={game.leaderboardMediaUrl} mediaSettings={game} />}
-      {game.status === "ended" && <WinnerDisplay players={sorted} teamScores={teamScores} />}
+      {screen === "live" && (
+        <LiveSessionDisplay
+          game={game}
+          players={players}
+          plan={questions}
+          releasedRound={releasedRound}
+        />
+      )}
+      {screen === "question" && curQ && curQ.round === "millionaire" && <MillionaireDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} ladder={millionaireQs} />}
+      {screen === "question" && curQ && curQ.round !== "millionaire" && <QuestionDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} />}
+      {screen === "reveal" && curQ && <RevealDisplay q={curQ} qIndex={game.qIndex} total={questions.length} players={players} />}
+      {screen === "leaderboard" && <LeaderboardDisplay players={sorted} teamScores={teamScores} mediaUrl={game.leaderboardMediaUrl} mediaSettings={game} />}
+      {screen === "results" && (anySessions
+        ? <SessionResultsDisplay players={sorted} plan={questions} />
+        : <WinnerDisplay players={sorted} teamScores={teamScores} />)}
+    </div>
+  );
+}
+
+/* ===================== TV: the event as it happens =====================
+ *
+ * One participant, one session: everybody plays the same five rounds but
+ * at their own pace inside each one, so there is no single question to
+ * put on the screen. What the room wants to see is each other — who is
+ * in which mission, who has pulled ahead, and who has finished.
+ *
+ * Everything here is read out of the player records the sessions already
+ * write (`player.session`, stamped on every stage change), so the TV is
+ * a pure spectator: it never writes, and opening it mid-round cannot
+ * disturb anybody's game.
+ */
+
+/** Plain-English description of where one participant has got to. */
+function describeParticipant(player, plan) {
+  const run = player?.session;
+  const stage = run?.stage || STAGES.LOCKED;
+  const item = (plan || [])[run?.itemIndex ?? 0];
+  const roundNumber = (item?.roundIndex ?? 0) + 1;
+  const progress = run ? runProgress(plan, run) : null;
+
+  if (stage === STAGES.DONE) {
+    return { label: "Finished all five rounds", tone: COLORS.yellow, active: false, roundNumber, progress };
+  }
+  if (stage === STAGES.LOCKED) {
+    return { label: "Waiting to start", tone: COLORS.muted, active: false, roundNumber, progress };
+  }
+  if (stage === STAGES.ROUND_DONE) {
+    return { label: `Round ${roundNumber} done — waiting for the next`, tone: COLORS.muted, active: false, roundNumber, progress };
+  }
+  if (stage === STAGES.GAME3D) {
+    return {
+      label: ROUND_MISSION_NAMES[item?.gameId] || "3D mission",
+      sub: "3D MISSION",
+      tone: COLORS.orange, active: true, roundNumber, progress,
+    };
+  }
+  if (stage === STAGES.MILLIONAIRE) {
+    return { label: "Safety Millionaire", sub: "FINALE QUESTION", tone: COLORS.purple, active: true, roundNumber, progress };
+  }
+  return { label: item?.topic || "Safety quiz", sub: "QUIZ QUESTION", tone: COLORS.green, active: true, roundNumber, progress };
+}
+
+function formatPlayMs(ms) {
+  const total = Math.max(0, Math.round((ms || 0) / 1000));
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return `${m}m ${String(sec).padStart(2, "0")}s`;
+}
+
+export function LiveSessionDisplay({ game, players, plan, releasedRound }) {
+  const rounds = planRoundCount(plan) || ROUND_COUNT;
+
+  const rows = useMemo(() => players
+    .map((p) => ({ player: p, where: describeParticipant(p, plan) }))
+    .sort((a, b) => (b.player.score || 0) - (a.player.score || 0)
+      || (a.player.playingMs || 0) - (b.player.playingMs || 0)),
+  [players, plan]);
+
+  const playing = rows.filter((r) => r.where.active);
+  const finished = rows.filter((r) => r.where.active === false && r.player.session?.stage === STAGES.DONE);
+
+  /* The spotlight moves itself round everybody who is actually playing,
+   * so one person is shown large on the TV and then the next. It is on a
+   * timer rather than driven by the host, because the host has an event
+   * to run. */
+  const [spot, setSpot] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setSpot((i) => i + 1), 7000);
+    return () => clearInterval(id);
+  }, []);
+  const featured = playing.length ? playing[spot % playing.length] : rows[0] || null;
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16, minHeight: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <span style={{ background: COLORS.green, color: "#08110a", fontWeight: 900, fontSize: 13, letterSpacing: 1, padding: "7px 14px", borderRadius: 6 }}>
+          LIVE · ROUND {Math.min(releasedRound + 1, rounds)} OF {rounds}
+        </span>
+        <span style={{ fontSize: 15, color: COLORS.muted }}>
+          {playing.length} playing · {finished.length} finished · {players.length} in the room
+        </span>
+        <span style={{ marginLeft: "auto", fontSize: 15, color: COLORS.muted }}>
+          Join code <b style={{ color: COLORS.yellow, letterSpacing: 2 }}>{game.gameCode}</b>
+        </span>
+      </div>
+
+      <div className="csl-tv-live">
+        {/* ---- the spotlight ---- */}
+        <div style={{
+          background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 14,
+          padding: 22, display: "flex", flexDirection: "column", gap: 10, minWidth: 0,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.6, color: COLORS.muted }}>
+            {playing.length ? "NOW PLAYING" : "IN THE ROOM"}
+          </div>
+          {!featured && (
+            <p style={{ color: COLORS.muted, fontSize: 15 }}>Nobody has joined yet.</p>
+          )}
+          {featured && (
+            <>
+              <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1.1, overflowWrap: "anywhere" }}>
+                {featured.player.name}
+              </div>
+              <div style={{ fontSize: 14, color: COLORS.muted }}>
+                {featured.player.employeeId ? `Employee ${featured.player.employeeId}` : "No employee number"}
+                {featured.player.company ? ` · ${featured.player.company}` : ""}
+              </div>
+              <div style={{
+                marginTop: 6, padding: "12px 14px", borderRadius: 10,
+                background: featured.where.tone + "18", border: `1px solid ${featured.where.tone}66`,
+              }}>
+                <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.4, color: featured.where.tone }}>
+                  {featured.where.sub || `ROUND ${featured.where.roundNumber}`}
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, marginTop: 3, lineHeight: 1.25 }}>
+                  {featured.where.label}
+                </div>
+              </div>
+              <div style={{ marginTop: "auto" }}>
+                <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.4, color: COLORS.muted }}>SCORE</div>
+                <div style={{ fontSize: 56, fontWeight: 900, color: COLORS.yellow, letterSpacing: -2, lineHeight: 1 }}>
+                  {featured.player.score || 0}
+                </div>
+                <ProgressRail percent={featured.where.progress?.percent || 0} color={featured.where.tone} />
+                <div style={{ fontSize: 13, color: COLORS.muted, marginTop: 6 }}>
+                  {featured.where.progress
+                    ? `${featured.where.progress.itemsDone} of ${featured.where.progress.totalItems} items done`
+                    : "Not started"}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ---- the whole room ---- */}
+        <div style={{
+          background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 14,
+          padding: 14, overflowY: "auto", minHeight: 0,
+        }}>
+          {rows.length === 0 && (
+            <p style={{ color: COLORS.muted, fontSize: 15, padding: 10 }}>
+              Waiting for participants to join with the code above.
+            </p>
+          )}
+          {rows.map((row, i) => {
+            const isFeatured = featured && row.player.id === featured.player.id;
+            return (
+              <div
+                key={row.player.id}
+                style={{
+                  display: "flex", alignItems: "center", gap: 12,
+                  padding: "10px 12px", borderRadius: 10, marginBottom: 6,
+                  background: isFeatured ? row.where.tone + "1E" : COLORS.surfaceRaised,
+                  border: `1px solid ${isFeatured ? row.where.tone : "transparent"}`,
+                }}
+              >
+                <span style={{
+                  width: 34, textAlign: "center", fontWeight: 900, fontSize: 17,
+                  color: i === 0 ? COLORS.yellow : COLORS.muted, flexShrink: 0,
+                }}>
+                  {i + 1}
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontWeight: 800, fontSize: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {row.player.name}
+                    {row.player.employeeId && (
+                      <span style={{ color: COLORS.muted, fontWeight: 600, fontSize: 13 }}> · {row.player.employeeId}</span>
+                    )}
+                  </span>
+                  <span style={{ display: "block", fontSize: 13, color: row.where.tone, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {row.where.active && <span style={{ fontWeight: 900 }}>R{row.where.roundNumber} · </span>}
+                    {row.where.label}
+                  </span>
+                </span>
+                <span style={{ width: 110, flexShrink: 0 }}>
+                  <ProgressRail percent={row.where.progress?.percent || 0} color={row.where.tone} />
+                </span>
+                <b style={{ fontSize: 20, color: COLORS.yellow, width: 76, textAlign: "right", flexShrink: 0 }}>
+                  {row.player.score || 0}
+                </b>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProgressRail({ percent, color }) {
+  return (
+    <div style={{ height: 7, background: COLORS.bg, borderRadius: 4, overflow: "hidden" }}>
+      <div style={{
+        width: `${Math.max(0, Math.min(100, percent))}%`, height: "100%",
+        background: color || COLORS.green, transition: "width .4s ease",
+      }} />
+    </div>
+  );
+}
+
+/* ------------------------- TV: the final result -------------------------
+ *
+ * The scored breakdown, not just a winner: each part of the event is
+ * worth points for different reasons, and the room should be able to see
+ * where their score came from.
+ */
+export function SessionResultsDisplay({ players, plan }) {
+  const rows = useMemo(() => players.map((p) => {
+    const summary = runSummary(plan, p.session);
+    return {
+      player: p,
+      totals: summary.totals,
+      correct: summary.correctTotal,
+      questionTotal: summary.questionTotal,
+      missions: summary.gamesCompleted,
+      missionTotal: summary.gameTotal,
+      playingMs: p.playingMs || runPlayingMs(p.session),
+    };
+  }).sort((a, b) => (b.totals.total || 0) - (a.totals.total || 0)
+    || (a.playingMs || 0) - (b.playingMs || 0)), [players, plan]);
+
+  const podium = rows.slice(0, 3);
+  const PODIUM_COLORS = [COLORS.yellow, "#C9CED4", "#CD7F32"];
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16, minHeight: 0 }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: 2, color: COLORS.muted }}>
+          CONSTRUCTION SAFETY LEAGUE · CASAGRAND ARIA
+        </div>
+        <h1 style={{ fontSize: 40, fontWeight: 900, margin: "6px 0 0", letterSpacing: -1 }}>FINAL RESULTS</h1>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.max(1, podium.length)}, 1fr)`, gap: 14 }}>
+        {podium.map((row, i) => (
+          <div key={row.player.id} style={{
+            background: COLORS.surface, borderRadius: 14, padding: "18px 16px",
+            border: `2px solid ${PODIUM_COLORS[i]}`, textAlign: "center",
+          }}>
+            <Crown size={i === 0 ? 30 : 22} color={PODIUM_COLORS[i]} />
+            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.4, color: PODIUM_COLORS[i], marginTop: 4 }}>
+              {["WINNER", "SECOND", "THIRD"][i]}
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 900, margin: "6px 0 2px", overflowWrap: "anywhere" }}>
+              {row.player.name}
+            </div>
+            <div style={{ fontSize: 13, color: COLORS.muted }}>
+              {row.player.employeeId ? `Employee ${row.player.employeeId}` : "—"}
+            </div>
+            <div style={{ fontSize: 42, fontWeight: 900, color: PODIUM_COLORS[i], letterSpacing: -1.5, marginTop: 8, lineHeight: 1 }}>
+              {row.totals.total}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{
+        flex: 1, background: COLORS.surface, border: `1px solid ${COLORS.line}`,
+        borderRadius: 14, padding: 14, overflow: "auto", minHeight: 0,
+      }}>
+        <div className="csl-tv-sheet" style={{
+          display: "grid", gridTemplateColumns: "44px 1.6fr 90px 90px 90px 80px 100px 92px",
+          gap: 8, padding: "0 10px 8px", fontSize: 10.5, fontWeight: 900,
+          letterSpacing: 1, color: COLORS.muted, borderBottom: `1px solid ${COLORS.line}`,
+        }}>
+          <span>#</span>
+          <span>PARTICIPANT</span>
+          <span style={{ textAlign: "right" }}>MISSIONS</span>
+          <span style={{ textAlign: "right" }}>QUIZ</span>
+          <span style={{ textAlign: "right" }}>FINALE</span>
+          <span style={{ textAlign: "right" }}>SPEED</span>
+          <span style={{ textAlign: "right" }}>TIME</span>
+          <span style={{ textAlign: "right" }}>TOTAL</span>
+        </div>
+        {rows.length === 0 && (
+          <p style={{ color: COLORS.muted, fontSize: 15, padding: 12 }}>Nobody took part.</p>
+        )}
+        {rows.map((row, i) => (
+          <div
+            key={row.player.id}
+            className="csl-tv-sheet"
+            style={{
+              display: "grid", gridTemplateColumns: "44px 1.6fr 90px 90px 90px 80px 100px 92px",
+              gap: 8, alignItems: "center", padding: "9px 10px", borderRadius: 9,
+              marginTop: 5, background: i < 3 ? COLORS.surfaceRaised : "transparent",
+              fontSize: 15,
+            }}
+          >
+            <span style={{ fontWeight: 900, color: i === 0 ? COLORS.yellow : COLORS.muted }}>{i + 1}</span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {row.player.name}
+              </span>
+              <span style={{ display: "block", fontSize: 12, color: COLORS.muted }}>
+                {row.player.employeeId || "no employee number"}
+                {" · "}{row.missions}/{row.missionTotal} missions · {row.correct}/{row.questionTotal} correct
+              </span>
+            </span>
+            <span style={{ textAlign: "right", color: COLORS.orange, fontWeight: 700 }}>{row.totals.game3d}</span>
+            <span style={{ textAlign: "right", color: COLORS.green, fontWeight: 700 }}>{row.totals.quiz}</span>
+            <span style={{ textAlign: "right", color: COLORS.purple, fontWeight: 700 }}>{row.totals.millionaire}</span>
+            <span style={{ textAlign: "right", color: COLORS.yellow, fontWeight: 700 }}>{row.totals.speed}</span>
+            <span style={{ textAlign: "right", color: COLORS.muted, fontSize: 13 }}>{formatPlayMs(row.playingMs)}</span>
+            <b style={{ textAlign: "right", fontSize: 19, color: COLORS.yellow }}>{row.totals.total}</b>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

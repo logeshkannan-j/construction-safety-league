@@ -823,6 +823,187 @@ section("Hooks never sit below an early return");
     solo.offenders.length === 0, solo.offenders.slice(0, 3).join(" | "));
 }
 
+section("Joining needs a name and an employee number");
+
+{
+  const { validateJoinDetails } = await server.ssrLoadModule("/src/App.jsx");
+  const game = { gameCode: "123456" };
+  const existing = [{ id: "a", name: "Ravi", employeeId: "EMP-1001", gameCode: "123456" }];
+
+  check("a name on its own is not enough",
+    validateJoinDetails({ name: "Suresh" }, { game, players: [] }).includes("employee number"),
+    validateJoinDetails({ name: "Suresh" }, { game, players: [] }));
+  check("an employee number on its own is not enough",
+    validateJoinDetails({ employeeId: "EMP-2002" }, { game, players: [] }).includes("name"));
+  check("whitespace does not pass for a name",
+    validateJoinDetails({ name: "   ", employeeId: "EMP-2002" }, { game, players: [] }) !== "");
+  check("whitespace does not pass for an employee number",
+    validateJoinDetails({ name: "Suresh", employeeId: "  " }, { game, players: [] }) !== "");
+  check("both together are accepted",
+    validateJoinDetails({ name: "Suresh", employeeId: "EMP-2002" }, { game, players: [] }) === "",
+    validateJoinDetails({ name: "Suresh", employeeId: "EMP-2002" }, { game, players: [] }));
+
+  /* One employee number, one record. A second record for the same person
+   * is a second score and a second place on the leaderboard. */
+  const dup = validateJoinDetails({ name: "Someone else", employeeId: "EMP-1001" },
+    { game, players: existing });
+  check("an employee number that has already joined is refused",
+    dup.includes("already joined") && dup.includes("Ravi"), dup);
+  check("the refusal is case-insensitive",
+    validateJoinDetails({ name: "x", employeeId: "emp-1001" }, { game, players: existing }) !== "");
+  check("the same number in a DIFFERENT game is fine",
+    validateJoinDetails({ name: "x", employeeId: "EMP-1001" },
+      { game: { gameCode: "999999" }, players: existing }) === "");
+  check("team mode still asks for a team",
+    validateJoinDetails({ name: "x", employeeId: "EMP-3003" },
+      { game: { gameCode: "123456", teamModeEnabled: true }, players: [] }).includes("team"));
+}
+
+section("The TV shows the live session and the final result");
+
+/* Releasing a round used to leave the TV with nothing to project: the
+ * game status goes to "question", and the TV tried to render plan row 0
+ * — a 3D mission — as a multiple-choice question. These render the two
+ * new displays with a room part-way through Round 2. */
+{
+  const { LiveSessionDisplay, SessionResultsDisplay, tvScreenFor } =
+    await server.ssrLoadModule("/src/App.jsx");
+
+  /* ---- which screen the TV picks ----
+   *
+   * This is the part that was broken: once a round is open there is no
+   * one question to show, so "question" has to mean "show the room". */
+  check("with no game the TV shows nothing",
+    tvScreenFor(null) === "none");
+  check("before Round 1 the TV shows the join code",
+    tvScreenFor({ status: "lobby", releasedRound: -1 }) === "lobby");
+  check("releasing a round puts the live board up",
+    tvScreenFor({ status: "question", releasedRound: 0 }) === "live",
+    tvScreenFor({ status: "question", releasedRound: 0 }));
+  check("it stays up for every later round",
+    tvScreenFor({ status: "question", releasedRound: 4 }) === "live");
+  check("the host can still put the briefing up mid-event",
+    tvScreenFor({ status: "demo", releasedRound: 2 }) === "demo");
+  check("the host can still put the race up mid-event",
+    tvScreenFor({ status: "leaderboard", releasedRound: 2 }) === "leaderboard");
+  check("the host can still put the join code back up",
+    tvScreenFor({ status: "lobby", releasedRound: 2 }) === "lobby");
+  check("ending the event shows the results",
+    tvScreenFor({ status: "ended", releasedRound: 4 }) === "results");
+  /* The old lock-step mode is still reachable for a game that never
+   * released a round, so a legacy record does not lose its display. */
+  check("a game with no round released still uses the old question screen",
+    tvScreenFor({ status: "question", releasedRound: -1 }) === "question");
+  check("and its reveal screen",
+    tvScreenFor({ status: "reveal", releasedRound: -1 }) === "reveal");
+
+  const { buildEventPlan, createRun, STAGES } = await server.ssrLoadModule("/src/session.js");
+
+  const plan = buildEventPlan({});
+  // Row indexes for the start of each stage type in round 2.
+  const round2 = plan.findIndex((item) => item.roundIndex === 1);
+
+  const runAt = (itemIndex, stage) => ({
+    ...createRun(plan, { now: 0 }),
+    itemIndex,
+    stage,
+    answers: Object.fromEntries(
+      Array.from({ length: Math.max(0, itemIndex - 2) }, (_, i) => [i, { points: 100, correct: true }])),
+    games: { 0: { points: 700, completed: true } },
+    rounds: { 0: { elapsedMs: 240000, bonus: 180 } },
+  });
+
+  const people = [
+    { id: "p1", name: "Ravi Kumar", employeeId: "EMP-1001", company: "Casagrand",
+      gameCode: "123456", score: 2400, playingMs: 240000,
+      session: runAt(round2, STAGES.GAME3D) },
+    { id: "p2", name: "Suresh Babu", employeeId: "EMP-1002",
+      gameCode: "123456", score: 2100, playingMs: 262000,
+      session: runAt(round2 + 1, STAGES.QUIZ) },
+    { id: "p3", name: "Meena R", employeeId: "EMP-1003",
+      gameCode: "123456", score: 1800, playingMs: 300000,
+      session: runAt(round2 + 4, STAGES.MILLIONAIRE) },
+    { id: "p4", name: "Arun P", employeeId: "EMP-1004",
+      gameCode: "123456", score: 1500, playingMs: 210000,
+      session: { ...runAt(round2, STAGES.ROUND_DONE) } },
+    // Somebody who has joined but whose session has not been dealt yet:
+    // the TV must not throw on them.
+    { id: "p5", name: "No Session", employeeId: "EMP-1005", gameCode: "123456", score: 0 },
+  ];
+
+  const probe = document.createElement("div");
+  document.body.appendChild(probe);
+  const probeRoot = ReactDOMClient.createRoot(probe);
+  const probeText = () => (probe.textContent || "").replace(/\s+/g, " ").trim();
+  /* Counted from HERE. An earlier section deliberately throws inside an
+   * error boundary to prove a crash is never a blank page, so the error
+   * list is not empty by the time this runs. */
+  const errorsBefore = reactErrors.length;
+
+  // ---- the live board ----
+  probeRoot.render(React.createElement(LiveSessionDisplay, {
+    game: { gameCode: "123456", status: "question", releasedRound: 1 },
+    players: people,
+    plan,
+    releasedRound: 1,
+  }));
+  await settle(300);
+  let t = probeText();
+
+  check("the live board renders", t.length > 40, `${t.length} chars: ${t.slice(0, 100)}`);
+  check("it says which round is open", /ROUND 2 OF 5/.test(t), t.slice(0, 120));
+  check("it names everybody in the room",
+    people.every((p) => t.includes(p.name)),
+    people.filter((p) => !t.includes(p.name)).map((p) => p.name).join(", "));
+  check("it shows employee numbers, so a name on the screen is a person",
+    t.includes("EMP-1001") && t.includes("EMP-1005"));
+  check("it says what the player in the spotlight is actually doing",
+    /NOW PLAYING/.test(t) && /3D MISSION|QUIZ QUESTION|FINALE QUESTION/.test(t), t.slice(0, 200));
+  check("it names the 3D mission somebody is in",
+    /Tower Crane|Safety Mission|Safest Tower|Escape|Emergency/i.test(t), t.slice(0, 240));
+  check("it counts who is playing and who has finished",
+    /3 playing/.test(t), t.slice(0, 200));
+  check("it shows the live scores", t.includes("2400") && t.includes("1500"));
+  check("it shows the join code so latecomers can still get in",
+    t.includes("123456"));
+  check("a participant with no session yet does not break it",
+    t.includes("No Session") && /Waiting to start/.test(t), t.slice(0, 200));
+  check("no React errors rendering the live board",
+    reactErrors.length === errorsBefore,
+    reactErrors.slice(errorsBefore).join(" | "));
+
+  // ---- the final result ----
+  const finished = people.map((p) => ({
+    ...p,
+    session: p.session ? { ...p.session, stage: STAGES.DONE, itemIndex: plan.length - 1 } : undefined,
+  }));
+  probeRoot.render(React.createElement(SessionResultsDisplay, {
+    players: [...finished].sort((a, b) => (b.score || 0) - (a.score || 0)),
+    plan,
+  }));
+  await settle(300);
+  t = probeText();
+
+  check("the final results render", /FINAL RESULTS/.test(t), t.slice(0, 120));
+  check("the podium names a winner", /WINNER/.test(t) && t.includes("Ravi Kumar"), t.slice(0, 200));
+  check("second and third are named too", /SECOND/.test(t) && /THIRD/.test(t));
+  check("every participant is on the sheet",
+    finished.every((p) => t.includes(p.name)),
+    finished.filter((p) => !t.includes(p.name)).map((p) => p.name).join(", "));
+  check("the sheet carries employee numbers",
+    finished.filter((p) => p.employeeId).every((p) => t.includes(p.employeeId)));
+  check("the score is broken down, not just a total",
+    /MISSIONS/.test(t) && /QUIZ/.test(t) && /FINALE/.test(t) && /SPEED/.test(t) && /TOTAL/.test(t),
+    t.slice(0, 240));
+  check("playing time is shown, which is what breaks a tie", /\d+m \d\ds/.test(t), t.slice(0, 240));
+  check("no React errors rendering the results",
+    reactErrors.length === errorsBefore,
+    reactErrors.slice(errorsBefore).join(" | "));
+
+  probeRoot.unmount();
+  probe.remove();
+}
+
 /* ------------------------------- report ------------------------------- */
 
 console.error = origError;

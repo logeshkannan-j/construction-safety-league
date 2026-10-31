@@ -239,6 +239,14 @@ export default function SoloSession({
     );
   }
 
+  /* The host has closed the event. Everybody sees their result, whether
+   * or not they worked through all five rounds — otherwise the people
+   * who were still mid-round are left on a waiting screen that will
+   * never move while the results go up on the TV. */
+  if (game?.status === "ended") {
+    return <SessionResult me={me} plan={plan} players={players} onExit={onExit} closedByHost />;
+  }
+
   if (waiting) {
     const nextRoundIndex = stage === STAGES.ROUND_DONE ? index + 1 : index;
     return (
@@ -704,7 +712,7 @@ function QuestionReveal({ question, result, isFinale, onNext, isLast, endsRound,
   );
 }
 
-function SessionResult({ me, plan = [], players, onExit }) {
+function SessionResult({ me, plan = [], players, onExit, closedByHost = false }) {
   const summary = runSummary(plan, me.session);
   const sorted = useMemo(
     () => [...(players || [])].sort((a, b) => (b.score || 0) - (a.score || 0)),
@@ -731,8 +739,17 @@ function SessionResult({ me, plan = [], players, onExit }) {
       <div style={{ maxWidth: 520, margin: "0 auto" }}>
         <div style={{ textAlign: "center", padding: "22px 0 18px" }}>
           <Crown size={44} color={COLORS.yellow} />
-          <h1 style={{ fontSize: 24, fontWeight: 900, margin: "12px 0 4px" }}>Session complete</h1>
-          <p style={{ color: COLORS.muted, fontSize: 13, margin: 0 }}>{me.name}</p>
+          <h1 style={{ fontSize: 24, fontWeight: 900, margin: "12px 0 4px" }}>
+            {closedByHost ? "Final result" : "Session complete"}
+          </h1>
+          <p style={{ color: COLORS.muted, fontSize: 13, margin: 0 }}>
+            {me.name}{me.employeeId ? ` · ${me.employeeId}` : ""}
+          </p>
+          {closedByHost && (
+            <p style={{ color: COLORS.muted, fontSize: 12, margin: "6px 0 0" }}>
+              The host has closed the event. This is your score as it stands.
+            </p>
+          )}
           <div style={{ fontSize: 52, fontWeight: 900, color: COLORS.yellow, letterSpacing: -2, marginTop: 14, lineHeight: 1 }}>
             {totals.total}
           </div>
