@@ -101,7 +101,7 @@ Open the deployed URL on:
 Everyone must open the *same deployed URL* — that's what makes them share
 one Firebase database and therefore one game.
 
-## One session: five rounds
+## One event, one plan
 
 A participant enters the game code, submits their details **once**, and plays five
 rounds. Each round is a 3D mission, then three quiz questions, then one Safety
@@ -117,11 +117,17 @@ ROUND 5   a 3D mission  →  3 × quiz  →  1 × millionaire
                5 missions + 15 quiz + 5 finale = 25 items
 ```
 
-**You choose how many quiz questions each round holds** — 1, 2, 3 or 4 — in
-Admin → *How participants play* → **What each round contains**. The 3D mission and the
-finale question are always one each, so the session is 5 × (2 + your number) items.
-Changing it affects people who join from then on; anyone already playing keeps the
-paper they were dealt.
+**The 3D missions and the questions are ONE list.** In Admin → **Event plan** you see
+every row of it — a `3D` row, then its quiz rows, then its finale row — and you can
+drag to reorder, edit any question, delete rows, or press **Reshuffle** to deal a new
+plan. A `3D` row starts a new round, so moving one re-rounds the event.
+
+Everybody plays that same list. The only thing that differs per participant is the
+order of the four options inside each question, which is dealt when they join and
+survives a refresh.
+
+**You choose how many quiz questions a round holds** — 1, 2, 3 or 4 — in Admin →
+**The event plan**; press *Reshuffle* to deal a plan in that shape.
 
 **Everybody plays all five missions, but not in the same order.** The missions are
 dealt to each participant in their own sequence, so Round 3 is the crane for one
@@ -147,12 +153,9 @@ speed, because a 3D mission takes a different amount of time for everyone.
   one total, which is what the TV race and the leaderboard show. Each mission is
   normalised to 1,000 points so the 3D half cannot swamp the written half.
 
-In Admin → **How participants play**, choose:
-
-| Mode | What participants get |
-|---|---|
-| **Integrated session** (default for new games) | The five rounds above, released one at a time |
-| **Live event** | The original host-paced format: 10 + 5 questions, you advance each one and the TV shows it to the room |
+There is no "live event mode" and no "integrated session" any more — there was never a
+good reason for the 3D missions to live somewhere the admin could not see them. One
+event, one plan, host-released rounds.
 
 Admin → **Game status** shows the round timeline, how many people are in the 3D
 mission / on the quiz / on the finale, and how many are waiting on you.
@@ -200,7 +203,7 @@ device testing checklist are in **[ARENA.md](ARENA.md)**.
 ```bash
 npm install
 npm run dev
-npm test     # 495 tests: the 3D games, the question bank, rounds, scoring,
+npm test     # 472 tests: the 3D games, the question bank, rounds, scoring,
              # rules, and that the app actually renders
 ```
 

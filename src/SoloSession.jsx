@@ -6,12 +6,12 @@ import {
 } from "lucide-react";
 import { COLORS, inputStyle, btnStyle, linkBtnStyle } from "./theme.js";
 import {
-  STAGES, QUIZ_SECONDS, MILLIONAIRE_SECONDS, ROUND_COUNT, NOT_RELEASED,
-  ROUND_GAMES, ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS,
-  createSession, isSessionValid, hydrateSession, answerQuestion,
-  advanceQuestion, releaseRound, completeGame3d, skipGame3d, currentRound,
-  currentQuestion, quizPerRoundOf, totalItems, itemsPerRound, MQ_PER_ROUND,
-  sectionTotals, sessionSummary, sessionProgress, questionRemainingMs,
+  STAGES, QUIZ_SECONDS, MILLIONAIRE_SECONDS, NOT_RELEASED,
+  ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS,
+  ITEM_GAME3D, ITEM_MILLIONAIRE,
+  createRun, isRunValid, currentItem, answerItem, advanceRun, releaseRun,
+  completeItemGame, skipItemGame, runRoundIndex, planRoundCount, planSummary,
+  runTotals, runSummary, runProgress, itemRemainingMs,
 } from "./session.js";
 
 // The 3D game runs inside the Arena's own shell, loaded on demand so a
@@ -23,7 +23,7 @@ const GameShell = lazy(() => import("./arena/ui/GameShell.jsx"));
  *
  *  One game code, one set of details, five rounds:
  *
- *      ROUND n:  3D mission  →  3 × MCQ  →  1 finale question
+ *      ONE plan: 3D missions and questions in a single ordered list
  *
  *  The host releases each round (game.releasedRound); between rounds the
  *  participant waits. Inside a round they work at their own speed.
@@ -36,7 +36,7 @@ const GameShell = lazy(() => import("./arena/ui/GameShell.jsx"));
  * ------------------------------------------------------------------ */
 
 export default function SoloSession({
-  me, game, players, connected, serverOffset = 0, onPersist, onExit,
+  me, game, plan = [], players, connected, serverOffset = 0, onPersist, onExit,
 }) {
   const [now, setNow] = useState(() => Date.now() + serverOffset);
   const [reveal, setReveal] = useState(null);
@@ -44,11 +44,9 @@ export default function SoloSession({
   const timedOutRef = useRef(new Set());
 
   const session = me.session;
-  const valid = isSessionValid(session);
-  const questions = useMemo(
-    () => (valid ? hydrateSession(session) : { rounds: [], quiz: [], millionaire: [] }),
-    [session, valid]
-  );
+  const valid = isRunValid(plan, session);
+  const planInfo = useMemo(() => planSummary(plan), [plan]);
+  const roundCount = planInfo.rounds;
   const releasedRound = Number.isFinite(game?.releasedRound) ? game.releasedRound : NOT_RELEASED;
 
   /* ----------------------------- clock ----------------------------- */
@@ -63,7 +61,7 @@ export default function SoloSession({
   // Writes the whole player record, which is how the existing app
   // already persists a player. `score` stays the combined total.
   const persist = useCallback((nextSession, extra = {}) => {
-    const totals = sectionTotals(nextSession);
+    const totals = runTotals(plan, nextSession);
     const updated = {
       ...me,
       ...extra,
@@ -73,51 +71,51 @@ export default function SoloSession({
     };
     onPersist(updated);
     return updated;
-  }, [me, onPersist]);
+  }, [me, onPersist, plan]);
 
   /* ------------------------- answer handling ------------------------- */
 
   const stage = session?.stage || STAGES.LOCKED;
-  const isFinale = stage === STAGES.MILLIONAIRE;
-  const sectionKey = isFinale ? "mq" : "quiz";
-  const index = session?.roundIndex || 0;
-  const quizStep = session?.quizStep || 0;
-  const perRound = valid ? quizPerRoundOf(session) : 1;
-  const round = valid ? questions.rounds[index] : null;
-  // A round holds several MCQs, so the question depends on the step.
-  const question = valid ? currentQuestion(session) : null;
-  // MCQ answers are keyed "round:step"; finale answers by round.
-  const answerKey = isFinale ? index : `${index}:${quizStep}`;
-  const answered = session?.answers?.[sectionKey]?.[answerKey];
-  const remainingMs = questionRemainingMs(session, now);
+  const item = valid ? currentItem(plan, session) : null;
+  const isFinale = item?.round === ITEM_MILLIONAIRE;
+  const index = session?.roundIndex ?? runRoundIndex(plan, session);
+  const itemIndex = session?.itemIndex ?? 0;
+  const question = item && item.round !== ITEM_GAME3D ? item : null;
+  const answered = session?.answers?.[itemIndex];
+  const remainingMs = itemRemainingMs(plan, session, now);
+  // Where this question sits within its own round, for the header.
+  const roundItems = useMemo(
+    () => plan.filter((p) => (p.roundIndex ?? 0) === (item?.roundIndex ?? 0) && p.round !== ITEM_GAME3D),
+    [plan, item?.roundIndex]
+  );
+  const stepInRound = roundItems.findIndex((_, i) =>
+    plan.indexOf(roundItems[i]) === itemIndex) + 1;
 
   const submit = useCallback((pickedIndex) => {
     if (!question || answered !== undefined) return;
-    const step = answerQuestion(session, {
-      section: sectionKey, pickedIndex, now: Date.now() + serverOffset,
-    });
+    const step = answerItem(plan, session, { pickedIndex, now: Date.now() + serverOffset });
     if (!step.changed) return;
-    persist(step.session);
+    persist(step.run);
     setReveal({ ...step.result, question });
     setLifelineView({ audience: false, hint: false });
-  }, [answered, persist, question, sectionKey, serverOffset, session]);
+  }, [answered, persist, plan, question, serverOffset, session]);
 
   // Running out of time records a zero-score answer rather than leaving
   // the participant stuck on a dead question.
   useEffect(() => {
     if (!question || answered !== undefined) return;
     if (remainingMs > 0) return;
-    const key = `${sectionKey}:${answerKey}`;
+    const key = String(itemIndex);
     if (timedOutRef.current.has(key)) return;
     timedOutRef.current.add(key);
     submit(-1);
-  }, [answered, index, question, remainingMs, sectionKey, submit]);
+  }, [answered, itemIndex, question, remainingMs, submit]);
 
   const next = useCallback(() => {
     setReveal(null);
     setLifelineView({ audience: false, hint: false });
-    persist(advanceQuestion(session, { now: Date.now() + serverOffset }));
-  }, [persist, serverOffset, session]);
+    persist(advanceRun(plan, session, { now: Date.now() + serverOffset }));
+  }, [persist, plan, serverOffset, session]);
 
   /* --------------------------- focus hygiene --------------------------- */
 
@@ -136,7 +134,7 @@ export default function SoloSession({
     if (active && typeof active.blur === "function" && active !== document.body) {
       active.blur();
     }
-  }, [session?.roundIndex, session?.stage, reveal]);
+  }, [session?.itemIndex, session?.stage, reveal]);
 
   /* ------------------------- host-released rounds ------------------------- */
 
@@ -147,9 +145,9 @@ export default function SoloSession({
   const waiting = stage === STAGES.LOCKED || stage === STAGES.ROUND_DONE;
   useEffect(() => {
     if (!valid || !waiting) return;
-    const step = releaseRound(session, { releasedRound, now: Date.now() + serverOffset });
-    if (step.changed) persist(step.session);
-  }, [persist, releasedRound, serverOffset, session, valid, waiting]);
+    const step = releaseRun(plan, session, { releasedRound, now: Date.now() + serverOffset });
+    if (step.changed) persist(step.run);
+  }, [persist, plan, releasedRound, serverOffset, session, valid, waiting]);
 
   /* ---------------------------- lifelines ---------------------------- */
 
@@ -183,21 +181,18 @@ export default function SoloSession({
     let total = 0;
     (players || []).forEach((p) => {
       if (p.id === me.id || !p.session) return;
-      const theirQuestions = isSessionValid(p.session) ? hydrateSession(p.session) : null;
-      if (!theirQuestions) return;
-      const theirList = isFinale ? theirQuestions.millionaire : theirQuestions.quiz;
-      theirList.forEach((q, i) => {
-        if (q.id !== question.id) return;
-        const a = p.session.answers?.[isFinale ? "mq" : "quiz"]?.[i];
-        if (!a || a.pickedIndex === undefined || a.pickedIndex < 0) return;
-        // Their options may be in a different order, so compare by text.
-        const pickedText = q.options[a.pickedIndex];
-        const slot = question.options.indexOf(pickedText);
-        if (slot >= 0) { counts[slot] += 1; total += 1; }
-      });
+      // Everyone runs the SAME plan, so the row index is shared — only
+      // the option order differs, which is why the pick is compared by
+      // text rather than by index.
+      const a = p.session.answers?.[itemIndex];
+      if (!a || a.pickedIndex === undefined || a.pickedIndex < 0) return;
+      const theirs = currentItem(plan, { ...p.session, itemIndex });
+      const pickedText = theirs?.options?.[a.pickedIndex];
+      const slot = pickedText === undefined ? -1 : question.options.indexOf(pickedText);
+      if (slot >= 0) { counts[slot] += 1; total += 1; }
     });
     return { counts, total };
-  }, [isFinale, lifelineView.audience, me.id, players, question]);
+  }, [itemIndex, lifelineView.audience, me.id, plan, players, question]);
 
   /* ------------------------------ stages ------------------------------ */
 
@@ -212,7 +207,7 @@ export default function SoloSession({
           </p>
           <button
             style={btnStyle(COLORS.yellow)}
-            onClick={() => persist(createSession({ now: Date.now() + serverOffset }))}
+            onClick={() => persist(createRun(plan, { now: Date.now() + serverOffset }))}
           >
             Deal my questions
           </button>
@@ -229,7 +224,9 @@ export default function SoloSession({
         me={me}
         connected={connected}
         session={session}
-        roundIndex={Math.min(nextRoundIndex, ROUND_COUNT - 1)}
+        roundIndex={Math.min(nextRoundIndex, roundCount - 1)}
+        plan={plan}
+        roundCount={roundCount}
         justFinishedRound={stage === STAGES.ROUND_DONE ? index : null}
         onExit={onExit}
       />
@@ -244,10 +241,13 @@ export default function SoloSession({
           roundNumber={index + 1}
           me={me}
           onComplete={(result) => {
-            const outcome = completeGame3d(session, result, { now: Date.now() + serverOffset });
-            persist(outcome.session);
+            const outcome = completeItemGame(plan, session, result, { now: Date.now() + serverOffset });
+            persist(advanceRun(plan, outcome.run, { now: Date.now() + serverOffset }));
           }}
-          onSkip={() => persist(skipGame3d(session, { now: Date.now() + serverOffset }))}
+          onSkip={() => {
+            const skipped = skipItemGame(plan, session, { now: Date.now() + serverOffset });
+            persist(advanceRun(plan, skipped, { now: Date.now() + serverOffset }));
+          }}
         />
       </Suspense>
     );
@@ -259,7 +259,7 @@ export default function SoloSession({
 
   /* --------------------------- question view --------------------------- */
 
-  const progress = sessionProgress(session);
+  const progress = runProgress(plan, session);
   const limitSeconds = isFinale ? MILLIONAIRE_SECONDS : QUIZ_SECONDS;
   const remainingSeconds = Math.ceil(remainingMs / 1000);
   const showReveal = answered !== undefined;
@@ -272,8 +272,8 @@ export default function SoloSession({
         connected={connected}
         progress={progress}
         label={isFinale
-          ? `Round ${index + 1} of ${ROUND_COUNT} · Safety Millionaire`
-          : `Round ${index + 1} of ${ROUND_COUNT} · Question ${quizStep + 1} of ${perRound}`}
+          ? `Round ${index + 1} of ${roundCount} · Safety Millionaire`
+          : `Round ${index + 1} of ${roundCount} · Question ${stepInRound} of ${roundItems.length}`}
       />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "18px 0" }}>
@@ -400,10 +400,10 @@ export default function SoloSession({
               result={revealData}
               isFinale={isFinale}
               onNext={next}
-              isLast={isFinale && index === ROUND_COUNT - 1}
+              isLast={itemIndex >= plan.length - 1}
               endsRound={isFinale}
               roundNumber={index + 1}
-              moreInRound={!isFinale && quizStep + 1 < perRound}
+              moreInRound={!isFinale && stepInRound < roundItems.length}
             />
           )}
         </div>
@@ -445,10 +445,15 @@ function SessionHeader({ me, connected, progress, label }) {
  * where a participant sits until `game.releasedRound` reaches them —
  * before Round 1, and after finishing each round's finale question.
  */
-function RoundWaiting({ me, connected, session, roundIndex, justFinishedRound, onExit }) {
-  const progress = sessionProgress(session);
-  const totals = sectionTotals(session);
-  const gameId = ROUND_GAMES[roundIndex];
+function RoundWaiting({ me, connected, session, plan = [], roundCount = 1, roundIndex, justFinishedRound, onExit }) {
+  const progress = runProgress(plan, session);
+  const totals = runTotals(plan, session);
+  // The mission that OPENS the round being waited on, read from the
+  // plan rather than assumed — the admin may have reordered it.
+  const gameId = plan.find((i) => (i.roundIndex ?? 0) === roundIndex && i.round === ITEM_GAME3D)?.gameId;
+  const roundQuestions = plan.filter((i) => (i.roundIndex ?? 0) === roundIndex && i.round !== ITEM_GAME3D);
+  const quizCount = roundQuestions.filter((i) => i.round !== ITEM_MILLIONAIRE).length;
+  const finaleCount = roundQuestions.length - quizCount;
   const isFirst = justFinishedRound === null && roundIndex === 0;
 
   return (
@@ -480,9 +485,8 @@ function RoundWaiting({ me, connected, session, roundIndex, justFinishedRound, o
                   Welcome, {me.name}
                 </h1>
                 <p style={{ color: COLORS.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
-                  {ROUND_COUNT} rounds. Each one is a 3D mission, then {quizPerRoundOf(session)} quiz
-                  questions, then a Safety Millionaire question — {totalItems(quizPerRoundOf(session))} items
-                  scored into one result. Your questions are already dealt and they are yours alone.
+                  {roundCount} rounds of 3D missions and questions — {plan.length} items in all,
+                  scored into one result. The answer order inside every question is shuffled for you.
                 </p>
               </>
             ) : (
@@ -492,7 +496,7 @@ function RoundWaiting({ me, connected, session, roundIndex, justFinishedRound, o
                   Round {(justFinishedRound ?? 0) + 1} complete
                 </h1>
                 <p style={{ color: COLORS.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
-                  {totals.total} points so far, across {progress.itemsDone} of {totalItems(quizPerRoundOf(session))} items.
+                  {totals.total} points so far, across {progress.itemsDone} of {plan.length} items.
                 </p>
               </>
             )}
@@ -503,7 +507,7 @@ function RoundWaiting({ me, connected, session, roundIndex, justFinishedRound, o
             borderRadius: 12, padding: "14px 16px", marginBottom: 12,
           }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, letterSpacing: 0.8, marginBottom: 8 }}>
-              NEXT UP · ROUND {roundIndex + 1} OF {ROUND_COUNT}
+              NEXT UP · ROUND {roundIndex + 1} OF {roundCount}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{
@@ -523,8 +527,8 @@ function RoundWaiting({ me, connected, session, roundIndex, justFinishedRound, o
               </span>
             </div>
             <div style={{ display: "flex", gap: 14, marginTop: 12, fontSize: 12, color: COLORS.muted }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Target size={13} color={COLORS.green} /> {quizPerRoundOf(session)} quiz questions</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Gem size={13} color={COLORS.purple} /> 1 finale question</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Target size={13} color={COLORS.green} /> {quizCount} quiz question{quizCount === 1 ? "" : "s"}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Gem size={13} color={COLORS.purple} /> {finaleCount} finale question{finaleCount === 1 ? "" : "s"}</span>
             </div>
           </div>
 
@@ -572,7 +576,7 @@ function EmbeddedGame({ gameId, roundNumber, me, onComplete, onSkip }) {
       game={arenaGame}
       identity={{ id: me.id, name: me.name, team: me.team, source: "session" }}
       embedded
-      roundLabel={`Round ${roundNumber} of ${ROUND_COUNT}`}
+      roundLabel={`Round ${roundNumber}`}
       onEmbeddedComplete={onComplete}
       onExit={onSkip}
       onOpenLeaderboard={() => {}}
@@ -627,7 +631,7 @@ function QuestionReveal({ question, result, isFinale, onNext, isLast, endsRound,
 }
 
 function SessionResult({ me, players, onExit }) {
-  const summary = sessionSummary(me.session);
+  const summary = runSummary(plan, me.session);
   const sorted = useMemo(
     () => [...(players || [])].sort((a, b) => (b.score || 0) - (a.score || 0)),
     [players]

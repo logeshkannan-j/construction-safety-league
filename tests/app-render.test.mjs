@@ -175,31 +175,31 @@ check("the admin panel is not blank", text.length > 50, `${text.length} chars`);
 check("the admin panel renders its title", text.includes("Admin Control Panel"), text.slice(0, 160));
 if (!denied) {
   check("the admin panel renders Game status", text.includes("Game status"));
-  check("the admin panel renders the session mode chooser", text.includes("How participants play"));
+  check("the admin panel renders the event plan panel", text.includes("The event plan"));
   check("the admin panel renders the Arena section", text.includes("3D Gaming Arena"));
 }
 check("NO React errors after unlocking admin", reactErrors.length === 0,
   reactErrors.slice(0, 2).join(" | "));
 
 if (!denied) {
-  /* ---- the live-vs-integrated confusion ----
+  /* ---- one unit, not two ----
    *
-   * The question list is LIVE EVENT mode's paper. In an integrated
-   * session it is ignored entirely, and saying nothing about that led
-   * straight to "I see 15 questions and no 3D missions — why?".
+   * The 3D missions and the questions used to be separate things: a
+   * question list the admin could see, and a 3D session they could not.
+   * That split is why "I see 15 questions and no 3D" happened. There is
+   * now ONE plan, and the missions are rows in it.
    */
-  check("the question list says it is the live event paper",
-    text.includes("Live event questions"), text.slice(0, 200));
-  check("the question list says live event mode has no 3D missions",
-    /Live event.*no 3D missions|no 3D missions/i.test(text));
-  check("the admin can deal a fresh paper themselves",
+  check("the admin sees a single event plan", text.includes("Event plan"), text.slice(0, 200));
+  check("the plan is described as the whole event",
+    text.includes("This is the whole event"), "the one-unit explanation is missing");
+  check("the plan counts missions AND questions together",
+    /\d+ rounds · \d+ missions · \d+ quiz · \d+ finale/.test(text),
+    "no combined plan summary found");
+  check("the admin can deal a fresh plan themselves",
     text.includes("Reshuffle"), "no reshuffle control found");
-
-  // Whichever mode is active, exactly one of these explanations shows.
-  const saysIgnored = text.includes("Not in use right now");
-  const saysNo3d = text.includes("Live event mode has no 3D missions");
-  check("the panel explains which mode the list belongs to", saysIgnored || saysNo3d,
-    `ignored=${saysIgnored} no3d=${saysNo3d}`);
+  check("the two-mode chooser is gone",
+    !text.includes("Integrated session") && !text.includes("Live event (host-paced)"),
+    "a mode chooser is still on screen");
 
   // And if the host has not released a round, say so loudly — an
   // integrated session does nothing at all until they do.
@@ -215,6 +215,45 @@ if (!denied) {
 check("no hook-order violation in the admin panel",
   !reactErrors.some((e) => /Rendered (more|fewer) hooks/.test(e)),
   reactErrors.find((e) => /Rendered (more|fewer) hooks/.test(e)) || "");
+
+/* ------------------------ the participant path ------------------------ */
+
+section("A participant can reach the join form");
+
+{
+  // The admin path alone missed a ReferenceError on JOIN, because the
+  // test never went down the player route. It does now.
+  // A fresh root: re-rendering the existing one keeps App's role state,
+  // so it would still be sitting in the admin panel.
+  root.unmount();
+  await settle(200);
+  rootEl.innerHTML = "";
+  const playerRoot = ReactDOMClient.createRoot(rootEl);
+  playerRoot.render(React.createElement(App));
+  await settle(600);
+  clickByText("Join as player");
+  const reachedCode = await waitForText("Enter game code", 15000);
+  check("the player route renders the game-code form", reachedCode,
+    visibleText().slice(0, 160));
+  check("no React errors on the player route", reactErrors.length === 0,
+    reactErrors.slice(0, 2).join(" | "));
+
+  // The join handler itself is what threw. Exercise it directly against
+  // the real module rather than typing a live game code into Firebase.
+  const sessionMod = await server.ssrLoadModule("/src/session.js");
+  const plan = sessionMod.buildEventPlan();
+  let threw = null;
+  let run = null;
+  try {
+    run = sessionMod.createRun(plan, { now: Date.now() });
+  } catch (e) {
+    threw = e;
+  }
+  check("creating a participant run does not throw", !threw, threw?.message);
+  check("a new run is valid against the plan", sessionMod.isRunValid(plan, run));
+  check("a new run starts locked on the first item",
+    run?.stage === "locked" && run?.itemIndex === 0);
+}
 
 /* ---------------------- hooks above early returns ---------------------- */
 

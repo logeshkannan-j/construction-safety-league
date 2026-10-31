@@ -32,9 +32,10 @@ const SoloSession = lazy(() => import("./SoloSession.jsx"));
 import { GAME_KEY, Q_KEY, PLAYER_PREFIX, MY_ID_KEY, POLL_MS } from "./constants";
 import { safeGet, safeSet, safeDelete, safeList, getServerTimeOffset, getDbError } from "./storage";
 import {
-  createSession, createLivePaper, clampQuizPerRound, totalItems,
+  buildEventPlan, renumberPlan, planSummary, createRun, clampQuizPerRound,
   ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, NOT_RELEASED,
   QUIZ_PER_ROUND, QUIZ_PER_ROUND_OPTIONS, MQ_PER_ROUND,
+  ITEM_GAME3D, ITEM_QUIZ, ITEM_MILLIONAIRE,
 } from "./session.js";
 
 // The palette and the shared control styles now live in theme.js so the
@@ -361,16 +362,9 @@ function defaultGame() {
     gameName: "Construction Safety League",
     status: "lobby", // lobby | question | reveal | leaderboard | ended
 
-    // How participants play.
-    //   "solo" — the integrated session: one game code and one set of
-    //            details gives the participant five rounds, each one a
-    //            3D mission followed by a quiz question and a finale
-    //            question, all scored into one result. The host releases
-    //            each round; inside a round the participant works at
-    //            their own pace with their own shuffled paper.
-    //   "live" — the original admin-paced event: the host advances the
-    //            questions and the TV shows the current one to the room.
-    sessionMode: "solo",
+    // There is ONE event now. The questions and the 3D missions live in
+    // a single ordered plan (see buildEventPlan), which the admin can
+    // see and reorder, and which every participant plays.
     // Highest round the host has released, -1 before the event starts.
     // A participant can never run ahead of this.
     releasedRound: NOT_RELEASED,
@@ -464,23 +458,6 @@ function toLiveMillionaireQuestion(question, ladderIndex) {
     points: question.points,
     explanation: question.explanation,
   };
-}
-
-/**
- * Builds a fresh paper for a LIVE event: the original 10 + 5 structure,
- * drawn from the shared question bank with the question order and every
- * option order shuffled.
- *
- * The draw and the shuffle come from session.js so live events and
- * integrated sessions can never drift apart, but the shape is live
- * mode's own — integrated sessions are five rounds of 1 + 1.
- */
-function buildRandomizedGameQuestions() {
-  const { quiz, millionaire } = createLivePaper({ quizCount: 10, mqCount: 5 });
-  return [
-    ...quiz.map(toLiveQuizQuestion),
-    ...millionaire.map((question, i) => toLiveMillionaireQuestion(question, i)),
-  ];
 }
 
 /** A built-in picture-matching round, for the admin to add on demand. */
@@ -876,12 +853,10 @@ function AdminView({ onExit }) {
     await Promise.all((keys || []).map((k) => safeDelete(k, true)));
     const g = defaultGame();
     await safeSet(GAME_KEY, JSON.stringify(g), true);
-    // Create a fresh paper for LIVE event mode (10 quiz + 5 finale),
-    // shuffling the question order and the answer order inside each.
-    // Integrated sessions do not use this — each participant draws their
-    // own round paper when they join.
-    const gameQuestions = buildRandomizedGameQuestions();
-    await safeSet(Q_KEY, JSON.stringify(gameQuestions), true);
+    // ONE plan for the whole event: the 3D missions and the questions
+    // in a single ordered list that the admin can see and reorder.
+    const plan = buildEventPlan({ quizPerRound: QUIZ_PER_ROUND });
+    await safeSet(Q_KEY, JSON.stringify(plan), true);
     await refresh();
     setBusy(false);
   }
@@ -1019,7 +994,7 @@ function AdminView({ onExit }) {
   // ---- Remove a question (any round type, including hazard rounds) ----
   async function removeQuestionAt(idx) {
     const next = (questionsRef || []).filter((_, i) => i !== idx);
-    await safeSet(Q_KEY, JSON.stringify(next), true);
+    await safeSet(Q_KEY, JSON.stringify(renumberPlan(next)), true);
     await refresh();
   }
 
@@ -1027,7 +1002,9 @@ function AdminView({ onExit }) {
   const answeredCount = curQ ? players.filter((p) => p.answers && p.answers[game.qIndex] !== undefined).length : 0;
 
   // Plain derived values, safe to compute after the early returns.
-  const adminSoloMode = game?.sessionMode === "solo";
+  // One event, one plan. `questions` IS the plan.
+  const plan = planSummary(questions);
+  const planRounds = plan.rounds;
   const releasedRound = Number.isFinite(game?.releasedRound) ? game.releasedRound : NOT_RELEASED;
   const adminQuizPerRound = clampQuizPerRound(game?.quizPerRound ?? QUIZ_PER_ROUND);
 
@@ -1059,12 +1036,10 @@ function AdminView({ onExit }) {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
               <StatCell label="Join code" value={game.gameCode} big />
               <StatCell label="Participants" value={players.length} />
-              {adminSoloMode
-                ? <StatCell label="Round" value={releasedRound < 0 ? "Not started" : `${releasedRound + 1} / ${ROUND_COUNT}`} />
-                : <StatCell label="Question" value={game.status === "lobby" ? "—" : `${(game.qIndex ?? 0) + 1} / ${questions.length}`} />}
+              <StatCell label="Round" value={releasedRound < 0 ? "Not started" : `${releasedRound + 1} / ${planRounds}`} />
             </div>
 
-            {adminSoloMode ? (
+            {(
               <>
                 {/* Until Round 1 is released nothing happens for anyone,
                     and the panel otherwise gives no clue that the host
@@ -1114,23 +1089,13 @@ function AdminView({ onExit }) {
 
                 <p style={{ color: COLORS.muted, fontSize: 12, lineHeight: 1.5, marginTop: 10 }}>
                   {releasedRound < 0
-                    ? `Nobody can start until you release Round 1. Each round is one 3D mission, then one quiz question, then one finale question.`
+                    ? `Nobody can start until you release Round 1. The event plan has ${plan.items} items across ${planRounds} rounds.`
                     : soloStats.allCaughtUp
                       ? `Everyone has finished Round ${releasedRound + 1}. Release the next one when you're ready.`
                       : `${players.length - soloStats.waiting} still working through Round ${releasedRound + 1}. Releasing the next round early will cut them off.`}
                   {" "}Reset clears every participant and issues a new join code.
                 </p>
               </>
-            ) : (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {game.status === "lobby" && <ActionBtn icon={<Play size={15} />} label="Start Game" color={COLORS.green} onClick={startGame} disabled={players.length === 0} />}
-                {game.status === "question" && <ActionBtn icon={<Eye size={15} />} label="Reveal Answer" color={COLORS.yellow} dark onClick={revealAnswer} />}
-                {(game.status === "reveal" || game.status === "leaderboard") && game.qIndex < questions.length - 1 && <ActionBtn icon={<SkipForward size={15} />} label="Next Question" color={COLORS.orange} onClick={nextQuestion} />}
-                {(game.status === "reveal" || game.status === "leaderboard") && game.qIndex >= questions.length - 1 && <ActionBtn icon={<Flag size={15} />} label="End Game" color={COLORS.red} onClick={endGame} />}
-                {game.status !== "lobby" && game.status !== "ended" && <ActionBtn icon={<Trophy size={15} />} label="Show Leaderboard" color={COLORS.surfaceRaised} onClick={showLeaderboard} />}
-                {game.status !== "lobby" && <ActionBtn icon={<RotateCcw size={15} />} label="Back to Lobby" color={COLORS.surfaceRaised} onClick={backToLobby} />}
-                <ActionBtn icon={<RotateCcw size={15} />} label="Reset Game" color={COLORS.red} onClick={resetGame} />
-              </div>
             )}
           </Panel>
 
@@ -1150,56 +1115,13 @@ function AdminView({ onExit }) {
             </div>
           </Panel>
 
-          <Panel title="How participants play" icon={<Gamepad2 size={18} color={COLORS.green} />}>
+          <Panel title="The event plan" icon={<Gamepad2 size={18} color={COLORS.green} />}>
             <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12, lineHeight: 1.55 }}>
-              Choose what a participant gets after they enter the game code and their details.
+              One event, one list. The 3D missions and the questions are the same plan — see
+              and reorder every row of it in <b style={{ color: COLORS.ink }}>Event plan</b> below.
             </p>
-            <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
-              {[
-                {
-                  id: "solo",
-                  title: "Integrated session (recommended)",
-                  detail: `One game code, one set of details, ${ROUND_COUNT} rounds. Each round is a 3D mission, then ${adminQuizPerRound} quiz questions, then a finale question — ${totalItems(adminQuizPerRound)} items scored into a single result. You release each round; inside a round everyone works at their own pace on their own shuffled paper.`,
-                  color: COLORS.green,
-                },
-                {
-                  id: "live",
-                  title: "Live event (host-paced)",
-                  detail: "The original format: you advance the questions, the TV shows the current one, and everyone answers together.",
-                  color: COLORS.yellow,
-                },
-              ].map((option) => {
-                const active = (game.sessionMode || "live") === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    onClick={() => patchGame({ sessionMode: option.id })}
-                    style={{
-                      display: "flex", alignItems: "flex-start", gap: 11, textAlign: "left",
-                      background: active ? option.color + "14" : COLORS.surfaceRaised,
-                      border: `1px solid ${active ? option.color : COLORS.line}`,
-                      borderRadius: 10, padding: "12px 13px", cursor: "pointer", color: COLORS.ink,
-                    }}
-                  >
-                    <span style={{
-                      width: 18, height: 18, borderRadius: "50%", flexShrink: 0, marginTop: 2,
-                      border: `2px solid ${active ? option.color : COLORS.line}`,
-                      background: active ? option.color : "transparent",
-                    }} />
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ display: "block", fontWeight: 800, fontSize: 14, color: active ? option.color : COLORS.ink }}>
-                        {option.title}
-                      </span>
-                      <span style={{ display: "block", fontSize: 12.5, color: COLORS.muted, marginTop: 3, lineHeight: 1.5 }}>
-                        {option.detail}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
 
-            {(game.sessionMode || "live") === "solo" && (
+            {(
               <>
                 {/* The host owns the shape of a round. */}
                 <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, letterSpacing: 0.6, marginBottom: 7 }}>
@@ -1248,10 +1170,10 @@ function AdminView({ onExit }) {
                     })}
                   </div>
                   <p style={{ fontSize: 12, color: COLORS.muted, margin: "9px 0 0", lineHeight: 1.55 }}>
-                    That is <b style={{ color: COLORS.ink }}>{ROUND_COUNT} × ({1 + adminQuizPerRound + MQ_PER_ROUND}) = {totalItems(adminQuizPerRound)} items</b>
-                    {" "}per participant — {ROUND_COUNT} missions, {ROUND_COUNT * adminQuizPerRound} quiz
-                    questions and {ROUND_COUNT * MQ_PER_ROUND} finale questions. Changing this affects
-                    participants who join from now on; anyone already playing keeps the paper they were dealt.
+                    That shape is used the next time you deal a plan —{" "}
+                    <b style={{ color: COLORS.ink }}>{ROUND_COUNT} × ({1 + adminQuizPerRound + MQ_PER_ROUND}) = {ROUND_COUNT * (1 + adminQuizPerRound + MQ_PER_ROUND)} items</b>.
+                    Press <b>Reshuffle</b> on the event plan below to apply it. The plan you have
+                    now is the one everybody plays, whatever this is set to.
                   </p>
                 </div>
 
@@ -1385,17 +1307,18 @@ function AdminView({ onExit }) {
             const next = [...questionsRef];
             const [moved] = next.splice(fromIndex, 1);
             next.splice(toIndex, 0, moved);
-            await safeSet(Q_KEY, JSON.stringify(next), true);
+            // A 3D row STARTS a round, so moving rows re-rounds the event.
+            await safeSet(Q_KEY, JSON.stringify(renumberPlan(next)), true);
             await refresh();
           }}
-          soloMode={adminSoloMode}
+          plan={plan}
           onReshuffle={async () => {
-            // Deals a whole new live paper: different questions, a
-            // different order, and the options shuffled inside each one.
-            // Any custom questions the admin added are kept and appended.
+            // Deals a whole new event plan: a different mission order,
+            // different questions, different option order. Custom rows
+            // the admin added by hand are kept and appended.
             const custom = (questionsRef || []).filter((q) => q.custom || q.round === "hazard");
-            const fresh = buildRandomizedGameQuestions();
-            await safeSet(Q_KEY, JSON.stringify([...fresh, ...custom]), true);
+            const fresh = buildEventPlan({ quizPerRound: adminQuizPerRound });
+            await safeSet(Q_KEY, JSON.stringify(renumberPlan([...fresh, ...custom])), true);
             await refresh();
           }} />
 
@@ -1436,12 +1359,13 @@ function AdminView({ onExit }) {
 // Lets the admin delete any question — MCQ, True/False, custom, or a
 // hazard round (default or admin-uploaded). Delete needs a second tap
 // on the same row to confirm.
-function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder, soloMode, onReshuffle }) {
+function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder, plan, onReshuffle }) {
   const [confirmIdx, setConfirmIdx] = useState(null);
   const [editingIdx, setEditingIdx] = useState(null);
   const [draggedIndex, setDraggedIndex] = useState(null);
   const [shuffling, setShuffling] = useState(false);
   const badge = {
+    game3d: [COLORS.orange, "3D"],
     quiz: [COLORS.green, "MCQ"],
     truefalse: [COLORS.yellow, "T/F"],
     hazard: [COLORS.orange, "HAZARD"],
@@ -1449,31 +1373,24 @@ function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder, soloMode
   };
 
   return (
-    <Panel title={`Live event questions (${questions.length})`} icon={<ListChecks size={18} color={COLORS.orange} />}>
-      {/* This list belongs to LIVE EVENT mode only. Saying so here is
-          what stops "where are my 3D missions?" — an integrated session
-          never touches this list. */}
-      {soloMode ? (
-        <div style={{
-          background: COLORS.yellow + "14", border: `1px solid ${COLORS.yellow}66`,
-          borderRadius: 9, padding: "11px 13px", marginBottom: 12,
-          fontSize: 12.5, color: COLORS.ink, lineHeight: 1.55,
-        }}>
-          <b style={{ color: COLORS.yellow }}>Not in use right now.</b> You are running an{" "}
-          <b>Integrated session</b>, so participants get the five 3D missions plus their own
-          shuffled questions dealt fresh from the question bank — this list is ignored.
-          It is only used if you switch to <b>Live event</b> mode, which has no 3D missions.
-        </div>
-      ) : (
-        <div style={{
-          background: COLORS.surfaceRaised, borderRadius: 9, padding: "11px 13px",
-          marginBottom: 12, fontSize: 12.5, color: COLORS.muted, lineHeight: 1.55,
-        }}>
-          <b style={{ color: COLORS.ink }}>Live event mode has no 3D missions.</b> It is the
-          original host-paced quiz: everyone answers the same question at the same time.
-          For the 3D missions, switch to <b>Integrated session</b> above.
-        </div>
-      )}
+    <Panel title={`Event plan (${questions.length} items)`} icon={<ListChecks size={18} color={COLORS.orange} />}>
+      {/* ONE list. The 3D missions are rows in it, exactly like the
+          questions, which is what makes "where are my 3D missions?"
+          impossible to ask. */}
+      <div style={{
+        background: COLORS.surfaceRaised, borderRadius: 9, padding: "11px 13px",
+        marginBottom: 12, fontSize: 12.5, color: COLORS.muted, lineHeight: 1.55,
+      }}>
+        <b style={{ color: COLORS.ink }}>This is the whole event.</b> The 3D missions and the
+        questions are one list, played in this order by every participant. A{" "}
+        <b style={{ color: COLORS.orange }}>3D</b> row starts a new round, and you release the
+        rounds one at a time from Game status.
+        {plan ? (
+          <div style={{ marginTop: 7, color: COLORS.ink }}>
+            {plan.rounds} rounds · {plan.missions} missions · {plan.quiz} quiz · {plan.millionaire} finale
+          </div>
+        ) : null}
+      </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
         <button
@@ -1852,16 +1769,11 @@ function PlayerView({ onExit }) {
       lifelines: { fifty: false, audience: false, phone: false },
       lifelineData: {},
     };
-    // In the integrated session the participant's whole paper is drawn
-    // now and stored on their record, so it survives a page refresh and
-    // is theirs alone. The live event mode is unchanged and ignores it.
-    if (isSoloMode) {
-      player.session = createSession({
-        now: Date.now(),
-        quizPerRound: clampQuizPerRound(game.quizPerRound ?? QUIZ_PER_ROUND),
-      });
-      player.scores = { game3d: 0, quiz: 0, millionaire: 0 };
-    }
+    // Everybody plays the ONE event plan. Only the option order inside
+    // each question is per-participant, and it is stored on their own
+    // record so a refresh resumes exactly where they were.
+    player.session = createRun(questions, { now: Date.now() });
+    player.scores = { game3d: 0, quiz: 0, millionaire: 0 };
     await safeSet(PLAYER_PREFIX + id, JSON.stringify(player), true);
     await safeSet(MY_ID_KEY, id, false);
     setMe(player);
@@ -1965,10 +1877,7 @@ function PlayerView({ onExit }) {
     [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
   );
 
-  // Games created before this build have no sessionMode, and those were
-  // all admin-paced live events — so treat a missing value as "live" and
-  // never change how an existing game behaves.
-  const isSoloMode = game?.sessionMode === "solo";
+  // There is only one kind of event now: the single plan drives it.
 
   // Writes the participant's whole record, which is how this app already
   // persists a player. Used by the integrated session on every answer.
@@ -2038,21 +1947,26 @@ function PlayerView({ onExit }) {
   // rounds — a 3D mission, a quiz question and a finale question each —
   // as a single scored session. SoloSession reads game.releasedRound to
   // know which round the host has opened. Live event mode is untouched.
-  if (isSoloMode) {
-    return (
-      <Suspense fallback={<Centered><p style={{ color: COLORS.muted }}>Loading your session…</p></Centered>}>
-        <SoloSession
-          me={me}
-          game={game}
-          players={players}
-          connected={connected}
-          serverOffset={serverOffset}
-          onPersist={persistMe}
-          onExit={onExit}
-        />
-      </Suspense>
-    );
-  }
+  return (
+    <Suspense fallback={<Centered><p style={{ color: COLORS.muted }}>Loading your session…</p></Centered>}>
+      <SoloSession
+        me={me}
+        game={game}
+        plan={questions}
+        players={players}
+        connected={connected}
+        serverOffset={serverOffset}
+        onPersist={persistMe}
+        onExit={onExit}
+      />
+    </Suspense>
+  );
+}
+
+/* The original lock-step question view is no longer reachable — the one
+   event plan drives everybody. Kept (unmounted) so the hazard, video and
+   millionaire display components it shares with the TV stay in use. */
+function UnusedLivePlayerView({ me, game, questions, players, connected, serverOffset, onExit, sorted }) {
 
   const rank = sorted.findIndex((p) => p.id === me.id) + 1;
   const curQ = questions[game.qIndex ?? 0];

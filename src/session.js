@@ -1,28 +1,27 @@
 /* ------------------------------------------------------------------ *
- *  PARTICIPANT SESSION
+ *  THE EVENT — one plan, not two
  *
- *  One participant enters the game code and their details ONCE, and gets
- *  one session made of five rounds. The host releases each round; inside
- *  a released round the participant plays at their own speed:
+ *  There is a SINGLE ordered list for the whole event. A 3D mission is
+ *  a row in it, exactly like a question is:
  *
  *      ROUND n:  3D mission  →  3 × MCQ  →  1 finale question
  *
- *  Five rounds × five items = 25 items by default. The MCQs per round
- *  are set by the host (QUIZ_PER_ROUND / the game's `quizPerRound`),
- *  and the five rounds use the five different 3D missions, dealt to
- *  each participant in their own order.
+ *  Five rounds × five items = 25 items by default. The admin sees that
+ *  one list, reorders it, edits it and reshuffles it; every participant
+ *  plays that same list; the host releases the rounds one at a time.
  *
- *  Everything here is a pure function over plain data, for two reasons:
+ *  This used to be two separate things — an admin-visible question list
+ *  and a per-participant 3D session the admin could not see — which is
+ *  why the missions were invisible in the panel and could not be
+ *  reordered. That split is gone.
  *
- *  1. It is testable without a browser (see tests/session.test.mjs).
- *  2. The session descriptor is small enough to store on the player's
- *     own record in the Realtime Database, which is what makes a page
- *     refresh resume exactly where the participant left off instead of
- *     re-shuffling the paper or starting them again.
+ *  The only per-participant part is `run.perms`: the option order
+ *  inside each question. It is a few hundred bytes, lives on the
+ *  player's own record, and is what makes a refresh resume exactly
+ *  where they were instead of re-shuffling.
  *
- *  The descriptor stores question IDS and an option PERMUTATION, not
- *  the question text — so it is a few hundred bytes, and the questions
- *  are rebuilt deterministically from the bank on every device.
+ *  Everything here is a pure function over plain data, so it is
+ *  testable without a browser (see tests/session.test.mjs).
  * ------------------------------------------------------------------ */
 
 import {
@@ -30,11 +29,11 @@ import {
   TIER_ORDER, quizQuestionById, millionaireQuestionById,
 } from "./questionBank.js";
 
-// Bumped to 2 when the session became round-based. A session written by
-// an older build no longer validates, so the participant is given a
-// fresh paper instead of being resumed into a shape this build cannot
-// read. See isSessionValid.
-export const SESSION_VERSION = 2;
+// Bumped to 3 when the two halves became one plan. A run written by an
+// older build no longer validates, so that participant is re-dealt
+// rather than resumed into a shape this build cannot read. See
+// isRunValid.
+export const SESSION_VERSION = 3;
 
 /** The five rounds, and the 3D mission each one opens with. */
 export const ROUND_GAMES = [
@@ -84,14 +83,18 @@ export const MQ_PER_ROUND = 1;
 /** What the admin is allowed to pick. */
 export const QUIZ_PER_ROUND_OPTIONS = [1, 2, 3, 4];
 
-export const QUIZ_COUNT = ROUND_COUNT * QUIZ_PER_ROUND;
-export const MILLIONAIRE_COUNT = ROUND_COUNT * MQ_PER_ROUND;
-export const TOTAL_QUESTIONS = QUIZ_COUNT + MILLIONAIRE_COUNT;
-export const TOTAL_ITEMS = ROUND_COUNT * (1 + QUIZ_PER_ROUND + MQ_PER_ROUND);
+// NOTE: there is deliberately no exported QUIZ_COUNT / TOTAL_ITEMS any
+// more. Those described a fixed shape, and the admin can now reorder
+// and delete rows — so the only truthful answer is to measure the plan
+// that is actually in play with planSummary().
 
-/** Items in a round for a given per-round quiz count. */
+/**
+ * The shape buildEventPlan() will produce for a given MCQ count. Used by
+ * the admin panel to preview a plan before dealing it; the plan that is
+ * actually in play is measured with planSummary() instead.
+ */
 export function itemsPerRound(quizPerRound = QUIZ_PER_ROUND) {
-  return 1 + quizPerRound + MQ_PER_ROUND;
+  return 1 + clampQuizPerRound(quizPerRound) + MQ_PER_ROUND;
 }
 export function totalItems(quizPerRound = QUIZ_PER_ROUND) {
   return ROUND_COUNT * itemsPerRound(quizPerRound);
@@ -160,7 +163,7 @@ export function applyPermutation(question, perm) {
 /* ---------------------------- creating one ---------------------------- */
 
 /** `count` general questions, spread across as many topics as possible. */
-export function drawQuiz(count = QUIZ_COUNT) {
+function drawQuiz(count = ROUND_COUNT * QUIZ_PER_ROUND) {
   const byTopic = new Map();
   QUIZ_BANK.forEach((question) => {
     if (!byTopic.has(question.topic)) byTopic.set(question.topic, []);
@@ -186,7 +189,7 @@ export function drawQuiz(count = QUIZ_COUNT) {
 }
 
 /** `count` finale questions, one per tier, lowest stake first. */
-export function drawMillionaire(count = MILLIONAIRE_COUNT) {
+function drawMillionaire(count = ROUND_COUNT * MQ_PER_ROUND) {
   const byTier = new Map();
   MILLIONAIRE_BANK.forEach((question) => {
     if (!byTier.has(question.tier)) byTier.set(question.tier, []);
@@ -211,143 +214,117 @@ export function drawMillionaire(count = MILLIONAIRE_COUNT) {
     .sort((a, b) => TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier));
 }
 
-/**
- * A flat paper for the ORIGINAL live event mode, which is not
- * round-based and keeps its own 10 + 5 shape. Shares this module's draw
- * and shuffle so the two modes can never drift apart.
- */
-export function createLivePaper({ quizCount = 10, mqCount = 5 } = {}) {
-  const withPerm = (question) => applyPermutation(question, permutationFor(question.options.length));
-  return {
-    quiz: drawQuiz(quizCount).map(withPerm),
-    millionaire: drawMillionaire(mqCount).map(withPerm),
-  };
-}
-
-/**
- * Draws a fresh paper and pairs it with the five missions, so round n
- * holds one mission, one quiz question and one finale question.
- *
- * EVERYTHING that can vary between two people sitting next to each other
- * does vary:
- *
- *   - which of the five missions each round opens with (shuffled)
- *   - which five of the twelve topics the quiz questions come from
- *   - which question is drawn from each topic and each tier
- *   - the option order inside every question
- *
- * The one thing deliberately NOT shuffled is the finale's stake order:
- * Bronze through Diamond always climbs, because escalating stakes is the
- * whole point of the format. The questions at each tier vary instead,
- * which is why the bank needs several questions per tier.
- */
-export function createSessionDescriptor({ quizPerRound = QUIZ_PER_ROUND } = {}) {
-  const perRound = clampQuizPerRound(quizPerRound);
-  const quiz = drawQuiz(ROUND_COUNT * perRound);
-  const mq = drawMillionaire(ROUND_COUNT * MQ_PER_ROUND);
-  // Previously this was ROUND_GAMES in fixed order, so every participant
-  // played the five missions in exactly the same sequence, every event.
-  const missions = shuffle(ROUND_GAMES);
-
-  const rounds = missions.map((gameId, i) => ({
-    gameId,
-    // An ARRAY now: a round holds several MCQs, then its finale question.
-    quiz: quiz
-      .slice(i * perRound, (i + 1) * perRound)
-      .map((q) => ({ id: q.id, perm: permutationFor(q.options.length) })),
-    mq: { id: mq[i].id, perm: permutationFor(mq[i].options.length) },
-  }));
-
-  // `qpr` is stored so a session stays readable even if the admin
-  // changes the setting while this participant is part-way through.
-  return { v: SESSION_VERSION, qpr: perRound, rounds };
-}
-
 export function clampQuizPerRound(n) {
   const v = Math.round(Number(n) || QUIZ_PER_ROUND);
   return Math.max(1, Math.min(QUIZ_PER_ROUND_OPTIONS[QUIZ_PER_ROUND_OPTIONS.length - 1], v));
 }
 
-/** The session block stored on a player record when they join. */
-export function createSession({ now = Date.now(), quizPerRound = QUIZ_PER_ROUND } = {}) {
-  return {
-    v: SESSION_VERSION,
-    descriptor: createSessionDescriptor({ quizPerRound }),
-    roundIndex: 0,
-    // Which MCQ within the current round, 0-based.
-    quizStep: 0,
-    stage: STAGES.LOCKED,
-    startedAt: now,
-    stageStartedAt: now,
-    // quiz answers are keyed "round:step"; mq answers by round index.
-    answers: { quiz: {}, mq: {} },
-    games: {},                      // 3D result, keyed by round index
-  };
-}
+/* ------------------------------------------------------------------ *
+ *  There used to be a SECOND engine here — a per-participant round
+ *  descriptor that existed alongside the admin's question list, so the
+ *  3D missions lived in one and the questions in the other. That split
+ *  is exactly what made the missions invisible to the admin, and it was
+ *  deleted when the two became one plan. Everything below is the only
+ *  engine now.
+ * ------------------------------------------------------------------ */
 
-/** How many MCQs each round of THIS session holds. */
-export function quizPerRoundOf(session) {
-  const n = session?.descriptor?.qpr;
-  return clampQuizPerRound(Number.isFinite(n) ? n : QUIZ_PER_ROUND);
-}
+/* ================================================================== *
+ *  THE EVENT PLAN — one unit, not two
+ *
+ *  There used to be two separate things: a "live event" question list
+ *  the admin could see and edit, and a per-participant 3D session the
+ *  admin could not. That split is what made the 3D missions invisible
+ *  in the admin panel and impossible to reorder.
+ *
+ *  There is now ONE ordered list. A 3D mission is a row in it, exactly
+ *  like a question is. The admin edits that list; every participant
+ *  plays that list; the only thing that differs per participant is the
+ *  order of the options inside each question.
+ *
+ *  An item is one of:
+ *    { round: "game3d",      roundIndex, gameId }
+ *    { round: "quiz",        roundIndex, bankId?, question, options, correct, points, explanation, topic }
+ *    { round: "millionaire", roundIndex, bankId?, question, options, correct, points, explanation, tier }
+ * ================================================================== */
 
-/** The key an MCQ answer is stored under. */
-export function quizKey(roundIndex, step) {
-  return `${roundIndex}:${step}`;
-}
-
-/* --------------------------- reading one back --------------------------- */
+export const ITEM_GAME3D = "game3d";
+export const ITEM_QUIZ = "quiz";
+export const ITEM_MILLIONAIRE = "millionaire";
 
 /**
- * Rebuilds the participant's actual rounds from their descriptor.
- * Deterministic: the same descriptor always produces the same paper, on
- * any device, after any refresh.
+ * Builds the default plan: five rounds, each a 3D mission then
+ * `quizPerRound` MCQs then one finale question, with the missions in a
+ * random order and the questions drawn fresh from the bank.
  */
-export function hydrateSession(session) {
-  const rounds = session?.descriptor?.rounds;
-  if (!Array.isArray(rounds)) return { rounds: [], quiz: [], millionaire: [] };
+export function buildEventPlan({ quizPerRound = QUIZ_PER_ROUND } = {}) {
+  const perRound = clampQuizPerRound(quizPerRound);
+  const quiz = drawQuiz(ROUND_COUNT * perRound);
+  const mq = drawMillionaire(ROUND_COUNT * MQ_PER_ROUND);
+  const missions = shuffle(ROUND_GAMES);
 
-  const built = rounds.map((round, index) => {
-    // A round's quiz is an ARRAY. Tolerate the single-object shape so a
-    // descriptor written by an older build still reads rather than
-    // throwing — isSessionValid decides whether to keep it.
-    const list = Array.isArray(round.quiz) ? round.quiz : [round.quiz].filter(Boolean);
-    return {
-      index,
-      gameId: round.gameId,
-      quiz: list
-        .map((entry) => applyPermutation(quizQuestionById(entry?.id), entry?.perm))
-        .filter(Boolean),
-      millionaire: applyPermutation(millionaireQuestionById(round.mq?.id), round.mq?.perm),
-    };
+  const plan = [];
+  missions.forEach((gameId, roundIndex) => {
+    plan.push({ round: ITEM_GAME3D, roundIndex, gameId });
+    quiz.slice(roundIndex * perRound, (roundIndex + 1) * perRound).forEach((q) => {
+      plan.push({
+        round: ITEM_QUIZ, roundIndex, bankId: q.id, topic: q.topic,
+        question: q.question, options: [...q.options], correct: q.correct,
+        points: q.points, explanation: q.explanation,
+      });
+    });
+    const f = mq[roundIndex];
+    if (f) {
+      plan.push({
+        round: ITEM_MILLIONAIRE, roundIndex, bankId: f.id, tier: f.tier,
+        question: f.question, options: [...f.options], correct: f.correct,
+        points: f.points, explanation: f.explanation,
+      });
+    }
   });
-
-  return {
-    rounds: built,
-    quiz: built.flatMap((r) => r.quiz),
-    millionaire: built.map((r) => r.millionaire).filter(Boolean),
-  };
+  return plan;
 }
 
-/** True when the stored session is usable by this build. */
-export function isSessionValid(session) {
-  if (!session || session.v !== SESSION_VERSION) return false;
-  const perRound = quizPerRoundOf(session);
-  const { rounds } = hydrateSession(session);
-  return rounds.length === ROUND_COUNT
-    && rounds.every((r) =>
-      Array.isArray(r.quiz)
-      && r.quiz.length === perRound
-      && r.millionaire
-      && ROUND_GAMES.includes(r.gameId));
+/** True for a plan row that is a question rather than a mission. */
+export function isQuestionItem(item) {
+  return item?.round === ITEM_QUIZ || item?.round === ITEM_MILLIONAIRE;
+}
+
+/**
+ * Re-numbers `roundIndex` from the order of the list, so that dragging
+ * rows in the admin panel actually re-rounds the event. A round starts
+ * at each 3D mission; anything before the first mission belongs to
+ * round 0.
+ */
+export function renumberPlan(plan) {
+  let round = -1;
+  return (plan || []).map((item) => {
+    if (item.round === ITEM_GAME3D) round += 1;
+    return { ...item, roundIndex: Math.max(0, round) };
+  });
+}
+
+/** How many rounds the plan actually contains. */
+export function planRoundCount(plan) {
+  const rounds = new Set((plan || []).map((i) => i.roundIndex ?? 0));
+  return Math.max(1, rounds.size);
+}
+
+export function planSummary(plan) {
+  const list = plan || [];
+  return {
+    items: list.length,
+    missions: list.filter((i) => i.round === ITEM_GAME3D).length,
+    quiz: list.filter((i) => i.round === ITEM_QUIZ).length,
+    millionaire: list.filter((i) => i.round === ITEM_MILLIONAIRE).length,
+    rounds: planRoundCount(list),
+  };
 }
 
 /* ------------------------------ scoring ------------------------------ */
 
 /**
- * Points for one answer. Correct answers are worth more the sooner they
- * arrive, using the same speed curve the live quiz already used: a
- * correct answer is worth between 50% and 100% of the question's value.
+ * Points for one answer. A correct answer is worth more the sooner it
+ * arrives — between 50% and 100% of the question's value.
  */
 export function scoreAnswer({ question, pickedIndex, elapsedMs, limitSeconds }) {
   const limitMs = Math.max(1, limitSeconds * 1000);
@@ -355,17 +332,19 @@ export function scoreAnswer({ question, pickedIndex, elapsedMs, limitSeconds }) 
   const correct = pickedIndex === question.correct;
   const speedMark = correct ? Math.round(((limitMs - clamped) / limitMs) * 100) : 0;
   const base = Number(question.points) || 100;
-  const points = correct ? Math.round(base * (0.5 + speedMark / 200)) : 0;
   return {
     correct,
-    points,
+    points: correct ? Math.round(base * (0.5 + speedMark / 200)) : 0,
     speedMark,
     pickedIndex,
     elapsedMs: Math.round(clamped),
   };
 }
 
-/** Scales one mission's raw Arena score into its session value. */
+/**
+ * Scales one mission's raw Arena score (out of 12,000) into its value
+ * inside an event, so the 3D half cannot swamp the written half.
+ */
 export function game3dPoints(result) {
   const max = Math.max(1, Number(result?.maxScore) || 12000);
   const raw = Math.max(0, Number(result?.score) || 0);
@@ -373,134 +352,141 @@ export function game3dPoints(result) {
     Math.round((raw / max) * GAME_POINTS_PER_ROUND)));
 }
 
-export function sectionTotals(session) {
-  const sum = (obj) => Object.values(obj || {}).reduce((t, a) => t + (a?.points || 0), 0);
-  const quizPoints = sum(session?.answers?.quiz);
-  const mqPoints = sum(session?.answers?.mq);
-  const game3d = Object.values(session?.games || {})
-    .reduce((t, g) => t + (Number(g?.points) || 0), 0);
+/* ------------------------- a participant's run ------------------------- */
+
+/**
+ * The per-participant part of the plan: an option permutation for each
+ * question row. Tiny, and it is what keeps two people sitting together
+ * from seeing the answers in the same place.
+ */
+export function createRun(plan, { now = Date.now() } = {}) {
+  const perms = {};
+  (plan || []).forEach((item, i) => {
+    if (isQuestionItem(item)) perms[i] = permutationFor(item.options.length);
+  });
   return {
-    game3d,
-    quiz: quizPoints,
-    millionaire: mqPoints,
-    total: game3d + quizPoints + mqPoints,
+    v: SESSION_VERSION,
+    perms,
+    itemIndex: 0,
+    stage: STAGES.LOCKED,
+    startedAt: now,
+    stageStartedAt: now,
+    answers: {},   // keyed by plan item index
+    games: {},     // 3D results, keyed by plan item index
   };
 }
 
-/* ---------------------------- transitions ---------------------------- */
+/** The plan row the participant is on, with its options shuffled. */
+export function currentItem(plan, run) {
+  const index = run?.itemIndex ?? 0;
+  const item = (plan || [])[index];
+  if (!item) return null;
+  if (!isQuestionItem(item)) return { ...item, index };
+  return { ...applyPermutation(item, run?.perms?.[index]), round: item.round, roundIndex: item.roundIndex, index };
+}
+
+export function runRoundIndex(plan, run) {
+  return (plan || [])[run?.itemIndex ?? 0]?.roundIndex ?? 0;
+}
+
+/** True when this run can be read by this build against this plan. */
+export function isRunValid(plan, run) {
+  if (!run || run.v !== SESSION_VERSION) return false;
+  if (!Array.isArray(plan) || plan.length === 0) return false;
+  if (!Number.isFinite(run.itemIndex)) return false;
+  // Every question row must have a stored permutation of the right size.
+  return plan.every((item, i) => {
+    if (!isQuestionItem(item)) return true;
+    const perm = run.perms?.[i];
+    return Array.isArray(perm) && perm.length === item.options.length;
+  });
+}
+
+/* ----------------------- moving through the plan ----------------------- */
+
+/** The stage a given plan row puts the participant in. */
+function stageForItem(item) {
+  if (!item) return STAGES.DONE;
+  if (item.round === ITEM_GAME3D) return STAGES.GAME3D;
+  if (item.round === ITEM_MILLIONAIRE) return STAGES.MILLIONAIRE;
+  return STAGES.QUIZ;
+}
 
 /**
- * Opens the current round if the host has released it.
- *
- * `releasedRound` is the highest round index the host has started.
- * A participant can never run ahead of it, which is what keeps the room
- * together, and can never be pushed backwards out of a round they have
- * already begun.
+ * Opens the participant's current round if the host has released it.
+ * A participant can never run ahead of `releasedRound`, and can never
+ * be pulled out of a round they have already started.
  */
-export function releaseRound(session, { releasedRound, now = Date.now() } = {}) {
+export function releaseRun(plan, run, { releasedRound, now = Date.now() } = {}) {
   const released = Number.isFinite(releasedRound) ? releasedRound : NOT_RELEASED;
-  if (session.stage === STAGES.DONE) return { session, changed: false };
+  if (run.stage === STAGES.DONE) return { run, changed: false };
+  const waiting = run.stage === STAGES.LOCKED || run.stage === STAGES.ROUND_DONE;
+  if (!waiting) return { run, changed: false };
 
-  const waiting = session.stage === STAGES.LOCKED || session.stage === STAGES.ROUND_DONE;
-  if (!waiting) return { session, changed: false };
-
-  // ROUND_DONE means this round is finished, so the NEXT one is what is
-  // being waited on.
-  const wantedRound = session.stage === STAGES.ROUND_DONE ? session.roundIndex + 1 : session.roundIndex;
-  if (wantedRound >= ROUND_COUNT) {
-    return { session: { ...session, stage: STAGES.DONE, finishedAt: now }, changed: true };
-  }
-  if (released < wantedRound) return { session, changed: false };
+  const item = plan[run.itemIndex];
+  if (!item) return { run: { ...run, stage: STAGES.DONE, finishedAt: now }, changed: true };
+  if (released < (item.roundIndex ?? 0)) return { run, changed: false };
 
   return {
-    session: {
-      ...session,
-      roundIndex: wantedRound,
-      stage: STAGES.GAME3D,
-      stageStartedAt: now,
-    },
+    run: { ...run, stage: stageForItem(item), stageStartedAt: now },
     changed: true,
   };
 }
 
 /**
- * Records one quiz or finale answer for the current round.
- *
- * Returns { session, result, changed }. `changed` is false when the
- * answer was ignored — which happens if that round's question is already
- * answered, so a double tap, a retry or a replayed network request can
- * never score twice.
+ * Steps to the next row. Crossing into a new round parks the
+ * participant on ROUND_DONE until the host releases it.
  */
-export function answerQuestion(session, { section, pickedIndex, now = Date.now() }) {
-  const key = section === "mq" ? "mq" : "quiz";
-  const index = session.roundIndex;
-  const step = session.quizStep || 0;
-  const { rounds } = hydrateSession(session);
-  const round = rounds[index];
-  const question = key === "mq" ? round?.millionaire : round?.quiz?.[step];
-  if (!question) return { session, result: null, changed: false };
+export function advanceRun(plan, run, { now = Date.now() } = {}) {
+  const here = plan[run.itemIndex];
+  const nextIndex = run.itemIndex + 1;
+  const next = plan[nextIndex];
 
-  // Finale answers are keyed by round; MCQ answers by round AND step,
-  // because a round now holds several of them.
-  const answerKey = key === "mq" ? index : quizKey(index, step);
-  const existing = session.answers?.[key]?.[answerKey];
-  if (existing !== undefined) {
-    return { session, result: existing, changed: false };
+  if (!next) {
+    return { ...run, itemIndex: nextIndex, stage: STAGES.DONE, finishedAt: now, stageStartedAt: now };
   }
-
-  const limitSeconds = key === "mq" ? MILLIONAIRE_SECONDS : QUIZ_SECONDS;
-  // Nullish, not falsy: a stageStartedAt of 0 is a real timestamp.
-  const startedAt = session.stageStartedAt ?? now;
-  const elapsedMs = now - startedAt;
-  const result = scoreAnswer({ question, pickedIndex, elapsedMs, limitSeconds });
-
-  const answers = {
-    ...session.answers,
-    [key]: { ...(session.answers?.[key] || {}), [answerKey]: { ...result, answeredAt: now } },
+  const crossesRound = (next.roundIndex ?? 0) !== (here?.roundIndex ?? 0);
+  return {
+    ...run,
+    itemIndex: nextIndex,
+    stage: crossesRound ? STAGES.ROUND_DONE : stageForItem(next),
+    stageStartedAt: now,
   };
-
-  return { session: { ...session, answers }, result, changed: true };
 }
 
 /**
- * Moves past the question just answered: quiz → finale → end of round.
- *
- * At the end of a round the participant goes back to waiting, because
- * the host decides when the room moves on.
+ * Records one answer. Idempotent per plan row, so a double tap, a
+ * retry or a replayed write can never score the same question twice.
  */
-export function advanceQuestion(session, { now = Date.now() } = {}) {
-  if (session.stage === STAGES.QUIZ) {
-    // Work through this round's MCQs before the finale question.
-    const nextStep = (session.quizStep || 0) + 1;
-    if (nextStep < quizPerRoundOf(session)) {
-      return { ...session, quizStep: nextStep, stageStartedAt: now };
-    }
-    return { ...session, stage: STAGES.MILLIONAIRE, quizStep: 0, stageStartedAt: now };
-  }
-  if (session.stage === STAGES.MILLIONAIRE) {
-    const isLast = session.roundIndex + 1 >= ROUND_COUNT;
-    return {
-      ...session,
-      stage: isLast ? STAGES.DONE : STAGES.ROUND_DONE,
-      stageStartedAt: now,
-      ...(isLast ? { finishedAt: now } : {}),
-    };
-  }
-  return session;
+export function answerItem(plan, run, { pickedIndex, now = Date.now() } = {}) {
+  const index = run.itemIndex;
+  const item = currentItem(plan, run);
+  if (!item || !isQuestionItem(item)) return { run, result: null, changed: false };
+
+  const existing = run.answers?.[index];
+  if (existing !== undefined) return { run, result: existing, changed: false };
+
+  const limitSeconds = item.round === ITEM_MILLIONAIRE ? MILLIONAIRE_SECONDS : QUIZ_SECONDS;
+  // Nullish, not falsy: a stageStartedAt of 0 is a real timestamp.
+  const startedAt = run.stageStartedAt ?? now;
+  const result = scoreAnswer({
+    question: item, pickedIndex, elapsedMs: now - startedAt, limitSeconds,
+  });
+
+  return {
+    run: { ...run, answers: { ...(run.answers || {}), [index]: { ...result, answeredAt: now } } },
+    result,
+    changed: true,
+  };
 }
 
-/**
- * Records this round's 3D result and moves on to the round's quiz.
- *
- * Idempotent: once a round's 3D result is stored it is never
- * overwritten, so replaying a mission cannot inflate the score and a
- * refresh cannot bank it twice.
- */
-export function completeGame3d(session, result, { now = Date.now() } = {}) {
-  const index = session.roundIndex;
-  if (session.games?.[index]) {
-    return { session: { ...session, stage: STAGES.QUIZ, quizStep: 0, stageStartedAt: now }, changed: false };
-  }
+/** Banks a 3D mission result against its plan row. Idempotent. */
+export function completeItemGame(plan, run, result, { now = Date.now() } = {}) {
+  const index = run.itemIndex;
+  const item = plan[index];
+  if (!item || item.round !== ITEM_GAME3D) return { run, changed: false };
+  if (run.games?.[index]) return { run, changed: false };
+
   const entry = {
     points: game3dPoints(result),
     score: Math.max(0, Math.round(result?.score || 0)),
@@ -509,116 +495,82 @@ export function completeGame3d(session, result, { now = Date.now() } = {}) {
     performance: Math.max(0, Math.min(100, Math.round(result?.performance ?? result?.accuracy ?? 0))),
     timeTakenMs: Math.max(0, Math.round(result?.timeTakenMs || 0)),
     rating: String(result?.rating || ""),
-    gameId: String(result?.gameId || ROUND_GAMES[index] || ""),
+    gameId: String(result?.gameId || item.gameId || ""),
+    skipped: !!result?.skipped,
     finishedAt: now,
   };
+  return { run: { ...run, games: { ...(run.games || {}), [index]: entry } }, changed: true };
+}
+
+export function skipItemGame(plan, run, { now = Date.now() } = {}) {
+  return completeItemGame(plan, run, { score: 0, rating: "SKIPPED", skipped: true }, { now }).run;
+}
+
+/* ------------------------- totals over a run ------------------------- */
+
+export function runTotals(plan, run) {
+  let quiz = 0;
+  let millionaire = 0;
+  Object.entries(run?.answers || {}).forEach(([i, a]) => {
+    const item = plan?.[Number(i)];
+    if (item?.round === ITEM_MILLIONAIRE) millionaire += a?.points || 0;
+    else quiz += a?.points || 0;
+  });
+  const game3d = Object.values(run?.games || {})
+    .reduce((t, g) => t + (Number(g?.points) || 0), 0);
+  return { game3d, quiz, millionaire, total: game3d + quiz + millionaire };
+}
+
+export function runProgress(plan, run) {
+  const list = plan || [];
+  const answered = Object.keys(run?.answers || {}).length;
+  const played = Object.keys(run?.games || {}).length;
+  const done = answered + played;
   return {
-    session: {
-      ...session,
-      games: { ...(session.games || {}), [index]: entry },
-      stage: STAGES.QUIZ,
-      quizStep: 0,
-      stageStartedAt: now,
-    },
-    changed: true,
-  };
-}
-
-export function skipGame3d(session, { now = Date.now() } = {}) {
-  const index = session.roundIndex;
-  if (session.games?.[index]) {
-    return { ...session, stage: STAGES.QUIZ, quizStep: 0, stageStartedAt: now };
-  }
-  return {
-    ...session,
-    games: {
-      ...(session.games || {}),
-      [index]: {
-        points: 0, score: 0, completed: false, accuracy: 0, performance: 0,
-        timeTakenMs: 0, rating: "SKIPPED", skipped: true,
-        gameId: ROUND_GAMES[index] || "", finishedAt: now,
-      },
-    },
-    stage: STAGES.QUIZ,
-    quizStep: 0,
-    stageStartedAt: now,
-  };
-}
-
-/* ----------------------------- progress ----------------------------- */
-
-export function currentRound(session) {
-  const { rounds } = hydrateSession(session);
-  return rounds[session?.roundIndex] || null;
-}
-
-/** The exact question on screen right now, MCQ step included. */
-export function currentQuestion(session) {
-  const round = currentRound(session);
-  if (!round) return null;
-  if (session?.stage === STAGES.MILLIONAIRE) return round.millionaire;
-  return round.quiz?.[session?.quizStep || 0] || null;
-}
-
-export function sessionProgress(session) {
-  const perRound = quizPerRoundOf(session);
-  const quizAnswered = Object.keys(session?.answers?.quiz || {}).length;
-  const mqAnswered = Object.keys(session?.answers?.mq || {}).length;
-  const gamesDone = Object.keys(session?.games || {}).length;
-  const done = gamesDone + quizAnswered + mqAnswered;
-  const total = totalItems(perRound);
-  return {
-    roundIndex: session?.roundIndex ?? 0,
-    roundNumber: (session?.roundIndex ?? 0) + 1,
-    roundCount: ROUND_COUNT,
-    quizStep: session?.quizStep || 0,
-    quizPerRound: perRound,
-    quizAnswered,
-    mqAnswered,
-    gamesDone,
-    answered: quizAnswered + mqAnswered,
-    totalQuestions: ROUND_COUNT * (perRound + MQ_PER_ROUND),
+    itemIndex: run?.itemIndex ?? 0,
+    roundIndex: runRoundIndex(list, run),
+    roundNumber: runRoundIndex(list, run) + 1,
+    roundCount: planRoundCount(list),
+    answered,
+    gamesDone: played,
     itemsDone: done,
-    totalItems: total,
-    percent: total ? Math.round((done / total) * 100) : 0,
+    totalItems: list.length,
+    percent: list.length ? Math.round((done / list.length) * 100) : 0,
   };
 }
 
-export function sessionSummary(session) {
-  const hydrated = hydrateSession(session);
-  const totals = sectionTotals(session);
-  const quizAnswers = session?.answers?.quiz || {};
-  const mqAnswers = session?.answers?.mq || {};
-
-  const quizCorrect = Object.values(quizAnswers).filter((a) => a?.correct).length;
-  const mqCorrect = Object.values(mqAnswers).filter((a) => a?.correct).length;
-  const games = session?.games || {};
-
+export function runSummary(plan, run) {
+  const list = plan || [];
+  const totals = runTotals(list, run);
+  const s = planSummary(list);
+  let quizCorrect = 0;
+  let mqCorrect = 0;
+  Object.entries(run?.answers || {}).forEach(([i, a]) => {
+    if (!a?.correct) return;
+    if (list[Number(i)]?.round === ITEM_MILLIONAIRE) mqCorrect += 1;
+    else quizCorrect += 1;
+  });
+  const games = run?.games || {};
+  const questionTotal = s.quiz + s.millionaire;
   return {
     totals,
-    quizCorrect,
-    quizAnswered: Object.keys(quizAnswers).length,
-    quizTotal: ROUND_COUNT * quizPerRoundOf(session),
-    mqCorrect,
-    mqAnswered: Object.keys(mqAnswers).length,
-    mqTotal: ROUND_COUNT * MQ_PER_ROUND,
+    quizCorrect, quizTotal: s.quiz,
+    mqCorrect, mqTotal: s.millionaire,
     correctTotal: quizCorrect + mqCorrect,
-    questionTotal: ROUND_COUNT * (quizPerRoundOf(session) + MQ_PER_ROUND),
-    accuracy: Math.round(((quizCorrect + mqCorrect) / Math.max(1, ROUND_COUNT * (quizPerRoundOf(session) + MQ_PER_ROUND))) * 100),
+    questionTotal,
+    accuracy: questionTotal ? Math.round(((quizCorrect + mqCorrect) / questionTotal) * 100) : 0,
     gamesCompleted: Object.values(games).filter((g) => g?.completed).length,
     gamesPlayed: Object.keys(games).length,
-    gameTotal: ROUND_COUNT,
+    gameTotal: s.missions,
     games,
-    rounds: hydrated.rounds,
-    questions: hydrated,
-    answers: { quiz: quizAnswers, mq: mqAnswers },
+    answers: run?.answers || {},
   };
 }
 
 /** Remaining milliseconds on the current question. */
-export function questionRemainingMs(session, now = Date.now()) {
-  const limitSeconds = session?.stage === STAGES.MILLIONAIRE ? MILLIONAIRE_SECONDS : QUIZ_SECONDS;
-  // Nullish, not falsy: a stageStartedAt of 0 is a real timestamp.
-  const elapsed = now - (session?.stageStartedAt ?? now);
-  return Math.max(0, limitSeconds * 1000 - elapsed);
+export function itemRemainingMs(plan, run, now = Date.now()) {
+  const item = plan?.[run?.itemIndex ?? 0];
+  const limit = item?.round === ITEM_MILLIONAIRE ? MILLIONAIRE_SECONDS : QUIZ_SECONDS;
+  const elapsed = now - (run?.stageStartedAt ?? now);
+  return Math.max(0, limit * 1000 - elapsed);
 }
