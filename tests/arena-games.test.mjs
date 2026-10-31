@@ -1249,6 +1249,182 @@ section("One stick, one question, and the load lands on the slab");
   instance.dispose();
 }
 
+section("The HUD talks about the room you are actually in");
+
+{
+  /* `currentArea` used to advance when a puzzle was ANSWERED, so
+   * solving the PPE question set it to the plant room while the
+   * player was still on the construction floor — and the HUD started
+   * telling them to take an extinguisher off a rack two rooms away. */
+  const { instance, record } = await boot("escapeChallenge");
+  const t = instance.__test;
+  runFrames(10);
+
+  const roomOf = (key) => t.rooms.find((r) => r.key === key);
+  const standIn = (key) => {
+    const r = roomOf(key);
+    t.controller.teleport((r.x0 + r.x1) / 2, 0, r.centreZ, -Math.PI / 2);
+    // The HUD is pushed on a 0.12 s timer, so a handful of frames is
+    // not enough for it to have noticed.
+    runFrames(20);
+  };
+
+  // Solve the PPE question, which is what used to move the area on.
+  const ppeItem = t.interactables.find((i) => i.key === "ppe");
+  ppeItem.done = true;
+  standIn("ppe");
+  check("standing on the construction floor, the HUD says so",
+    t.state.currentArea === 1, `area index ${t.state.currentArea}`);
+  check("it does not tell you to fetch an extinguisher from another room",
+    !/extinguisher off the rack/i.test(record.hud.prompt?.text || ""),
+    record.hud.prompt?.text);
+
+  standIn("fire");
+  check("walking into the plant room, the HUD follows",
+    t.state.currentArea === 2, `area index ${t.state.currentArea}`);
+  check("and NOW it offers the extinguisher rack",
+    /extinguisher/i.test(record.hud.prompt?.text || "")
+    || /extinguisher/i.test(record.hud.objective || ""),
+    record.hud.prompt?.text);
+
+  standIn("electrical");
+  check("walking back puts the HUD back", t.state.currentArea === 0);
+
+  instance.dispose();
+}
+
+section("Run, jump and first person, everywhere but the cab");
+
+{
+  const WALKERS = [
+    ["safetyMission", (t) => t.controller],
+    ["escapeChallenge", (t) => t.controller],
+    ["safestTower", (t) => t.walker],
+    ["emergencyCommander", (t) => t.walker],
+  ];
+
+  for (const [path, pick] of WALKERS) {
+    const { instance, record } = await boot(path);
+    const t = instance.__test;
+    const body = pick(t);
+    runFrames(20);
+
+    const labels = record.buttons.map((b) => b.label).join(" | ");
+    check(`${path}: there is a RUN control`, /RUN/i.test(labels), labels);
+    check(`${path}: there is a JUMP control`, /JUMP/i.test(labels), labels);
+    check(`${path}: the view button says what it switches between`,
+      /FPP|TPP/i.test(labels), labels);
+
+    /* Measured as SPEED rather than distance travelled.
+     *
+     * Walking a hazard game in a straight line for a second walks you
+     * into a hazard, which correctly opens its question and freezes
+     * movement — so a distance measurement is really measuring how
+     * far it is to the nearest hazard. */
+    instance.input.setJoystick(0, 1);
+    runFrames(20);
+    const walkSpeed = body.state.speed;
+    instance.input.press("run");
+    runFrames(20);
+    const runSpeed = body.state.speed;
+    instance.input.setJoystick(0, 0);
+    instance.input.release("run");
+    runFrames(5);
+    check(`${path}: running is faster than walking`, runSpeed > walkSpeed * 1.3,
+      `${walkSpeed.toFixed(2)} m/s walking vs ${runSpeed.toFixed(2)} m/s running`);
+
+    // Jumping leaves the ground. Done from a standstill so nothing
+    // can have opened a dialog in the meantime.
+    runFrames(30);
+    const groundY = body.position.y;
+    check(`${path}: the player is on the ground to jump from`, body.state.grounded === true);
+    instance.input.tap("jump");
+    let peak = groundY;
+    for (let i = 0; i < 30; i++) { runFrames(1); peak = Math.max(peak, body.position.y); }
+    check(`${path}: jumping leaves the ground`, peak > groundY + 0.25,
+      `rose ${(peak - groundY).toFixed(2)} m`);
+    runFrames(60);
+
+    instance.dispose();
+  }
+}
+
+section("First person and third person both work");
+
+{
+  for (const [path, pick] of [
+    ["safestTower", (t) => t.walker],
+    ["emergencyCommander", (t) => t.walker],
+  ]) {
+    const { instance } = await boot(path);
+    const t = instance.__test;
+    const body = pick(t);
+    runFrames(20);
+
+    check(`${path}: it starts over the shoulder`,
+      t.state.firstPerson === false && t.avatar.visible === true);
+
+    const thirdCam = lastRenderer.lastCamera.position.clone();
+    instance.input.tap("viewmode");
+    runFrames(10);
+
+    check(`${path}: switching to first person hides your own body`,
+      t.state.firstPerson === true && t.avatar.visible === false);
+    check(`${path}: the camera moves to the player's eyes`,
+      Math.abs(lastRenderer.lastCamera.position.y - (body.position.y + 1.68)) < 0.3,
+      `camera y ${lastRenderer.lastCamera.position.y.toFixed(2)}, eyes ${(body.position.y + 1.68).toFixed(2)}`);
+    check(`${path}: that is a different place from the orbit camera`,
+      lastRenderer.lastCamera.position.distanceTo(thirdCam) > 2,
+      `moved ${lastRenderer.lastCamera.position.distanceTo(thirdCam).toFixed(1)} m`);
+    check(`${path}: the controller has taken the camera`, body.ownsView === true);
+
+    // Looking around works in first person.
+    const beforeYaw = body.yaw;
+    instance.input.addLook(220, 0);
+    runFrames(6);
+    check(`${path}: dragging turns your head in first person`,
+      Math.abs(body.yaw - beforeYaw) > 0.05,
+      `${beforeYaw.toFixed(2)} -> ${body.yaw.toFixed(2)}`);
+
+    instance.input.tap("viewmode");
+    runFrames(10);
+    check(`${path}: switching back shows the body again`,
+      t.state.firstPerson === false && t.avatar.visible === true);
+    check(`${path}: and the orbit camera has the camera back`, body.ownsView === false);
+
+    instance.dispose();
+  }
+}
+
+section("The PPE store shows the kit");
+
+{
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium", fov: 70 });
+  const mat = kit.createMaterials(stage.cfg);
+  const geo = kit.createGeometries(stage.cfg);
+
+  const store = kit.buildPPEStation(geo, mat);
+  const used = new Set();
+  let meshes = 0;
+  store.traverse((o) => { if (o.isMesh) { meshes += 1; used.add(o.material); } });
+
+  // The mission asks you to choose your PPE, so the kit has to be
+  // identifiable by looking at it.
+  check("the store has hard hats on it", used.has(mat.yellow) && used.has(mat.white));
+  check("the store has hi-vis on it", used.has(mat.hiVis));
+  check("the store has boots and gloves on it", used.has(mat.black));
+  check("the store has a harness on it", used.has(mat.orange));
+  check("it is detailed enough to choose from", meshes > 40, `${meshes} meshes`);
+
+  const size = new THREE.Box3().setFromObject(store).getSize(new THREE.Vector3());
+  check("the store is a rack you can walk up to",
+    size.y > 2 && size.y < 3.4 && size.x > 2, size.toArray().map((v) => v.toFixed(1)).join(" x "));
+
+  stage.dispose();
+}
+
 section("Scene content");
 
 {

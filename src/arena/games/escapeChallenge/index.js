@@ -72,7 +72,8 @@ export const meta = {
     ["W A S D", "Move through the building"],
     ["Mouse", "Look around (click once to capture the mouse)"],
     ["Shift", "Run"],
-    ["V", "First person or over the shoulder"],
+    ["Space", "Jump"],
+    ["V", "FPP / TPP — first person or over the shoulder"],
     ["E", "Interact — decision point, key, door, extinguisher, or discharge it"],
     ["Wheel / Z", "Zoom in to read a sign or a tag from across the room"],
     ["T", "Plan view — the floor from above, as an escape plan"],
@@ -83,7 +84,8 @@ export const meta = {
     ["Drag right", "Look around while moving"],
     ["INTERACT", "Use a decision point, pick up a key, unlock a door, or use an extinguisher"],
     ["RUN", "Hold to move faster"],
-    ["VIEW", "Watch yourself from behind, or look through your own eyes"],
+    ["JUMP", "Tap to jump"],
+    ["FPP / TPP", "Watch yourself from behind, or look through your own eyes"],
     ["Pinch / ZOOM", "Zoom in to read a sign or a tag"],
     ["PLAN VIEW", "Look down on the floor plan and find your way out"],
     ["Pause", "Top-right of the HUD"],
@@ -1139,7 +1141,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     spawn: { x: firstRoom.x0 + 2, y: 0, z: firstRoom.centreZ },
     // Facing +x, down the route.
     yaw: -Math.PI / 2,
-    canJump: false,
+    // Jump and run are on in every mission except the crane.
+    canJump: true,
     onStep: () => sfx.step(),
   });
 
@@ -1209,7 +1212,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     { id: "run", label: "RUN", action: "run", mode: "hold", color: "#33C481" },
     { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#59B7FF" },
     { id: "top", label: "PLAN VIEW", action: "topview", mode: "tap", color: "#33C481" },
-    { id: "view", label: "VIEW", action: "viewmode", mode: "tap", color: "#59B7FF" },
+    { id: "view", label: "FPP / TPP", action: "viewmode", mode: "tap", color: "#59B7FF" },
+    { id: "jump", label: "JUMP", action: "jump", mode: "tap", color: "#59B7FF" },
   ]);
 
   // The floor seen from above, ceilings removed: a live escape plan of
@@ -1404,7 +1408,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         // The task is done. The door is NOT open — a key has been cut.
         spawnKey(item.key);
       }
-      state.currentArea = Math.min(AREA_ORDER.length - 1, AREA_ORDER.indexOf(item.key) + 1);
+      // currentArea is derived from where the player is, not from
+      // what they have solved — see areaUnderPlayer().
       return;
     }
 
@@ -1447,8 +1452,6 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         // Key in hand, at the door: this is the moment it opens.
         unlockDoor(door.roomKey);
         api.toast(`${puzzle ? puzzle.area : "The door"} unlocked. Go through.`, "good");
-        state.currentArea = Math.min(
-          AREA_ORDER.length - 1, AREA_ORDER.indexOf(door.roomKey) + 1);
         pushHud();
         return;
       }
@@ -1553,7 +1556,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     sfx.correct();
     api.toast("Fire out. CO2 is non-conductive and leaves no residue on electrical gear.", "good", points);
     spawnKey("fire");
-    state.currentArea = Math.min(AREA_ORDER.length - 1, AREA_ORDER.indexOf("fire") + 1);
+
   }
 
   /* ------------------------------ finishing ------------------------------ */
@@ -1617,7 +1620,27 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   let hudAccumulator = 0;
 
+  /**
+   * Which area the player is STANDING in.
+   *
+   * `currentArea` used to be advanced when a puzzle was answered or a
+   * door unlocked, so it ran ahead of the player: solving the PPE
+   * question set it to the plant room while you were still on the
+   * construction floor, and the HUD started telling you to take an
+   * extinguisher off a rack two rooms away. Where somebody is, is a
+   * question about where they are.
+   */
+  function areaUnderPlayer() {
+    const x = controller.position.x;
+    for (let i = 0; i < rooms.length; i++) {
+      if (x >= rooms[i].x0 - 1 && x <= rooms[i].x1 + 1) return i;
+    }
+    // Past the last door, out in the yard.
+    return x > rooms[rooms.length - 1].x1 ? rooms.length - 1 : 0;
+  }
+
   function pushHud() {
+    state.currentArea = areaUnderPlayer();
     const areaKey = AREA_ORDER[state.currentArea];
     const puzzle = PUZZLES[areaKey];
     const target = state.target;
@@ -1644,7 +1667,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       prompt = { text: mobile ? `Tap USE — discharge the ${state.carrying?.label} extinguisher` : `Press E — discharge the ${state.carrying?.label} extinguisher`, tone: "good", key: "E" };
     } else if (state.carrying && fire && !fire.out) {
       prompt = { text: `Carrying the ${state.carrying.label} extinguisher — get to the fire`, tone: "normal", key: "" };
-    } else if (fire && !fire.out && state.currentArea === AREA_ORDER.indexOf("fire")) {
+    } else if (fire && !fire.out && areaKey === "fire") {
       prompt = { text: "Take an extinguisher off the rack", tone: "normal", key: "" };
     } else if (state.doorsOpen && !state.escaped) {
       prompt = { text: "Walk into the assembly area", tone: "good", key: "" };

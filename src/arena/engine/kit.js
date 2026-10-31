@@ -3028,30 +3028,98 @@ export function buildPuddle(geo, mat, { radius = 1.1, oil = false } = {}) {
   return mesh;
 }
 
+/**
+ * The PPE store: a rack you can see the kit ON.
+ *
+ * Every item is built to look like the thing it is — a hard hat with a
+ * brim, a hi-vis with reflective bands, boots with a toe box, gloves,
+ * and a harness on a hook — because the mission asks you to choose
+ * your PPE and "a squashed sphere on a shelf" is not a choice you can
+ * make by looking.
+ */
 export function buildPPEStation(geo, mat) {
   const group = new THREE.Group();
-  group.add(box(geo, mat.steelDark, 1.8, 2.1, 0.5, 0, 1.05, 0));
-  group.add(box(geo, mat.blue, 1.7, 0.4, 0.45, 0, 1.95, 0.04, { shadow: false }));
-  // Shelves of helmets and vests.
-  [0.5, 1.05, 1.55].forEach((y, row) => {
-    group.add(box(geo, mat.galv, 1.6, 0.04, 0.42, 0, y, 0, { shadow: false }));
-    for (let i = 0; i < 4; i++) {
-      if (row === 0) {
-        const dome = new THREE.Mesh(geo.sphere, [mat.yellow, mat.white, mat.blue, mat.orange][i]);
-        dome.scale.set(0.3, 0.2, 0.3);
-        dome.position.set(-0.6 + i * 0.4, y + 0.1, 0);
-        group.add(dome);
-      } else if (row === 1) {
-        group.add(box(geo, mat.hiVis, 0.34, 0.3, 0.1, -0.6 + i * 0.4, y + 0.16, 0, { shadow: false }));
-      } else {
-        group.add(box(geo, mat.white, 0.3, 0.14, 0.2, -0.58 + i * 0.4, y + 0.1, 0, { shadow: false }));
-      }
-    }
+
+  // Open-fronted rack: back, sides, top rail.
+  group.add(box(geo, mat.steelDark, 2.6, 0.08, 0.62, 0, 2.3, 0));
+  group.add(box(geo, mat.galv, 2.6, 2.3, 0.06, 0, 1.15, -0.3, { shadow: false }));
+  [-1.3, 1.3].forEach((sx) => {
+    group.add(box(geo, mat.galv, 0.08, 2.3, 0.62, sx, 1.15, 0, { shadow: false }));
   });
-  const sign = buildSign(geo, mat, { text: "PPE must be worn", kind: "mandatory", height: 2.5, width: 0.9, post: false });
+  [0.52, 1.12, 1.72].forEach((y) => {
+    group.add(box(geo, mat.galv, 2.5, 0.05, 0.58, 0, y, 0, { shadow: false }));
+  });
+
+  /* ---- top shelf: hard hats ---- */
+  [mat.yellow, mat.white, mat.blue, mat.orange].forEach((hatMat, i) => {
+    const hat = new THREE.Group();
+    const dome = new THREE.Mesh(geo.sphere, hatMat);
+    dome.scale.set(0.3, 0.2, 0.32);
+    dome.position.y = 0.06;
+    hat.add(dome);
+    hat.add(cylinder(geo, hatMat, 0.19, 0.02, 0, 0, 0, { shadow: false }));
+    hat.add(box(geo, hatMat, 0.2, 0.02, 0.09, 0, -0.002, 0.17, { shadow: false }));
+    hat.position.set(-0.92 + i * 0.61, 1.78, 0.02);
+    group.add(hat);
+  });
+
+  /* ---- middle shelf: hi-vis jackets on hangers ---- */
+  for (let i = 0; i < 3; i++) {
+    const x = -0.78 + i * 0.78;
+    group.add(cylinder(geo, mat.galv, 0.012, 0.3, x, 1.98, 0, { shadow: false }));
+    const jacket = new THREE.Group();
+    jacket.add(box(geo, mat.hiVis, 0.46, 0.54, 0.11, 0, 0, 0));
+    // Shoulders and the two reflective bands.
+    jacket.add(box(geo, mat.hiVis, 0.56, 0.12, 0.11, 0, 0.21, 0, { shadow: false }));
+    [0.08, -0.1].forEach((by) => {
+      jacket.add(box(geo, mat.white, 0.47, 0.06, 0.12, 0, by, 0, { shadow: false }));
+    });
+    [-0.11, 0.11].forEach((bx) => {
+      jacket.add(box(geo, mat.white, 0.05, 0.3, 0.12, bx, 0.06, 0, { shadow: false }));
+    });
+    jacket.position.set(x, 1.52, 0.04);
+    group.add(jacket);
+  }
+
+  /* ---- lower shelf: safety boots, in pairs ---- */
+  for (let p = 0; p < 3; p++) {
+    [-0.07, 0.07].forEach((off) => {
+      const boot = new THREE.Group();
+      boot.add(box(geo, mat.black, 0.12, 0.17, 0.15, 0, 0.085, -0.02));
+      boot.add(box(geo, mat.black, 0.13, 0.08, 0.26, 0, 0.04, 0.06));
+      boot.add(box(geo, mat.steel, 0.12, 0.03, 0.08, 0, 0.015, 0.16, { shadow: false }));
+      boot.position.set(-0.78 + p * 0.78 + off, 1.15, 0.05);
+      group.add(boot);
+    });
+  }
+
+  /* ---- bottom shelf: gloves, and a harness on the end post ---- */
+  for (let i = 0; i < 4; i++) {
+    const g = new THREE.Group();
+    g.add(box(geo, mat.black, 0.09, 0.13, 0.05, 0, 0, 0, { shadow: false }));
+    g.add(box(geo, mat.black, 0.04, 0.06, 0.05, 0.05, 0.02, 0.01, { rotZ: 0.5, shadow: false }));
+    g.position.set(-0.86 + i * 0.57, 0.6, 0.06);
+    group.add(g);
+  }
+  const harness = new THREE.Group();
+  [-0.09, 0.09].forEach((hx) => {
+    harness.add(box(geo, mat.orange, 0.05, 0.5, 0.05, hx, 0, 0, { shadow: false }));
+  });
+  harness.add(box(geo, mat.orange, 0.26, 0.05, 0.05, 0, -0.14, 0, { shadow: false }));
+  harness.add(box(geo, mat.steel, 0.08, 0.08, 0.04, 0, 0.2, 0, { shadow: false }));
+  harness.position.set(1.12, 0.95, 0.22);
+  group.add(harness);
+
+  // Header board and the mandatory sign.
+  group.add(box(geo, mat.blue, 2.6, 0.42, 0.08, 0, 2.55, 0.02, { shadow: false }));
+  const sign = buildSign(geo, mat, {
+    text: "PPE must be worn", kind: "mandatory", height: 2.56, width: 0.78, post: false,
+  });
+  sign.position.set(-0.85, 0, 0.07);
   group.add(sign);
   return group;
 }
+
 
 /** Material hoist up the face of a building. */
 export function buildMaterialHoist(geo, mat, { height = 12, overloaded = false } = {}) {

@@ -69,7 +69,7 @@ export const meta = {
     ["Shift", "Run"],
     ["Space", "Jump"],
     ["C", "Crouch"],
-    ["V", "First person or over the shoulder"],
+    ["V", "FPP / TPP — first person or over the shoulder"],
     ["E", "Inspect and report the hazard you are standing at"],
     ["Wheel / Z", "Zoom in to look closer across the site"],
     ["T", "Top view — lift off the ground and see the whole site"],
@@ -80,7 +80,7 @@ export const meta = {
     ["Drag right", "Look around, at the same time as moving"],
     ["INSPECT", "Report the hazard you are standing at"],
     ["TOP VIEW", "See the whole site from the air — drag to swing around it"],
-    ["VIEW", "Watch yourself from behind, or look through your own eyes"],
+    ["FPP / TPP", "Watch yourself from behind, or look through your own eyes"],
     ["Pinch / ZOOM", "Zoom in to look closer"],
     ["RUN", "Hold to move faster"],
     ["JUMP", "Jump"],
@@ -758,7 +758,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     { id: "jump", label: "JUMP", action: "jump", mode: "tap", color: "#59B7FF" },
     { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
     { id: "top", label: "TOP VIEW", action: "topview", mode: "tap", color: "#33C481" },
-    { id: "view", label: "VIEW", action: "viewmode", mode: "tap", color: "#59B7FF" },
+    { id: "view", label: "FPP / TPP", action: "viewmode", mode: "tap", color: "#59B7FF" },
   ]);
 
   // Lift off the ground and look at the whole site from the air. Walking

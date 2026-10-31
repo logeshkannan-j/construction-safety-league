@@ -84,6 +84,9 @@ export const meta = {
     ["Click", "Act on whatever you clicked — a station, or the hazard"],
     ["1 – 8", "Swing the camera to a station you cannot find"],
     ["W A S D", "Walk the site — you are a person standing on it, not a camera"],
+    ["Shift", "Run"],
+    ["Space", "Jump"],
+    ["V", "FPP / TPP — first person or over the shoulder"],
     ["Mouse drag", "Look around the site"],
     ["Wheel / Z", "Zoom in on the scene"],
     ["T", "Top view — stand off and see where everyone is"],
@@ -93,6 +96,8 @@ export const meta = {
   mobileControls: [
     ["Tap", "Act on a station — the beacons show which are left"],
     ["Joystick", "Walk the site — bottom-left of the screen"],
+    ["RUN / JUMP", "Hold to run, tap to jump"],
+    ["FPP / TPP", "First person or over the shoulder"],
     ["Drag", "Look around the site"],
     ["Pinch / ZOOM", "Zoom in"],
     ["TOP VIEW", "Stand off and see the whole site from the air"],
@@ -562,6 +567,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   const missionMs = 420000 * difficulty.timeScale;
   const state = {
+    /** Looking through their eyes, rather than over their shoulder. */
+    firstPerson: false,
     remainingMs: missionMs,
     score: 0,
     stepIndex: 0,
@@ -627,6 +634,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     { id: "brief", label: "BRIEF", action: "brief", mode: "tap", color: "#59B7FF", primary: true },
     { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#9B7CF2" },
     { id: "top", label: "TOP VIEW", action: "topview", mode: "tap", color: "#33C481" },
+    { id: "view", label: "FPP / TPP", action: "viewmode", mode: "tap", color: "#59B7FF" },
+    { id: "run", label: "RUN", action: "run", mode: "hold", color: "#33C481" },
+    { id: "jump", label: "JUMP", action: "jump", mode: "tap", color: "#59B7FF" },
   ]);
 
   /* ------------------------------ camera ------------------------------ */
@@ -664,7 +674,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     colliders: hoarding.colliders,
     spawn: { x: incident.position.x + 10, y: 0, z: incident.position.z + 14 },
     yaw: 0,
-    canJump: false,
+    // Jump and run are on in every mission except the crane, where
+    // the player is sitting in a cab.
+    canJump: true,
     ownsCamera: false,
     ownsLook: false,
     walkSpeed: 3.6,
@@ -686,7 +698,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       poseWorker(avatar, { phase: walkPhase, moving: false, pose: "stand" });
       return;
     }
-    commander.setYaw(cam.yaw);
+    // In first person the controller owns its own yaw; in third
+    // person it is steered by the camera the player is looking from.
+    if (!state.firstPerson) commander.setYaw(cam.yaw);
     commander.update(dt);
 
     const moving = commander.moving;
@@ -703,6 +717,36 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     poseWorker(avatar, {
       phase: walkPhase, moving, running: commander.state.running, pose: "stand",
     });
+  }
+
+
+  /* ------------------------- first / third person -------------------------
+   *
+   * Third person is the default here because this mission is about
+   * reading a site, and seeing your own body tells you where you are
+   * standing relative to what you are inspecting. First person is for
+   * getting close to something.
+   *
+   * The movement solver normally runs with the camera and the look
+   * handed to the orbit camera above; switching to first person gives
+   * both back to it, because an orbit camera cannot drive a head.
+   */
+  function setFirstPerson(value) {
+    state.firstPerson = !!value;
+    commander.setOwnsView(state.firstPerson);
+    avatar.visible = !state.firstPerson;
+    if (!state.firstPerson) commander.setYaw(cam.yaw);
+    sfx.click();
+    pushHud();
+  }
+
+  /** The camera, whichever mode is in force. */
+  function driveCamera(dt) {
+    if (state.firstPerson) {
+      commander.syncCamera();
+      return;
+    }
+    updateCamera(dt);
   }
 
   function updateCamera(dt) {
@@ -1127,6 +1171,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
 
     if (input.wasPressed("brief")) showBrief();
+    if (input.wasPressed("viewmode")) setFirstPerson(!state.firstPerson);
     if (input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
 
     // ZOOM snaps between a wide view of the whole site and a close look
@@ -1218,7 +1263,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
 
     updateCommander(dt);
-    siteView.update(dt, input, () => updateCamera(dt));
+    siteView.update(dt, input, () => driveCamera(dt));
 
     if (cfg.shadows) {
       sun.position.set(cam.target.x + 40, 60, cam.target.z + 30);

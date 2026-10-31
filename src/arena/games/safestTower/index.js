@@ -70,6 +70,9 @@ export const meta = {
 
   desktopControls: [
     ["W A S D", "Walk the compound"],
+    ["Shift", "Run"],
+    ["Space", "Jump"],
+    ["V", "FPP / TPP — first person or over the shoulder"],
     ["Mouse drag", "Orbit the compound"],
     ["Wheel / Z", "Zoom in and out"],
     ["T", "Top view — the whole compound and the towers beyond it"],
@@ -81,6 +84,8 @@ export const meta = {
   ],
   mobileControls: [
     ["Joystick", "Walk the compound — bottom-left of the screen"],
+    ["RUN / JUMP", "Hold to run, tap to jump"],
+    ["FPP / TPP", "First person or over the shoulder"],
     ["Drag", "Orbit the compound"],
     ["Pinch / ZOOM", "Zoom in on a hazard"],
     ["TOP VIEW", "See the whole compound from the air"],
@@ -569,6 +574,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   const missionMs = BASE_SECONDS * 1000 * difficulty.timeScale;
   const state = {
+    /** Looking through their eyes, rather than over their shoulder. */
+    firstPerson: false,
     remainingMs: missionMs,
     score: 0,
     openHazard: null,     // the hazard whose question is on screen
@@ -621,7 +628,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     colliders: hoarding.colliders,
     spawn: { x: 0, y: 0, z: COMPOUND.depth / 2 - 6 },
     yaw: 0,
-    canJump: false,
+    // Jump and run are on in every mission except the crane, where
+    // the player is sitting in a cab.
+    canJump: true,
     ownsCamera: false,
     ownsLook: false,
     walkSpeed: 3.6,
@@ -669,7 +678,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
     // Forward on the joystick means away from the camera, so the
     // character is steered by the yaw the orbit camera is using.
-    walker.setYaw(cam.yaw);
+    // In first person the controller owns its own yaw; in third
+    // person it is steered by the camera the player is looking from.
+    if (!state.firstPerson) walker.setYaw(cam.yaw);
     walker.update(dt);
 
     const moving = walker.moving;
@@ -693,6 +704,36 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   function focusOn(position, { height = 2 } = {}) {
     cam.desired.set(position.x, position.y + height, position.z);
+  }
+
+
+  /* ------------------------- first / third person -------------------------
+   *
+   * Third person is the default here because this mission is about
+   * reading a site, and seeing your own body tells you where you are
+   * standing relative to what you are inspecting. First person is for
+   * getting close to something.
+   *
+   * The movement solver normally runs with the camera and the look
+   * handed to the orbit camera above; switching to first person gives
+   * both back to it, because an orbit camera cannot drive a head.
+   */
+  function setFirstPerson(value) {
+    state.firstPerson = !!value;
+    walker.setOwnsView(state.firstPerson);
+    avatar.visible = !state.firstPerson;
+    if (!state.firstPerson) walker.setYaw(cam.yaw);
+    sfx.click();
+    pushHud();
+  }
+
+  /** The camera, whichever mode is in force. */
+  function driveCamera(dt) {
+    if (state.firstPerson) {
+      walker.syncCamera();
+      return;
+    }
+    updateCamera(dt);
   }
 
   function updateCamera(dt) {
@@ -905,6 +946,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       { id: "next", label: "NEXT", action: "next", mode: "tap", color: "#FFC629", primary: true },
       { id: "zoom", label: "ZOOM", action: "zoom", mode: "tap", color: "#59B7FF" },
       { id: "top", label: "TOP VIEW", action: "topview", mode: "tap", color: "#9B7CF2" },
+      { id: "view", label: "FPP / TPP", action: "viewmode", mode: "tap", color: "#59B7FF" },
+      { id: "run", label: "RUN", action: "run", mode: "hold", color: "#33C481" },
+      { id: "jump", label: "JUMP", action: "jump", mode: "tap", color: "#59B7FF" },
     ]);
   }
 
@@ -935,7 +979,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         cam.distance = cam.distance > 24 ? 13 : 40;
         sfx.click();
       }
-      if (input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
+      if (input.wasPressed("viewmode")) setFirstPerson(!state.firstPerson);
+    if (input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
       if (state.openHazard) {
         [1, 2, 3, 4].forEach((n) => {
           if (input.wasPressed(`answer${n}`)) answer(state.openHazard, n - 1);
@@ -951,7 +996,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       hazard.outline.scale.setScalar(pulse);
     });
 
-    siteView.update(dt, input, () => updateCamera(dt));
+    siteView.update(dt, input, () => driveCamera(dt));
 
     if (cfg.shadows) {
       sun.position.set(cam.target.x + 36, 62, cam.target.z + 28);

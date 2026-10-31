@@ -65,6 +65,12 @@ export function createFirstPerson(camera, input, {
   const forward = new THREE.Vector3();
   const right = new THREE.Vector3();
 
+  // Switchable at runtime: the two orbit-camera games hand the camera
+  // over when the player asks for first person and take it back when
+  // they go to third.
+  let hasCamera = ownsCamera;
+  let hasLook = ownsLook;
+
   const state = {
     yaw,
     pitch: 0,
@@ -310,6 +316,19 @@ export function createFirstPerson(camera, input, {
       if (Number.isFinite(value)) state.yaw = value;
     },
 
+    /**
+     * Hands the camera and the look input to this controller, or back.
+     *
+     * First person means looking through their eyes, so the controller
+     * has to own both: an orbit camera cannot drive a head.
+     */
+    setOwnsView(value) {
+      hasCamera = !!value;
+      hasLook = !!value;
+      if (hasCamera) controller.syncCamera();
+    },
+    get ownsView() { return hasCamera; },
+
     /** Direction the camera is looking, for raycasts and prompts. */
     getLookDirection(target = new THREE.Vector3()) {
       camera.getWorldDirection(target);
@@ -317,7 +336,7 @@ export function createFirstPerson(camera, input, {
     },
 
     syncCamera() {
-      if (!ownsCamera) return;
+      if (!hasCamera) return;
       const eye = state.crouching ? crouchEyeHeight : eyeHeight;
       const bobAmount = state.grounded ? Math.sin(state.bob) * 0.022 * (state.running ? 1.5 : 1) : 0;
       const eyeY = position.y + eye + bobAmount;
@@ -369,7 +388,7 @@ export function createFirstPerson(camera, input, {
       // When something else owns the look (an orbit camera), it also
       // owns the yaw: taking the drag here would steal it, and moving
       // relative to a yaw nobody is steering sends the player sideways.
-      const look = ownsLook ? input.consumeLook() : { dx: 0, dy: 0 };
+      const look = hasLook ? input.consumeLook() : { dx: 0, dy: 0 };
       state.yaw -= look.dx * lookSpeed;
       state.pitch -= look.dy * lookSpeed;
       state.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, state.pitch));

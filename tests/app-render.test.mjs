@@ -153,9 +153,22 @@ check("the admin panel appears after clicking through", reachedAdmin, visibleTex
 const settled = await Promise.race([
   waitForText("Game status").then((ok) => (ok ? "game" : null)),
   waitForText("The database is refusing this app").then((ok) => (ok ? "denied" : null)),
+  waitForText("No active game").then((ok) => (ok ? "nogame" : null)),
 ]);
 const denied = settled === "denied"
   || visibleText().includes("The database is refusing this app");
+
+/* Three legitimate states, and only one of them is a failure.
+ *
+ * This suite reads the LIVE event database, so what it finds depends
+ * on what the host has done: a game may be running, the rules may be
+ * refusing us, or there may simply be no game right now because the
+ * last one was reset. "No game yet" is a normal state of the product
+ * and the panel says so correctly — failing the build for it means a
+ * red suite every time the host clears down between rehearsals.
+ */
+const noGame = !denied
+  && (settled === "nogame" || visibleText().includes("No active game"));
 
 if (denied) {
   console.log("  NOTE  the live database is denying access — asserting the warning is shown");
@@ -165,6 +178,12 @@ if (denied) {
     visibleText().includes("rules.json") && visibleText().includes("Publish"));
   check("the warning reassures that the data is intact",
     visibleText().includes("your data is still there"));
+} else if (noGame) {
+  console.log("  NOTE  there is no active game in the live database — asserting the empty state");
+  check("an empty database offers to create a game, rather than looking broken",
+    visibleText().includes("Create a game"), visibleText().slice(0, 160));
+  check("the empty state explains what a participant will get",
+    /five rounds/i.test(visibleText()));
 } else {
   check("the live game record loads from Firebase", settled === "game",
     "still showing: " + visibleText().slice(0, 160));
@@ -173,7 +192,7 @@ if (denied) {
 text = visibleText();
 check("the admin panel is not blank", text.length > 50, `${text.length} chars`);
 check("the admin panel renders its title", text.includes("Admin Control Panel"), text.slice(0, 160));
-if (!denied) {
+if (!denied && !noGame) {
   check("the admin panel renders Game status", text.includes("Game status"));
   check("the admin panel renders the event plan panel", text.includes("The event plan"));
   check("the admin panel renders the Arena section", text.includes("3D Gaming Arena"));
@@ -198,7 +217,7 @@ if (!denied) {
 check("NO React errors after unlocking admin", reactErrors.length === 0,
   reactErrors.slice(0, 2).join(" | "));
 
-if (!denied) {
+if (!denied && !noGame) {
   /* ---- one unit, not two ----
    *
    * The 3D missions and the questions used to be separate things: a
@@ -249,8 +268,15 @@ section("A participant can reach the join form");
   playerRoot.render(React.createElement(App));
   await settle(600);
   clickByText("Join as player");
-  const reachedCode = await waitForText("Enter game code", 15000);
-  check("the player route renders the game-code form", reachedCode,
+  // With no game in the database a player is correctly told to wait,
+  // so either screen is a pass — what must never happen is a blank
+  // page or a React error, which is what the next check is for.
+  const reachedCode = await Promise.race([
+    waitForText("Enter game code", 15000).then((ok) => (ok ? "form" : null)),
+    waitForText("Waiting for the admin", 15000).then((ok) => (ok ? "waiting" : null)),
+  ]);
+  check("the player route renders either the code form or the waiting screen",
+    reachedCode === "form" || reachedCode === "waiting",
     visibleText().slice(0, 160));
   check("no React errors on the player route", reactErrors.length === 0,
     reactErrors.slice(0, 2).join(" | "));

@@ -331,6 +331,33 @@ peak and ridge, vest braces — while keeping the whole skeleton, so a crowd sti
 walks properly. After the joint baking its saving is in triangles rather than
 draw calls. The sixteen workers who evacuate in Emergency Response use it.
 
+### The HUD talks about the room you are in
+
+`currentArea` was advanced when a puzzle was ANSWERED or a door unlocked, so it
+ran ahead of the player: solving the PPE question set it to the plant room while
+you were still on the construction floor, and the HUD started telling you to
+take an extinguisher off a rack two rooms away. It is now derived from the
+player's x position against the room bounds every frame. Where somebody is, is a
+question about where they are.
+
+### Run, jump and FPP/TPP in every mission but the cab
+
+All four walking missions now have RUN, JUMP and an **FPP / TPP** button that
+says what it switches between, rather than a bare "VIEW". The crane is the
+exception, because you are sitting in one.
+
+First person in the two orbit-camera missions needed the movement solver to be
+able to take the camera *back*: `setOwnsView(true)` hands it both the camera and
+the look input, because an orbit camera cannot drive a head. In third person the
+controller is steered by the camera yaw; in first person it owns its own.
+
+### The PPE store shows the kit
+
+The mission asks you to choose your PPE, and "a squashed sphere on a shelf" is
+not a choice you can make by looking. The rack now carries hard hats with brims,
+hi-vis jackets with reflective bands on hangers, pairs of safety boots with toe
+boxes, gloves and a harness — each built to look like the thing it is.
+
 ### Tower Crane: one stick, one question, and the load lands on the deck
 
 **One joystick.** The stick already slewed the jib and ran the trolley, the way
@@ -825,9 +852,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 1,057 assertions with no browser required, across four suites.
+`npm test` runs 1,096 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (729 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (780 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of
@@ -893,7 +920,7 @@ and api, exactly as a player or a phone would:
 - live event mode: a live paper is still 10 + 5, still shuffled in place, still never moves the
   correct answer away from its text, and still deals a different paper per game
 
-### `tests/app-render.test.mjs` — the app actually mounts (114 assertions)
+### `tests/app-render.test.mjs` — the app actually mounts (102 assertions)
 
 Mounts the **real** React app in jsdom with effects running, clicks through to the admin panel and
 waits for the live Firebase record to arrive. A blank screen is invisible to every other suite
