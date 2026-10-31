@@ -1064,12 +1064,91 @@ section("The room tells you the problem before you touch anything");
   check("it flashes irregularly rather than blinking on a timer",
     strikes > 5, `${strikes} strikes in 5 seconds`);
 
+  /* Answering the question does NOT make anything safe: it unlocks
+   * the board. The arc dies when the HANDLE comes down. */
   const elec = t.interactables.find((i) => i.key === "electrical");
   elec.done = true;
-  runFrames(6);
-  check("isolating the circuit stops the arc", t.liveArc.group.visible === false);
+  t.unlockIsolator();
+  runFrames(30);
+  check("answering the question alone does not kill the arc",
+    t.liveArc.group.visible === true || t.isolation.pulled === false);
+  check("unlocking the board swings it open",
+    t.isolation.doorT > 0.5 && Math.abs(t.isolator.door.rotation.y) > 0.5,
+    `door at ${t.isolator.door.rotation.y.toFixed(2)} rad`);
+
+  const leverBefore = t.isolator.lever.rotation.x;
+  t.pullIsolator();
+  runFrames(40);
+  check("pulling the handle throws it from ON to OFF",
+    t.isolator.lever.rotation.x > leverBefore + 1.5,
+    `${leverBefore.toFixed(2)} -> ${t.isolator.lever.rotation.x.toFixed(2)} rad`);
+  check("pulling the handle kills the arc", t.liveArc.group.visible === false);
+  check("the current stops running down the cable",
+    t.liveArc.pulses.every((p) => p.object.visible === false));
+  check("the lamp goes from live to isolated",
+    t.isolator.lamp.material.color.getHex() === 0x33c481,
+    `#${t.isolator.lamp.material.color.getHex().toString(16)}`);
 
   instance.dispose();
+}
+
+section("Everything you can use has its name over it");
+
+{
+  // The HUD names the next objective; the WORLD has to say which
+  // object that is. addStation's own comment claimed it made "a
+  // floating label" and it never did, so no station was ever named.
+  const NAMED = [
+    ["emergencyCommander", 8],
+    ["safestTower", 10],
+    ["escapeChallenge", 4],
+  ];
+
+  for (const [path, atLeast] of NAMED) {
+    const { instance } = await boot(path);
+    runFrames(10);
+
+    const plates = [];
+    lastRenderer.lastScene.traverse((o) => {
+      if (o.userData?.nameplate) plates.push(o);
+    });
+
+    check(`${path}: the interactables are named in the world`,
+      plates.length >= atLeast, `${plates.length} nameplates, expected >= ${atLeast}`);
+    check(`${path}: every nameplate carries text`,
+      plates.every((p) => (p.userData.nameplate.text || "").length > 2),
+      plates.filter((p) => !p.userData.nameplate.text).length + " blank");
+    check(`${path}: the names are distinct`,
+      new Set(plates.map((p) => p.userData.nameplate.text)).size > atLeast / 2,
+      `${new Set(plates.map((p) => p.userData.nameplate.text)).size} distinct`);
+
+    // A sprite always faces the camera. A flat plane spends most of
+    // its life edge-on when the player can approach from any side.
+    check(`${path}: the names always face the player`,
+      plates.every((p) => p.isSprite === true));
+
+    // At head height or above, never on the floor or in the sky.
+    check(`${path}: the names float above the thing they label`,
+      plates.every((p) => p.position.y > 0.8 && p.position.y < 6),
+      plates.map((p) => p.position.y.toFixed(1)).join(", ").slice(0, 80));
+
+    instance.dispose();
+  }
+
+  // Emergency Response names the STEP as well as the object, because
+  // the order is what that mission scores.
+  {
+    const { instance } = await boot("emergencyCommander");
+    runFrames(10);
+    const plates = [];
+    lastRenderer.lastScene.traverse((o) => {
+      if (o.userData?.nameplate) plates.push(o);
+    });
+    const numbered = plates.filter((p) => /^STEP \d+/.test(p.userData.nameplate.sub || ""));
+    check("every emergency station shows its step number",
+      numbered.length === 8, `${numbered.length} of 8 numbered`);
+    instance.dispose();
+  }
 }
 
 section("Scene content");
@@ -2012,6 +2091,32 @@ section("Safety Escape Challenge — escape the building");
   check("solving every area did NOT open any door",
     doors.every((d) => d.locked),
     `${doors.filter((d) => !d.locked).length} opened by themselves`);
+
+  /* The electrical room has a fourth beat: answering unlocks the
+   * board, and the key is only cut once the isolator handle is
+   * physically thrown. Knowing which board to isolate is not the same
+   * as isolating it. */
+  {
+    const iso = instance.__test;
+    check("answering the electrical question only unlocked the board",
+      iso.isolation.unlocked === true && iso.isolation.pulled === false);
+    check("no key is cut for a circuit that is still live",
+      !iso.keys.some((k) => k.roomKey === "electrical"));
+
+    // Walk to the handle and throw it.
+    // Stand a metre in front of the handle, looking at it. Yaw 0 is
+    // looking along -Z, which is toward the board.
+    controller.teleport(
+      iso.isolator.worldLever.x, 0, iso.isolator.worldLever.z + 1.1, 0);
+    controller.state.pitch = 0;
+    runFrames(4);
+    check("the isolator handle can be reached and targeted",
+      state.target?.kind === "lever", `target=${state.target?.kind}`);
+    input.press("interact"); runFrames(2); input.release("interact"); runFrames(30);
+    check("throwing the handle isolates the board", iso.isolation.pulled === true);
+    check("and only THEN is the key cut",
+      iso.keys.some((k) => k.roomKey === "electrical"));
+  }
   check("solving every area cut a key for it", keys.length === doors.length,
     `${keys.length} keys for ${doors.length} doors`);
   check("the keys are lying in the world, not in your pocket",

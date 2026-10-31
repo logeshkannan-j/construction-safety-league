@@ -331,6 +331,37 @@ peak and ridge, vest braces — while keeping the whole skeleton, so a crowd sti
 walks properly. After the joint baking its saving is in triangles rather than
 draw calls. The sixteen workers who evacuate in Emergency Response use it.
 
+### Everything you can use has its name over it
+
+`buildNameplate()` is a SPRITE, so it always faces the camera — a name you have
+to walk round to read is not a name, and on an open site the player approaches
+from any direction. Every station in Emergency Response, every hazard in Spot
+the Hazards and every decision point in Safety Escape carries one.
+
+Emergency Response was the worst case: the HUD said *"Step 1: take command —
+Command post, 4 m N"* while nothing in the world said which object that was.
+`addStation`'s own comment claimed it made "a floating label" and it never did.
+Each station's plate now gives the step number, the action and the name, and
+dims once the step is done so it stops competing with the ones still to do.
+
+### Isolating the board is something you do, not something you say
+
+The electrical room is four beats now, for the same reason the doors use a key:
+
+1. Answer the question — which board, which procedure.
+2. The board **unlocks and swings open**, showing busbars and breakers.
+3. Walk to it and press E on the **isolator handle**.
+4. It throws from ON down to OFF, the lamp goes red → green, the arc dies, and
+   only *then* is the key cut.
+
+Knowing which board to isolate is not isolating it, and the mission now makes
+that distinction physically. `buildIsolatorPanel()` returns the door, the lever
+and the lamp as separate pivoted parts so all three animate.
+
+A run of armoured cable goes from the board to the door frame with **pulses of
+current chasing along it**. That is what joins the two halves of the scenario
+together: *that* board feeds *this* frame, which is why it is the one to throw.
+
 ### The room has to state the problem
 
 Every escape area's scenario only existed inside the dialog that opened when you
@@ -737,9 +768,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 1,014 assertions with no browser required, across four suites.
+`npm test` runs 1,040 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (686 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (712 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of

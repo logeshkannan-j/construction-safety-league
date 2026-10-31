@@ -2654,6 +2654,91 @@ export function buildFireExtinguisher(geo, mat, { onStand = true, cls = "ABC" } 
   return group;
 }
 
+/**
+ * A distribution board you can actually open and switch off.
+ *
+ * The door is hinged on a pivot group and the isolator handle is a
+ * lever on its own pivot, so both can be animated: the door swings,
+ * the handle throws from ON down to OFF, and the lamp goes from red
+ * to green. Behind the door are busbars and a row of breakers, so
+ * opening it reveals something rather than an empty box.
+ *
+ * Returns the parts a game needs to drive it:
+ *   { group, door, lever, lamp, leverAnchor }
+ * `leverAnchor` is where the player has to stand to reach the handle.
+ */
+export function buildIsolatorPanel(geo, mat, { width = 1.1, height = 2.0 } = {}) {
+  const group = new THREE.Group();
+  const bodyY = height / 2 + 0.3;
+
+  // Plinth and enclosure.
+  group.add(box(geo, mat.galv, width * 0.5, 0.3, 0.4, 0, 0.15, 0));
+  group.add(box(geo, mat.steelDark, width, height, 0.36, 0, bodyY, 0));
+
+  /* ---- the inside, revealed when the door opens ---- */
+  const inner = new THREE.Group();
+  inner.position.set(0, bodyY, 0.02);
+  group.add(inner);
+  inner.add(box(geo, mat.black, width - 0.14, height - 0.16, 0.02, 0, 0, 0.15, { shadow: false }));
+  // Three copper busbars down the back.
+  [-0.26, 0, 0.26].forEach((bx) => {
+    inner.add(box(geo, mat.orange, 0.05, height - 0.44, 0.03, bx, 0, 0.16, { shadow: false }));
+  });
+  // Rows of breakers.
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 5; c++) {
+      inner.add(box(geo, mat.white, 0.08, 0.14, 0.05,
+        -0.26 + c * 0.13, 0.42 - r * 0.22, 0.17, { shadow: false }));
+    }
+  }
+
+  /* ---- the isolator handle ----
+   * Pivoted at its top so it throws through 90 degrees: pointing up
+   * is ON, pointing down is OFF, which is the way round every real
+   * rotary isolator works. */
+  const lever = new THREE.Group();
+  lever.position.set(width * 0.3, bodyY - 0.45, 0.19);
+  lever.add(cylinder(geo, mat.steel, 0.045, 0.1, 0, 0, 0.03, { rotX: Math.PI / 2 }));
+  const handle = box(geo, mat.red, 0.075, 0.34, 0.075, 0, 0.17, 0.06);
+  lever.add(handle);
+  lever.add(box(geo, mat.black, 0.1, 0.1, 0.06, 0, 0.32, 0.06, { shadow: false }));
+  group.add(lever);
+
+  // ON / OFF marked beside the handle's two positions.
+  group.add(box(geo, mat.white, 0.1, 0.05, 0.02, width * 0.3 - 0.16, bodyY - 0.1, 0.2, { shadow: false }));
+  group.add(box(geo, mat.white, 0.1, 0.05, 0.02, width * 0.3 - 0.16, bodyY - 0.78, 0.2, { shadow: false }));
+
+  /* ---- the door, hinged on the left edge ---- */
+  const door = new THREE.Group();
+  door.position.set(-width / 2, bodyY, 0.19);
+  const leaf = box(geo, mat.steelDark, width, height - 0.04, 0.05, width / 2, 0, 0);
+  door.add(leaf);
+  const warn = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({
+    map: signTexture("Danger 415V", "warning"), side: THREE.DoubleSide,
+  }));
+  warn.scale.set(width * 0.62, width * 0.47, 1);
+  warn.position.set(width / 2, height * 0.22, 0.031);
+  warn.castShadow = false;
+  door.add(warn);
+  door.add(box(geo, mat.galv, 0.07, 0.2, 0.06, width - 0.12, -0.2, 0.04, { shadow: false }));
+  group.add(door);
+
+  /* ---- live / isolated lamp ---- */
+  const lamp = new THREE.Mesh(geo.sphere, new THREE.MeshBasicMaterial({ color: 0xea4f4f }));
+  lamp.scale.setScalar(0.11);
+  lamp.position.set(-width * 0.3, bodyY + height * 0.38, 0.21);
+  group.add(lamp);
+
+  return {
+    group,
+    door,
+    lever,
+    lamp,
+    leverAnchor: new THREE.Vector3(width * 0.3, bodyY - 0.3, 0.9),
+    height,
+  };
+}
+
 export function buildElectricalPanel(geo, mat, { unsafe = false, height = 1.6 } = {}) {
   const group = new THREE.Group();
   group.add(box(geo, mat.steelDark, 0.9, height, 0.32, 0, height / 2 + 0.3, 0));

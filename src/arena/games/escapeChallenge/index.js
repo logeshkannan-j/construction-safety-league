@@ -27,7 +27,7 @@ import {
   buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadder,
   buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
   buildZoneMarker, buildAriaMark, buildBrandedTower, poseWorker, buildKey, buildInfoBoard,
-  buildNameplate,
+  buildNameplate, buildIsolatorPanel,
   collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
@@ -153,6 +153,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /** The arc flashing off the live door frame in the electrical room. */
   let liveArc = null;
+  /** The main board: door, isolator handle and lamp. */
+  let isolator = null;
 
   /** Offcuts falling through the slab opening on the construction floor. */
   const fallingDebris = [];
@@ -180,15 +182,27 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     if (!liveArc) return;
     liveArc.phase += dt;
     const t = liveArc.phase;
-    // Stops the moment the player actually isolates the circuit —
-    // read off the decision point itself rather than a separate flag,
-    // because a separate flag is a thing that can be left unset. The
-    // first version checked `state.isolated`, which this game has
-    // never had, so the arc would have flashed for the whole run.
-    if (interactables.some((i) => i.key === "electrical" && i.done)) {
+    // The arc dies when the HANDLE comes down, not when the question
+    // is answered. Knowing which board to isolate does not isolate it.
+    if (isolation.pulled) {
       liveArc.group.visible = false;
+      liveArc.pulses.forEach((p) => { p.object.visible = false; });
       return;
     }
+
+    // Current chasing along the cable from the board to the frame.
+    liveArc.pulses.forEach((pulse) => {
+      pulse.t = (pulse.t + dt * 0.55) % 1;
+      const path = liveArc.path;
+      const at = pulse.t * (path.length - 1);
+      const i = Math.floor(at);
+      const point = path[i].clone().lerp(path[Math.min(path.length - 1, i + 1)], at - i);
+      pulse.object.position.copy(point);
+      pulse.object.visible = true;
+      const fade = Math.sin(pulse.t * Math.PI);
+      pulse.object.material.opacity = 0.35 + fade * 0.6;
+      pulse.object.scale.setScalar(0.1 + fade * 0.12);
+    });
     const strike = Math.sin(t * 23) * Math.sin(t * 7.3) + Math.sin(t * 41) * 0.4;
     const on = strike > 0.35;
     liveArc.group.visible = on;
@@ -201,6 +215,56 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
     liveArc.glow.scale.setScalar(1.0 + intensity * 0.9);
     liveArc.glow.material.opacity = 0.12 + intensity * 0.3;
+  }
+
+  /* ===================== isolating the main board =====================
+   *
+   * Answering the question correctly does not make anything safe. It
+   * tells you WHICH board and WHICH procedure; the board then unlocks
+   * and you have to walk to it and physically throw the handle. Only
+   * when the handle is down is the circuit dead, the arc out and the
+   * key cut.
+   *
+   * Three beats again — decide, walk, act — for the same reason the
+   * doors use a key rather than opening themselves.
+   */
+  const isolation = { unlocked: false, pulled: false, doorT: 0, leverT: 0 };
+
+  function unlockIsolator() {
+    if (!isolator || isolation.unlocked) return;
+    isolation.unlocked = true;
+    sfx.interact();
+    api.toast("Board unlocked. Open it and pull the isolator down to OFF.", "info");
+    pushHud();
+  }
+
+  function pullIsolator() {
+    if (!isolator || !isolation.unlocked || isolation.pulled) return;
+    isolation.pulled = true;
+    sfx.doorOpen();
+    isolator.lamp.material = new THREE.MeshBasicMaterial({ color: 0x33c481 });
+    api.toast("Isolated. The frame is dead — and it stays locked off.", "good");
+    // NOW the key is cut, not when the question was answered.
+    spawnKey("electrical");
+    pushHud();
+  }
+
+  /** Swings the door and throws the handle, over time rather than instantly. */
+  function updateIsolator(dt) {
+    if (!isolator) return;
+    const wantDoor = isolation.unlocked ? 1 : 0;
+    const wantLever = isolation.pulled ? 1 : 0;
+    if (isolation.doorT !== wantDoor) {
+      isolation.doorT += (wantDoor - isolation.doorT) * Math.min(1, dt * 2.6);
+      if (Math.abs(wantDoor - isolation.doorT) < 0.004) isolation.doorT = wantDoor;
+      isolator.door.rotation.y = -isolation.doorT * 2.0;
+    }
+    if (isolation.leverT !== wantLever) {
+      isolation.leverT += (wantLever - isolation.leverT) * Math.min(1, dt * 5.5);
+      if (Math.abs(wantLever - isolation.leverT) < 0.004) isolation.leverT = wantLever;
+      // Up is ON, down is OFF: a 160-degree throw about the pivot.
+      isolator.lever.rotation.x = isolation.leverT * 2.8;
+    }
   }
 
   function updateFallingDebris(dt) {
@@ -564,7 +628,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const plate = buildNameplate(String(label).toUpperCase(), {
       sub: "PRESS E", accent: "#9B7CF2", width: 3.4,
     });
-    plate.position.set(position.x, position.y + 1.0, position.z);
+    // Most decision points are given as { x, z } with no y at all, so
+    // `position.y + 1` is NaN and the plate ends up nowhere. Default
+    // it the same way the ring below does.
+    plate.position.set(position.x, (position.y ?? 0.12) + 1.9, position.z);
     scene.add(plate);
     scene.add(marker);
     animated.push({ kind: "ring", object: marker, phase: Math.random() * 6 });
@@ -586,10 +653,25 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   /* ---- Area 1: electrical room ---- */
   {
     const room = roomByKey("electrical");
-    const main = buildElectricalPanel(geo, mat, { unsafe: false, height: 2.0 });
-    main.position.set(room.x0 + 3, 0, room.z0 + 0.9);
-    scene.add(main);
-    colliders.push(collider(room.x0 + 3, 1.2, room.z0 + 0.9, 1, 2.2, 0.5));
+
+    /* The main board is a real one: it opens, and there is a handle
+     * inside to throw. Answering the question correctly unlocks the
+     * door; after that the player has to walk to it and physically
+     * pull the isolator down before anything is dead. */
+    const MAIN = { x: room.x0 + 3, z: room.z0 + 0.9 };
+    isolator = buildIsolatorPanel(geo, mat, { width: 1.2, height: 2.0 });
+    isolator.group.position.set(MAIN.x, 0, MAIN.z);
+    scene.add(isolator.group);
+    colliders.push(collider(MAIN.x, 1.2, MAIN.z, 1.3, 2.3, 0.5));
+    isolator.worldLever = new THREE.Vector3(
+      MAIN.x + isolator.leverAnchor.x, isolator.leverAnchor.y, MAIN.z + isolator.leverAnchor.z
+    );
+
+    const mainPlate = buildNameplate("MAIN DISTRIBUTION BOARD", {
+      sub: "THE ISOLATOR IS IN HERE", accent: "#EA4F4F", width: 4.2,
+    });
+    mainPlate.position.set(MAIN.x, 3.0, MAIN.z);
+    scene.add(mainPlate);
 
     const localIsolator = buildElectricalPanel(geo, mat, { unsafe: false, height: 1.2 });
     localIsolator.position.set(room.x1 - 3.4, 0, room.z1 - 0.9);
@@ -634,7 +716,50 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     arcGroup.add(arcGlow);
     arcGroup.position.set(room.doorAt.x - 0.35, 0, room.doorAt.z);
     scene.add(arcGroup);
-    liveArc = { group: arcGroup, glow: arcGlow, phase: 0 };
+
+    /* ---- the cable that is making the frame live ----
+     *
+     * A run of armoured cable from the board to the door frame, with
+     * pulses of current travelling visibly along it. It is the thing
+     * that joins the two halves of the scenario together: THAT board
+     * feeds THIS frame, which is why that is the one to isolate. */
+    const cablePath = [];
+    const steps = 26;
+    for (let i = 0; i <= steps; i++) {
+      const u = i / steps;
+      cablePath.push(new THREE.Vector3(
+        MAIN.x + (room.doorAt.x - 0.4 - MAIN.x) * u,
+        2.5 - Math.sin(u * Math.PI) * 0.35,
+        MAIN.z + (room.doorAt.z - MAIN.z) * u
+      ));
+    }
+    for (let i = 0; i < steps; i++) {
+      const a = cablePath[i];
+      const b = cablePath[i + 1];
+      const mid = a.clone().lerp(b, 0.5);
+      const seg = box(geo, mat.black, a.distanceTo(b) * 1.08, 0.07, 0.07,
+        mid.x, mid.y, mid.z, { shadow: false });
+      seg.lookAt(b);
+      seg.rotateY(Math.PI / 2);
+      scene.add(seg);
+      // Clips holding it to the wall.
+      if (i % 6 === 0) {
+        scene.add(box(geo, mat.galv, 0.05, 0.12, 0.05, mid.x, mid.y + 0.08, mid.z, { shadow: false }));
+      }
+    }
+
+    // Three pulses chasing along the cable, so you can see it is live.
+    const pulses = [];
+    for (let i = 0; i < 3; i++) {
+      const pulse = new THREE.Mesh(geo.sphere, new THREE.MeshBasicMaterial({
+        color: 0xbfe6ff, transparent: true, opacity: 0.9, depthWrite: false,
+      }));
+      pulse.scale.setScalar(0.17);
+      scene.add(pulse);
+      pulses.push({ object: pulse, t: i / 3 });
+    }
+
+    liveArc = { group: arcGroup, glow: arcGlow, phase: 0, path: cablePath, pulses };
 
     addInteractable({
       key: "electrical",
@@ -1113,6 +1238,21 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       if (rank > bestRank) { bestRank = rank; best = { kind: "puzzle", item }; }
     }
 
+    // The isolator handle, once the board has been unlocked and
+    // before it has been thrown. Highest priority of all: it is the
+    // only thing in the room that matters at that point.
+    if (isolator && isolation.unlocked && !isolation.pulled) {
+      toTarget.copy(isolator.worldLever).sub(camera.position);
+      const distance = toTarget.length();
+      if (distance <= 3.0) {
+        toTarget.normalize();
+        if (toTarget.dot(lookDir) > 0.05) {
+          bestRank = 99;
+          best = { kind: "lever" };
+        }
+      }
+    }
+
     // A key lying in the room. Offered ahead of everything else at
     // close range, because if one is out it is the thing to do next.
     for (const entry of keys) {
@@ -1213,8 +1353,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       closeDialog();
       sfx.correct();
       api.toast(`${option.feedback}`, "good", points);
-      // The task is done. The door is NOT open — a key has been cut.
-      spawnKey(item.key);
+      if (item.key === "electrical") {
+        // Knowing the procedure is not doing it: the board unlocks,
+        // and the key is cut once the handle is actually down.
+        unlockIsolator();
+      } else {
+        // The task is done. The door is NOT open — a key has been cut.
+        spawnKey(item.key);
+      }
       state.currentArea = Math.min(AREA_ORDER.length - 1, AREA_ORDER.indexOf(item.key) + 1);
       return;
     }
@@ -1435,7 +1581,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const urgent = state.remainingMs < 90000;
 
     let prompt = null;
-    if (target?.kind === "key") {
+    if (target?.kind === "lever") {
+      prompt = {
+        text: mobile ? "Tap USE — pull the isolator down to OFF" : "Press E — pull the isolator down to OFF",
+        tone: "good", key: "E",
+      };
+    } else if (isolator && isolation.unlocked && !isolation.pulled) {
+      prompt = { text: "Go to the main board and pull the isolator OFF", tone: "good", key: "" };
+    } else if (target?.kind === "key") {
       prompt = {
         text: mobile ? "Tap USE — pick up the key" : "Press E — pick up the key",
         tone: "good", key: "E",
@@ -1533,7 +1686,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       if (input.wasPressed("zoom")) { zoom.toggle(); sfx.click(); }
       state.target = findTarget();
       if (state.target && input.wasPressed("interact")) {
-        if (state.target.kind === "key") collectKey(state.target.entry);
+        if (state.target.kind === "lever") pullIsolator();
+        else if (state.target.kind === "key") collectKey(state.target.entry);
         else if (state.target.kind === "puzzle") openPuzzle(state.target.item);
         else if (state.target.kind === "pickup") pickUpExtinguisher(state.target.ext);
         else if (state.target.kind === "fire") dischargeAtFire();
@@ -1544,6 +1698,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
 
     updateKeys(dt);
+    updateIsolator(dt);
     updateLiveArc(dt);
     updateFallingDebris(dt);
     updateAvatar(dt);
@@ -1680,6 +1835,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       state, controller, interactables, doors, rooms, ceilings, avatar,
       fallingDebris, updateFallingDebris,
       get liveArc() { return liveArc; },
+      get isolator() { return isolator; },
+      isolation, pullIsolator, unlockIsolator,
       keys, spawnKey, collectKey, hasKey, keyFor, useDoor, doorFor, unlockDoor,
       get planBlend() { return planView.blend; },
       get fire() { return fire; },
