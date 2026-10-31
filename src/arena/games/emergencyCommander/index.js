@@ -952,9 +952,30 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   let hudAccumulator = 0;
 
+  /**
+   * How far the next objective is, and which way.
+   *
+   * The commander walks the site now, so "activate the alarm" is not an
+   * instruction until you also know the call point is 30 m behind you.
+   * This is the difference between a checklist and a mission.
+   */
+  function bearingToNext(station) {
+    const marker = station ? stationMarkers.get(station.id) : null;
+    if (!marker) return null;
+    const dx = marker.anchor.x - commander.position.x;
+    const dz = marker.anchor.z - commander.position.z;
+    const distance = Math.hypot(dx, dz);
+    const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+    // -Z is north on this site, matching the way the scenes are laid out.
+    const angle = Math.atan2(dx, -dz);
+    const point = COMPASS[(Math.round((angle / (Math.PI * 2)) * 8) + 8) % 8];
+    return { distance, point, arrived: distance < 4 };
+  }
+
   function pushHud() {
     const nextPhase = nextRequiredPhase();
     const nextStation = STATIONS[nextPhase] || null;
+    const to = bearingToNext(nextStation);
     api.hud({
       controlScheme: "command",
       objective: state.finished
@@ -974,22 +995,33 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         { label: "ALARM", value: state.alarmRaised ? "RAISED" : "NOT RAISED", tone: state.alarmRaised ? "good" : "bad" },
         { label: "AREA", value: state.isolated ? "ISOLATED" : "OPEN", tone: state.isolated ? "good" : "warn" },
         { label: "SERVICES", value: state.servicesCalled ? "EN ROUTE" : "NOT CALLED", tone: state.servicesCalled ? "good" : "warn" },
+        {
+          label: "NEXT",
+          value: nextStation
+            ? (to ? `${Math.round(to.distance)} m ${to.point}` : nextStation.label)
+            : "HAND OVER",
+          tone: to?.arrived ? "good" : "warn",
+        },
       ],
       meters: [
         { label: "CASUALTY", value: state.casualty, color: "#EA4F4F", warnBelow: 35 },
         { label: "SCENE CONTROL", value: state.control, color: "#FFC629", warnBelow: 30 },
         { label: "ACCOUNTED FOR", value: state.evacuation, color: "#33C481", warnBelow: 20 },
       ],
-      tasks: STATIONS.map((s) => ({
+      // Numbered, so the ORDER is on screen and not just implied.
+      tasks: STATIONS.map((s, i) => ({
         id: s.id,
-        label: `${s.action} — ${s.label}`,
+        label: `Step ${i + 1}: ${s.action} — ${s.label}`,
         done: state.doneStations.has(s.id),
       })),
+      tasksTitle: "EMERGENCY RESPONSE PLAN",
       prompt: state.finished
         ? null
         : {
             text: nextStation
-              ? `Find the ${nextStation.label} and ${nextStation.action.toLowerCase()}`
+              ? (to && !to.arrived
+                ? `Step ${nextPhase + 1}: ${nextStation.action.toLowerCase()} — ${nextStation.label}, ${Math.round(to.distance)} m ${to.point}`
+                : `Step ${nextPhase + 1}: ${nextStation.action.toLowerCase()} — ${nextStation.label}`)
               : "Hand over to the emergency services",
             tone: "good",
             key: mobile ? "Tap" : "Click",
@@ -1202,7 +1234,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
-      walker: commander, avatar,
+      walker: commander, avatar, bearingToNext, stationMarkers,
       camDistance: () => cam.distance,
       state, scenario, crowd,
       STATIONS, STATION_COUNT,

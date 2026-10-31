@@ -224,6 +224,39 @@ All three leaderboards share one comparator — score first, then who got there
 fastest on `playingMs`. A missing or zero time means they have not finished a
 round, so it loses the tie-break rather than winning it.
 
+### What each mission actually asks of you
+
+**Tower Crane** — one bundle, from a signed PICK UP board to a signed LAND HERE
+board. The lift is the easy part. Five situations halt the crane dead and will
+not release the controls until the operator resolves them: bad rigging before it
+leaves the ground, a man who walks under the suspended load, an open landing
+area, a swing that has got away, and a radio call to cut over the canteen. The
+fixes are visible — the barricade appears, the worker is walked out and runs off
+site. See `games/craneMaster/interrupts.js`.
+
+**Spot the Hazards** — ten ground-level hazards, each built twice (the unsafe
+version and the corrected one that replaces it). Walking within 3.4 m of one
+stops you and opens its question; clicking from a distance still works. The four
+controls are shuffled per hazard per play, with the real index carried on the
+option rather than the slot.
+
+**Safety Escape** — solving a room does NOT open its door. It cuts a key, which
+drops across the room and turns and bobs with a halo on it. You walk to it, pick
+it up, carry it to the door, and use it there. All five gates work this way, and
+the plant room key only appears once the fire is actually out.
+
+**Emergency Response** — the eight steps are a numbered plan on screen, ticking
+off as they are done. Because the commander now walks the site, the prompt also
+says how far the next objective is and which way: *"Step 2: raise the alarm —
+Break-glass call point, 31 m NE"*. A checklist without a bearing is not an
+instruction once you have to find the thing.
+
+**Answer shape.** Both question sets are measured, not assumed: the correct
+answer must sit within 12 characters of the middle of its options. The crane set
+shipped with the right answer longest in all five, and the hazard set with it
+longest in 9 of 10 by a 60-character margin — findable without reading a word.
+`tests/arena-games.test.mjs` fails if that comes back.
+
 ### People
 
 `buildWorker()` builds a **skeleton**, not a pile of boxes at fixed heights:
@@ -558,9 +591,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 809 assertions with no browser required, across four suites.
+`npm test` runs 900 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (501 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (592 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of

@@ -1731,8 +1731,36 @@ section("Emergency Response Commander — an activity, not a menu");
 
   check("the HUD lists the eight actions as tasks",
     (record.hud.tasks || []).length === 8, `${(record.hud.tasks || []).length}`);
-  check("the HUD tells the player what to find next",
-    /find the/i.test(record.hud.prompt?.text || ""), record.hud.prompt?.text);
+
+  /* The commander WALKS the site now, so a checklist is not an
+   * instruction on its own: it has to say which step, what to do,
+   * which object, and which way to go. */
+  check("every step on the plan is numbered",
+    (record.hud.tasks || []).every((t, i) => t.label.startsWith(`Step ${i + 1}:`)),
+    JSON.stringify((record.hud.tasks || [])[0]?.label));
+  check("the plan shows which steps are already done",
+    (record.hud.tasks || []).every((t) => typeof t.done === "boolean"));
+
+  const prompt = record.hud.prompt?.text || "";
+  check("the prompt names the step number", /^Step \d+:/.test(prompt), prompt);
+  check("the prompt names the object to go to",
+    prompt.includes(STATIONS[0].label), prompt);
+  check("the prompt says how far and which way",
+    /\d+ m (N|NE|E|SE|S|SW|W|NW)/.test(prompt), prompt);
+
+  const bearing = instance.__test.bearingToNext(STATIONS[0]);
+  check("the bearing is a real distance and compass point",
+    Number.isFinite(bearing.distance) && bearing.distance > 0
+    && ["N", "NE", "E", "SE", "S", "SW", "W", "NW"].includes(bearing.point),
+    JSON.stringify(bearing));
+
+  // Walk to it and the readout should say you have arrived.
+  const marker = instance.__test.stationMarkers.get(STATIONS[0].id);
+  instance.__test.walker.teleport(marker.anchor.x + 1, 0, marker.anchor.z + 1);
+  runFrames(4);
+  check("standing at the objective, the HUD says so",
+    instance.__test.bearingToNext(STATIONS[0]).arrived === true,
+    `${instance.__test.bearingToNext(STATIONS[0]).distance.toFixed(1)} m away`);
 
   // --- walking into the hazard is available, and always wrong ---
   const controlBefore = state.control;
