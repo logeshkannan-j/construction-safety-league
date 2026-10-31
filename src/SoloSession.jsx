@@ -429,6 +429,7 @@ export default function SoloSession({
             <QuestionReveal
               question={question}
               result={revealData}
+              lang={lang}
               isFinale={isFinale}
               onNext={next}
               isLast={itemIndex >= plan.length - 1}
@@ -666,7 +667,12 @@ function EmbeddedGame({ gameId, roundNumber, me, onComplete, onSkip }) {
   );
 }
 
-function QuestionReveal({ question, result, isFinale, onNext, isLast, endsRound, roundNumber, moreInRound }) {
+/* `lang` is passed in rather than read from the store, so this redraws
+ * when the player switches language. It also has to be passed at all:
+ * this is a separate component, and reading the parent's `lang`
+ * variable from inside it threw a ReferenceError the moment anybody
+ * answered a question. */
+function QuestionReveal({ question, result, lang, isFinale, onNext, isLast, endsRound, roundNumber, moreInRound }) {
   const correct = !!result.correct;
   const noAnswer = result.pickedIndex === undefined || result.pickedIndex < 0;
   return (

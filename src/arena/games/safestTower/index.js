@@ -34,6 +34,7 @@ import {
   collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
+import { cameraScale } from "../../identity.js";
 import { HAZARDS, HAZARD_COUNT, SCORING } from "./hazards.js";
 
 /* ============================== metadata ============================== */
@@ -595,10 +596,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ------------------------------ camera ------------------------------ */
 
+  /* 40 m up was a drone shot: the player was a speck and the hazard
+   * they had walked up to was a smudge. It starts over the shoulder
+   * now, and the wheel, the pinch and the ZOOM button all still pull
+   * back to 68 m for anybody who wants the whole compound. */
   const cam = {
     yaw: 0.9,
-    pitch: -0.55,
-    distance: 40,
+    pitch: -0.42,
+    distance: 13 * cameraScale(settings),
     target: new THREE.Vector3(0, 2, 0),
     desired: new THREE.Vector3(0, 2, 0),
   };
@@ -979,7 +984,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       if (input.wasPressed("tap")) handleTap();
       if (input.wasPressed("next")) nextUnsolved();
       if (input.wasPressed("zoom")) {
-        cam.distance = cam.distance > 24 ? 13 : 40;
+        cam.distance = cam.distance > 20 ? 12 : 34;
         sfx.click();
       }
       if (input.wasPressed("viewmode")) setFirstPerson(!state.firstPerson);

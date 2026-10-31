@@ -32,10 +32,10 @@ export function HudTopBar({
   return (
     <div
       style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
+        /* In the flow, not pinned: the HUD below it is laid out against
+           whatever height this ends up being. */
+        position: "relative",
+        flexShrink: 0,
         padding: mobile ? "8px 10px" : "12px 18px",
         display: "flex",
         alignItems: "flex-start",
@@ -88,7 +88,15 @@ export function HudTopBar({
             color: C.ink,
             textShadow: "0 2px 8px #000000cc",
             maxWidth: mobile ? "100%" : 520,
+            /* The objective carries both languages, so it has to be
+               allowed to wrap — but not without limit, or it eats the
+               play area on a phone. */
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: mobile ? 2 : 3,
+            overflow: "hidden",
           }}
+          title={typeof objective === "string" ? objective : undefined}
         >
           {objective}
         </div>

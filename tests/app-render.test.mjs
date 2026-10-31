@@ -684,6 +684,277 @@ section("A render error shows itself");
 }
 
 
+/* ------------------------- the on-screen stick ------------------------- */
+
+section("The stick says what it drives, and comes in three kinds");
+
+/* "Why am I getting a joystick in the tower crane — I said don't mix
+ * them, use a proper joystick. Add a control for what type of joystick
+ * they want."
+ *
+ * A crane cab has no walk stick. The same component drives the walk in
+ * four missions and the crane's slew and trolley in the fifth, and it
+ * was labelled MOVE in both. It now says what it drives, marks what
+ * each direction does, and comes in three kinds the player picks. */
+{
+  const { default: Joystick, JOYSTICK_STYLES } =
+    await server.ssrLoadModule("/src/arena/ui/Joystick.jsx");
+  const { controlLayoutFor } = await server.ssrLoadModule("/src/arena/ui/GameShell.jsx");
+
+  /* ---- one kind of control per machine ----
+   *
+   * The cab had a stick for slew and trolley AND a rocker desk for
+   * hoist, pinned to the same corner, so the stick covered the desk. */
+  const cab = (touch, joystickStyle) => controlLayoutFor({ scheme: "crane", touch, joystickStyle });
+
+  check("the cab never shows a stick and a rocker desk at once",
+    [["fixed", true], ["floating", true], ["dpad", true], ["fixed", false], ["dpad", false]]
+      .every(([style, touch]) => !(cab(touch, style).stick && cab(touch, style).desk)),
+    JSON.stringify([cab(true, "fixed"), cab(true, "dpad"), cab(false, "fixed")]));
+  check("on a phone the cab is driven by the stick",
+    cab(true, "fixed").stick && !cab(true, "fixed").desk);
+  check("and the hoist moves to the buttons when the stick has the other two axes",
+    cab(true, "fixed").hoistButtons === true);
+  check("choosing buttons gives the full three-rocker desk instead",
+    cab(true, "dpad").desk && !cab(true, "dpad").stick && !cab(true, "dpad").hoistButtons);
+  check("on a desktop the cab is always the desk",
+    cab(false, "fixed").desk && !cab(false, "fixed").stick);
+  check("the hoist is always reachable somehow",
+    [["fixed", true], ["floating", true], ["dpad", true], ["fixed", false]]
+      .every(([style, touch]) => cab(touch, style).desk || cab(touch, style).hoistButtons));
+
+  // The walking missions are unaffected: a stick, and no crane desk.
+  const walk = controlLayoutFor({ scheme: "walk", touch: true, joystickStyle: "fixed" });
+  check("a walking mission still just has its stick",
+    walk.stick && !walk.desk && !walk.hoistButtons);
+  check("a mission with no controls gets none",
+    controlLayoutFor({ scheme: "none", touch: true }).stick === false);
+
+  const { DEFAULT_SETTINGS, CAMERA_DISTANCES, cameraScale } =
+    await server.ssrLoadModule("/src/arena/identity.js");
+
+  check("there are three kinds of control to choose from",
+    JOYSTICK_STYLES.length === 3
+    && new Set(JOYSTICK_STYLES.map((j) => j.id)).size === 3,
+    JOYSTICK_STYLES.map((j) => j.id).join(", "));
+  check("every one of them is named and explained",
+    JOYSTICK_STYLES.every((j) => j.label && j.desc));
+  check("the default is one of them",
+    JOYSTICK_STYLES.some((j) => j.id === DEFAULT_SETTINGS.joystickStyle),
+    DEFAULT_SETTINGS.joystickStyle);
+  check("the camera starts at the closest setting",
+    DEFAULT_SETTINGS.cameraDistance === CAMERA_DISTANCES[0].id
+    && cameraScale({ cameraDistance: DEFAULT_SETTINGS.cameraDistance }) === 1,
+    DEFAULT_SETTINGS.cameraDistance);
+  check("the wider settings really are wider",
+    CAMERA_DISTANCES.every((d, i) => i === 0 || d.scale > CAMERA_DISTANCES[i - 1].scale),
+    CAMERA_DISTANCES.map((d) => `${d.id}:${d.scale}`).join(" "));
+
+  /* A stand-in for the engine's input object: all the stick does is
+   * write a vector into it. */
+  function fakeInput() {
+    const calls = [];
+    return { calls, setJoystick: (x, y) => calls.push({ x, y }), addZoom() {} };
+  }
+
+  const probe = document.createElement("div");
+  document.body.appendChild(probe);
+  const probeRoot = ReactDOMClient.createRoot(probe);
+  const probeText = () => (probe.textContent || "").replace(/\s+/g, " ").trim();
+  const errorsBefore = reactErrors.length;
+
+  /* ---- the walking missions ---- */
+  probeRoot.render(React.createElement(Joystick, { input: fakeInput(), label: "MOVE" }));
+  await settle(200);
+  check("the walking stick is labelled MOVE", probeText().includes("MOVE"), probeText());
+
+  /* ---- the crane cab ---- */
+  probeRoot.render(React.createElement(Joystick, {
+    input: fakeInput(),
+    label: "SLEW · TROLLEY",
+    axisHints: { up: "OUT", down: "IN", left: "SLEW", right: "SLEW" },
+  }));
+  await settle(200);
+  let t = probeText();
+  check("the crane's stick is not labelled MOVE", !/\bMOVE\b/.test(t), t);
+  check("it says it slews and trolleys", /SLEW/.test(t) && /TROLLEY/.test(t), t);
+  // Read the hints off the elements rather than the run-together text:
+  // the four sit at the four edges of the base with nothing between them.
+  const hintTexts = [...probe.querySelectorAll("div")]
+    .map((d) => (d.textContent || "").trim())
+    .filter((x) => x.length > 0 && x.length < 12);
+  check("each direction is marked",
+    hintTexts.includes("OUT") && hintTexts.includes("IN"), hintTexts.join(" | "));
+
+  /* ---- every kind actually drives the input ---- */
+  function press(el, type, extra = {}) {
+    const event = new dom.window.Event(type, { bubbles: true, cancelable: true });
+    Object.assign(event, { pointerId: 1, clientX: 0, clientY: 0, button: 0, ...extra });
+    el.dispatchEvent(event);
+  }
+
+  for (const style of JOYSTICK_STYLES.map((j) => j.id)) {
+    const input = fakeInput();
+    probeRoot.render(React.createElement(Joystick, { input, style, label: "MOVE" }));
+    await settle(200);
+
+    if (style === "dpad") {
+      const up = [...probe.querySelectorAll("button")]
+        .find((b) => (b.getAttribute("aria-label") || "").startsWith("up"));
+      check("the four-button control has an up button", !!up,
+        [...probe.querySelectorAll("button")].map((b) => b.getAttribute("aria-label")).join(", "));
+      if (up) {
+        press(up, "pointerdown");
+        await settle(60);
+        const last = input.calls[input.calls.length - 1];
+        check("pressing up on the four-button control drives forward",
+          !!last && last.y > 0.9 && Math.abs(last.x) < 0.001, JSON.stringify(last));
+        press(up, "pointerup");
+        await settle(60);
+        const released = input.calls[input.calls.length - 1];
+        check("letting go stops the player",
+          !!released && released.x === 0 && released.y === 0, JSON.stringify(released));
+      }
+    } else {
+      const pad = probe.firstElementChild;
+      // jsdom reports every box as 0x0, so the geometry is supplied.
+      pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 132, height: 132, right: 132, bottom: 132 });
+      pad.setPointerCapture = () => {};
+      pad.releasePointerCapture = () => {};
+      press(pad, "pointerdown", { clientX: 66, clientY: 66 });
+      press(pad, "pointermove", { clientX: 66, clientY: 10 });
+      await settle(60);
+      const last = input.calls[input.calls.length - 1];
+      check(`the ${style} stick drives forward when pushed up`,
+        !!last && last.y > 0.3, `${style}: ${JSON.stringify(last)}`);
+      press(pad, "pointerup", { clientX: 66, clientY: 10 });
+      await settle(60);
+      const released = input.calls[input.calls.length - 1];
+      check(`the ${style} stick springs back to nothing on release`,
+        !!released && released.x === 0 && released.y === 0, JSON.stringify(released));
+    }
+  }
+
+  check("no React errors rendering any of the controls",
+    reactErrors.length === errorsBefore, reactErrors.slice(errorsBefore).join(" | "));
+
+  probeRoot.unmount();
+  probe.remove();
+}
+
+/* --------------------- no free variables anywhere --------------------- */
+
+section("Every identifier a component uses is one it actually has");
+
+/* This is the scan for the fault that reached a player mid-quiz:
+ *
+ *     function QuestionReveal({ question, result, ... }) {
+ *       ...{tOptions(question, lang)[question.correct]}...
+ *
+ * `lang` is a piece of state in the PARENT. Inside this component it is
+ * a free variable. Nothing catches that — `vite build` compiles it, the
+ * headless 3D suites never mount React, and the screen itself only
+ * renders once somebody has answered a question. So the first time it
+ * was seen was on a phone, in a live session, as "Can't find variable:
+ * lang" over a dead page.
+ *
+ * Babel's scope analysis already knows the answer: anything referenced
+ * and never bound shows up in the program scope's `globals`. */
+{
+  const { parse } = await import("@babel/parser");
+  const traverseModule = await import("@babel/traverse");
+  const traverse = traverseModule.default?.default || traverseModule.default;
+  const { readdirSync, statSync, readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+
+  /* The browser and Node names a module is allowed to reach for. Kept
+   * explicit rather than pulled from a globals package, because the
+   * point of the list is to be read. */
+  const AMBIENT = new Set([
+    "window", "document", "console", "setTimeout", "clearTimeout", "setInterval",
+    "clearInterval", "requestAnimationFrame", "cancelAnimationFrame", "fetch",
+    "localStorage", "sessionStorage", "navigator", "location", "history", "URL",
+    "URLSearchParams", "Date", "Math", "JSON", "Object", "Array", "String",
+    "Number", "Boolean", "Promise", "Map", "Set", "WeakMap", "WeakSet", "Error",
+    "RegExp", "Symbol", "Infinity", "NaN", "undefined", "globalThis", "process",
+    "performance", "FileReader", "Blob", "Image", "Audio", "AudioContext",
+    "webkitAudioContext", "MouseEvent", "KeyboardEvent", "Event", "CustomEvent",
+    "ResizeObserver", "IntersectionObserver", "MutationObserver", "TextEncoder",
+    "TextDecoder", "structuredClone", "queueMicrotask", "alert", "confirm",
+    "prompt", "getComputedStyle", "matchMedia", "crypto", "btoa", "atob",
+    "HTMLElement", "Element", "Node", "Float32Array", "Uint8Array", "Uint16Array",
+    "Uint32Array", "Int32Array", "ArrayBuffer", "DataView", "Intl", "parseInt",
+    "parseFloat", "isNaN", "isFinite", "encodeURIComponent", "decodeURIComponent",
+    "AbortController", "Response", "Request", "Headers", "FormData", "DOMParser",
+    "XMLHttpRequest", "speechSynthesis", "SpeechSynthesisUtterance",
+    "BarcodeDetector", "ImageData", "OffscreenCanvas", "createImageBitmap",
+    "Function", "Proxy", "Reflect", "BigInt", "module", "require", "exports",
+  ]);
+
+  function freeVariables(code) {
+    const ast = parse(code, {
+      sourceType: "module",
+      plugins: ["jsx", "optionalChaining", "nullishCoalescingOperator", "classProperties"],
+    });
+    const found = [];
+    traverse(ast, {
+      Program(p) {
+        Object.entries(p.scope.globals).forEach(([name, node]) => {
+          if (AMBIENT.has(name)) return;
+          found.push(`${name} (line ${node.loc?.start?.line})`);
+        });
+      },
+    });
+    return found;
+  }
+
+  /* ---- prove the scan works before trusting what it says ---- */
+  const BAD = `
+    import React from "react";
+    function Parent() {
+      const [lang] = React.useState("en");
+      return <Child value={1} />;
+    }
+    function Child({ value }) {
+      return <span>{value} {lang}</span>;
+    }
+  `;
+  const GOOD = BAD.replace("<Child value={1} />", "<Child value={1} lang={lang} />")
+    .replace("function Child({ value })", "function Child({ value, lang })");
+
+  check("the scan flags a variable read from another component's scope",
+    freeVariables(BAD).some((f) => f.startsWith("lang")), JSON.stringify(freeVariables(BAD)));
+  check("the scan accepts the same code with it passed as a prop",
+    freeVariables(GOOD).length === 0, JSON.stringify(freeVariables(GOOD)));
+
+  /* ---- and now every source file ---- */
+  function sources(dir, out = []) {
+    for (const entry of readdirSync(dir)) {
+      const full = `${dir}/${entry}`;
+      if (statSync(full).isDirectory()) sources(full, out);
+      else if (/\.(js|jsx)$/.test(entry)) out.push(full);
+    }
+    return out;
+  }
+
+  const files = sources(fileURLToPath(new URL("../src", import.meta.url)).split("\\").join("/"));
+  check("the scan found the source tree", files.length > 20, `${files.length} files`);
+
+  const offenders = [];
+  for (const file of files) {
+    let free = [];
+    try {
+      free = freeVariables(readFileSync(file, "utf8"));
+    } catch (e) {
+      offenders.push(`${file}: could not be parsed — ${e.message}`);
+      continue;
+    }
+    if (free.length) offenders.push(`${file.split("/src/")[1]}: ${free.join(", ")}`);
+  }
+  check(`no file uses a name it never binds (${files.length} files)`,
+    offenders.length === 0, offenders.slice(0, 4).join(" | "));
+}
+
 /* ---------------------- hooks above early returns ---------------------- */
 
 section("Hooks never sit below an early return");
@@ -959,8 +1230,12 @@ section("The TV shows the live session and the final result");
     t.includes("EMP-1001") && t.includes("EMP-1005"));
   check("it says what the player in the spotlight is actually doing",
     /NOW PLAYING/.test(t) && /3D MISSION|QUIZ QUESTION|FINALE QUESTION/.test(t), t.slice(0, 200));
+  /* Which mission falls in round 2 is shuffled per participant, so the
+   * assertion is that SOME mission is named, not which. */
+  const { ROUND_MISSION_NAMES } = await server.ssrLoadModule("/src/session.js");
   check("it names the 3D mission somebody is in",
-    /Tower Crane|Safety Mission|Safest Tower|Escape|Emergency/i.test(t), t.slice(0, 240));
+    Object.values(ROUND_MISSION_NAMES).some((name) => t.includes(name)),
+    t.slice(0, 240));
   check("it counts who is playing and who has finished",
     /3 playing/.test(t), t.slice(0, 200));
   check("it shows the live scores", t.includes("2400") && t.includes("1500"));

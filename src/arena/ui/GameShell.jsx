@@ -9,14 +9,14 @@ import {
 } from "../arenaConstants.js";
 import { supportsWebGL, resolveQuality, isMobileLayout, isTouchDevice } from "../engine/gfx.js";
 import { submitRun, fetchAllProfiles, buildLeaderboard } from "../arenaDb.js";
-import { loadSettings, saveSettings } from "../identity.js";
+import { loadSettings, saveSettings, CAMERA_DISTANCES } from "../identity.js";
 import { sfx, setSoundEnabled, setVolume, unlockAudio, disposeAudio } from "../audio.js";
 import { ArenaButton, Overlay, Pill, panelStyle } from "./primitives.jsx";
 import {
   HudTopBar, Crosshair, InteractPrompt, ToastStack, useToasts,
   StatusMeter, ObjectiveList, Readouts, PaletteBar, ARENA_KEYFRAMES,
 } from "./Hud.jsx";
-import Joystick from "./Joystick.jsx";
+import Joystick, { JOYSTICK_STYLES } from "./Joystick.jsx";
 import TouchLook from "./TouchLook.jsx";
 import ActionButtonCluster, { CraneControls } from "./ActionButtons.jsx";
 import { getLang, setLang, otherLang, LANGS, onLangChange } from "../language.js";
@@ -68,6 +68,30 @@ function genRunId() {
  * owns the scoring and banks it as the participant's 3D game score, and
  * the results screen offers "continue" instead of "play again".
  */
+/**
+ * Which on-screen controls a mission gets.
+ *
+ * Worth naming, because the rule is one a screenshot can break: ONE
+ * kind of control per machine. The crane used to show a stick for slew
+ * and trolley AND a rocker desk for hoist, both pinned to the same
+ * corner, so the stick sat on top of the desk and the player had two
+ * control types for one crane.
+ *
+ *   - `stick`        the analogue stick (or d-pad), for walking or for
+ *                    the cab's slew and trolley
+ *   - `desk`         the full three-rocker crane desk
+ *   - `hoistButtons` the hoist as two hold buttons, which is where it
+ *                    goes when the stick has the other two axes
+ *
+ * `stick` and `desk` are never both true.
+ */
+export function controlLayoutFor({ scheme, touch, joystickStyle = "fixed" } = {}) {
+  // On a desktop there is no stick at all, so the cab is always the desk.
+  const desk = scheme === "crane" && (!touch || joystickStyle === "dpad");
+  const stick = !!touch && scheme !== "none" && !desk;
+  return { stick, desk, hoistButtons: scheme === "crane" && stick };
+}
+
 export default function GameShell({
   game, identity, onExit, onOpenLeaderboard,
   embedded = false, onEmbeddedComplete, roundLabel = "",
@@ -531,18 +555,43 @@ export default function GameShell({
   const scheme = hud.controlScheme || game.controls;
   const interactive = phase === "playing" && !paused && !dialog && !portraitBlock;
   const showMobileControls = mobile && interactive;
-  // Every mission has a stick now. In the walking ones it walks; in
-  // the crane it IS the crane joystick, slewing the jib and running
-  // the trolley, which is how the real cab works.
-  const needsJoystick = showMobileControls && scheme !== "none";
+
+  /* ---- what the cab is driven with ----
+   *
+   * One kind of control, not two. The crane used to show a stick for
+   * slew and trolley AND a rocker for hoist, both in the same corner,
+   * which is two control types for one machine. It is now either the
+   * stick (with the hoist on hold buttons beside the other actions) or
+   * the full three-rocker desk — and on a desktop, where there is no
+   * stick, always the desk.
+   */
+  const controlLayout = controlLayoutFor({
+    scheme,
+    touch: showMobileControls,
+    joystickStyle: settings.joystickStyle,
+  });
+
+  // Every other mission has a stick: in the walking ones it walks.
+  const needsJoystick = controlLayout.stick;
   // Every scheme aims its camera by dragging, so the look pad covers the
   // play area on touch devices in all of them. On desktop the engine's
   // own mouse handling does the job, so the pad is not rendered there
   // (rendering both would double the look speed).
   const needsTouchLook = mobile && interactive;
-  // The crane desk is shown on touch devices AND on desktop, because
-  // clicking the rockers is a perfectly good alternative to the keys.
-  const needsCraneDesk = interactive && scheme === "crane";
+  const needsCraneDesk = interactive && controlLayout.desk;
+
+  /* With the stick in the cab the hoist has nowhere else to go, so it
+   * joins the buttons the player is already reaching for. Held, not
+   * tapped: hoisting is a continuous thing. */
+  const craneStickButtons = controlLayout.hoistButtons
+    ? [
+      { id: "hoistUp", label: "HOIST ▲", action: "hoistUp", mode: "hold", color: "#33C481" },
+      { id: "hoistDown", label: "HOIST ▼", action: "hoistDown", mode: "hold", color: "#59B7FF" },
+    ]
+    : [];
+  const shownButtons = craneStickButtons.length
+    ? [...buttons, ...craneStickButtons]
+    : buttons;
 
   return (
     <div
@@ -586,6 +635,12 @@ export default function GameShell({
               inset: 0,
               paddingTop: "env(safe-area-inset-top, 0px)",
               paddingBottom: "env(safe-area-inset-bottom, 0px)",
+              /* A column, not a pile of pinned boxes. The objective is
+                 bilingual and wraps, so anything measured from the top
+                 of the screen ends up underneath it sooner or later. */
+              display: "flex",
+              flexDirection: "column",
+              pointerEvents: "none",
             }}
           >
             {hud.flashDanger && (
@@ -608,7 +663,19 @@ export default function GameShell({
               languageShort={(LANGS.find((l) => l.id === lang) || LANGS[0]).short}
             />
 
-            {hud.crosshair && <Crosshair state={hud.crosshair} accent={game.accent} />}
+            {/* The crosshair marks where the CAMERA is pointing, so it
+                belongs to the screen rather than to the space under the
+                top bar. It stays outside the box below. */}
+            {hud.crosshair && (
+              <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                <Crosshair state={hud.crosshair} accent={game.accent} />
+              </div>
+            )}
+
+            {/* Everything below the top bar. `flex: 1` makes this the
+                space that is actually left, so the panels inside it can
+                be measured from its own edges. */}
+            <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
 
             <InteractPrompt
               text={hud.prompt?.text}
@@ -625,11 +692,17 @@ export default function GameShell({
                 style={{
                   position: "absolute",
                   left: mobile ? 10 : 18,
-                  top: mobile ? 92 : 118,
+                  top: 6,
+                  /* Stops at the controls rather than running under
+                     them. The readouts come first in this column, so
+                     what gets cut on a short screen is the task list,
+                     which is collapsed on a phone anyway. */
+                  bottom: needsJoystick || needsCraneDesk ? (mobile ? 172 : 150) : 16,
                   display: "flex",
                   flexDirection: "column",
                   gap: 7,
                   pointerEvents: "none",
+                  overflow: "hidden",
                   maxWidth: mobile ? 220 : 300,
                 }}
               >
@@ -660,38 +733,47 @@ export default function GameShell({
               </div>
             )}
 
-            {/* Tower crane control desk, bottom-left. */}
-            {needsCraneDesk && (
+            {/* The stick and the crane desk, bottom-left, in ONE row.
+                They used to be two separately pinned boxes at the same
+                corner, so in the cab the stick sat on top of the hoist
+                rocker and hid the hook height. */}
+            {(needsJoystick || needsCraneDesk) && (
               <div
                 style={{
                   position: "absolute",
                   left: "max(14px, env(safe-area-inset-left, 0px))",
-                  bottom: "max(18px, calc(env(safe-area-inset-bottom, 0px) + 12px))",
+                  bottom: "max(26px, calc(env(safe-area-inset-bottom, 0px) + 18px))",
+                  display: "flex",
+                  alignItems: "flex-end",
+                  gap: mobile ? 14 : 20,
                   pointerEvents: "auto",
                 }}
               >
-                <CraneControls input={input} mobile={mobile} readouts={hud.craneReadouts} disabled={hud.controlsLocked} hoistOnly={needsJoystick} />
-              </div>
-            )}
-
-            {/* ---------------- mobile controls ---------------- */}
-            {needsJoystick && (
-              <div
-                style={{
-                  position: "absolute",
-                  left: "max(16px, env(safe-area-inset-left, 0px))",
-                  bottom: "max(26px, calc(env(safe-area-inset-bottom, 0px) + 20px))",
-                  pointerEvents: "auto",
-                }}
-              >
-                <Joystick input={input} accent={game.accent} size={mobile ? 124 : 132} />
+                {needsJoystick && (
+                  <Joystick
+                    input={input}
+                    accent={game.accent}
+                    size={mobile ? 124 : 132}
+                    style={settings.joystickStyle}
+                    /* A crane cab has no walk stick. In the cab this one
+                       slews the jib and runs the trolley, and it says so
+                       rather than saying MOVE. */
+                    label={scheme === "crane" ? "SLEW · TROLLEY" : "MOVE"}
+                    axisHints={scheme === "crane"
+                      ? { up: "OUT", down: "IN", left: "SLEW", right: "SLEW" }
+                      : null}
+                  />
+                )}
+                {needsCraneDesk && (
+                  <CraneControls input={input} mobile={mobile} readouts={hud.craneReadouts} disabled={hud.controlsLocked} />
+                )}
               </div>
             )}
 
             {/* Action buttons: always on touch, and on desktop for the
                 schemes whose actions have no natural key (crane release,
                 command decisions). */}
-            {interactive && buttons.length > 0 && (mobile || scheme === "crane" || scheme === "build" || scheme === "command") && (
+            {interactive && shownButtons.length > 0 && (mobile || scheme === "crane" || scheme === "build" || scheme === "command") && (
               <div
                 style={{
                   position: "absolute",
@@ -700,7 +782,7 @@ export default function GameShell({
                   pointerEvents: "none",
                 }}
               >
-                <ActionButtonCluster buttons={buttons} input={input} compact={window.innerHeight < 420} />
+                <ActionButtonCluster buttons={shownButtons} input={input} compact={window.innerHeight < 420} />
               </div>
             )}
 
@@ -735,6 +817,7 @@ export default function GameShell({
                 ))}
               </div>
             )}
+            </div>
           </div>
         </div>
       )}
@@ -1133,6 +1216,52 @@ function DifficultyTab({ difficultyId, setDifficultyId, quality, settings, updat
   );
 }
 
+
+/* A row of mutually exclusive choices. Used for both control settings,
+ * and sized for a thumb rather than a mouse — these get changed on a
+ * phone, mid-event, by somebody who is already annoyed. */
+function SettingChoice({ title, options, value, onPick, accent = C.yellow }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1, color: C.muted, marginBottom: 8 }}>
+        {title}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {options.map((option) => {
+          const active = value === option.id;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              title={option.desc}
+              onClick={() => { sfx.click(); onPick(option.id); }}
+              style={{
+                padding: "8px 13px",
+                borderRadius: 8,
+                border: `1px solid ${active ? accent : C.line}`,
+                background: active ? accent + "1f" : "transparent",
+                color: active ? accent : C.muted,
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                textAlign: "left",
+                minHeight: 44,
+              }}
+            >
+              <span style={{ display: "block" }}>{option.label}</span>
+              {option.desc && (
+                <span style={{ display: "block", fontSize: 10, fontWeight: 600, color: C.muted, marginTop: 2 }}>
+                  {option.desc}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function GraphicsAndSound({ quality, settings, updateSettings, mobile }) {
   return (
     <div>
@@ -1161,6 +1290,25 @@ function GraphicsAndSound({ quality, settings, updateSettings, mobile }) {
           );
         })}
       </div>
+
+      {/* Controls. Asked for by name: "add control, what type of
+          joystick they want". The default is the one that suits the
+          most hands; the other two are there for the hands it does
+          not. */}
+      <SettingChoice
+        title="ON-SCREEN CONTROL"
+        options={JOYSTICK_STYLES}
+        value={settings.joystickStyle}
+        onPick={(id) => updateSettings({ joystickStyle: id })}
+        accent={C.green}
+      />
+      <SettingChoice
+        title="CAMERA DISTANCE — OVER THE SHOULDER"
+        options={CAMERA_DISTANCES}
+        value={settings.cameraDistance}
+        onPick={(id) => updateSettings({ cameraDistance: id })}
+        accent={C.blue}
+      />
 
       <div style={{ display: "grid", gap: 12, gridTemplateColumns: mobile ? "1fr" : "1fr 1fr" }}>
         <div>

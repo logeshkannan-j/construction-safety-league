@@ -116,7 +116,27 @@ export const DEFAULT_SETTINGS = {
   volume: 0.7,
   lookSensitivity: 1,
   invertY: false,
+  // Which kind of on-screen stick. See ui/Joystick.jsx for what each
+  // one does; 'fixed' suits the most hands, so it is the default.
+  joystickStyle: "fixed",
+  // How far back the over-the-shoulder camera starts. Close by default:
+  // the missions are about reading what is right in front of you, and a
+  // camera up in the air turns the player into a speck. Anybody who
+  // wants more of the site in view can still pinch or wheel out.
+  cameraDistance: "close",
 };
+
+export const CAMERA_DISTANCES = [
+  { id: "close", label: "Close", scale: 1, desc: "Over the shoulder" },
+  { id: "normal", label: "Normal", scale: 1.6, desc: "A step back" },
+  { id: "wide", label: "Wide", scale: 2.6, desc: "More of the site in view" },
+];
+
+/** The multiplier a game applies to its own close-in camera distance. */
+export function cameraScale(settings) {
+  const found = CAMERA_DISTANCES.find((d) => d.id === settings?.cameraDistance);
+  return found ? found.scale : 1;
+}
 
 export function loadSettings() {
   try {

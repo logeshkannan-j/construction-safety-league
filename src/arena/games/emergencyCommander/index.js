@@ -30,6 +30,7 @@ import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
 import { t, tAlt, getLang, onLangChange } from "../../language.js";
+import { cameraScale } from "../../identity.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
@@ -657,7 +658,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // commander was a speck and you could not tell which way they
     // were facing, which is most of why the walking read wrong.
     pitch: -0.30,
-    distance: scenario.scene === "fall" ? 15 : 14,
+    distance: (scenario.scene === "fall" ? 10 : 9) * cameraScale(settings),
     target: incident.position.clone(),
     desired: incident.position.clone(),
   };

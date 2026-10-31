@@ -2282,7 +2282,15 @@ function PlayerView({ onExit }) {
 /* The original lock-step question view is no longer reachable — the one
    event plan drives everybody. Kept (unmounted) so the hazard, video and
    millionaire display components it shares with the TV stay in use. */
-function UnusedLivePlayerView({ me, game, questions, players, connected, serverOffset, onExit, sorted }) {
+/* Every handler this takes is a prop, including the five that used to be
+ * read straight out of PlayerView's scope. Unmounted code still has to
+ * be correct code: a free variable inside a component compiles happily
+ * and only throws the moment that screen renders, which is exactly how
+ * `lang` reached a player mid-quiz. */
+function UnusedLivePlayerView({
+  me, game, questions, players, connected, serverOffset, onExit, sorted,
+  now, teamScores = [], submitAnswer, submitHazardMatches, useLifeline,
+}) {
 
   const rank = sorted.findIndex((p) => p.id === me.id) + 1;
   const curQ = questions[game.qIndex ?? 0];

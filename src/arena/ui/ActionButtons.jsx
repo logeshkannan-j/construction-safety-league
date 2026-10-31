@@ -189,12 +189,13 @@ export function Rocker({
  * drives the SAME named actions the keyboard drives, so the crane
  * behaves identically on both.
  */
+/* The full crane desk: three rockers, one per axis.
+ *
+ * Shown when the cab is NOT being driven by a stick — on a desktop, or
+ * when the player has chosen buttons over a stick. The two are never on
+ * screen together: one machine, one kind of control. */
 export function CraneControls({
   input, mobile = false, readouts = null, disabled = false,
-  // With a joystick on screen the stick IS the slew and trolley, the
-  // way a real cab works. Showing rockers for the same two axes beside
-  // it is a second set of controls for the same thing.
-  hoistOnly = false,
 }) {
   const size = mobile ? 44 : 48;
   return (
@@ -206,7 +207,6 @@ export function CraneControls({
         pointerEvents: "none",
       }}
     >
-      {!hoistOnly && (
       <Rocker
         label="SLEW"
         input={input}
@@ -219,8 +219,6 @@ export function CraneControls({
         disabled={disabled}
         value={readouts?.slew}
       />
-      )}
-      {!hoistOnly && (
       <Rocker
         label="TROLLEY"
         input={input}
@@ -233,7 +231,6 @@ export function CraneControls({
         disabled={disabled}
         value={readouts?.radius}
       />
-      )}
       <Rocker
         label="HOIST"
         input={input}

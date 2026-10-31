@@ -22,6 +22,8 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
+    "@babel/parser": "^7.25.0",
+    "@babel/traverse": "^7.25.0",
     "@vitejs/plugin-react": "^4.3.1",
     "gh-pages": "^6.1.1",
     "jsdom": "^29.1.1",

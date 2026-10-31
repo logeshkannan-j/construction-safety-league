@@ -53,7 +53,7 @@ const THREE = await import("three");
 const { INTERRUPT_SCORING: craneScoring } = await import(`${SRC}/games/craneMaster/interrupts.js`);
 
 /** Boots a game module and returns everything a test needs. */
-async function boot(path, { difficulty = "normal", mobile = false } = {}) {
+async function boot(path, { difficulty = "normal", mobile = false, settings = SETTINGS } = {}) {
   const container = makeElement("div", { width: 1280, height: 720 });
   const { api, record } = makeApi();
   const mod = await import(`${SRC}/games/${path}/index.js`);
@@ -62,7 +62,7 @@ async function boot(path, { difficulty = "normal", mobile = false } = {}) {
     container,
     difficulty: DIFFICULTY[difficulty],
     quality: "medium",
-    settings: SETTINGS,
+    settings,
     mobile,
     api,
   });
@@ -1514,6 +1514,54 @@ section("Every staircase can actually be walked up");
     }
 
     instance.dispose();
+  }
+}
+
+section("The over-the-shoulder camera starts close");
+
+/* "Don't zoom out too much in TPP — keep it a little distance, if they
+ * want they can zoom out, set the default to a low distance."
+ *
+ * Build the Safest Tower started 40 m up, which is a drone shot: the
+ * player was a speck and the hazard they had walked up to was a smudge.
+ * Emergency Response was 14 m. Both start over the shoulder now, and
+ * the player can still choose a wider default or pull back with the
+ * wheel or a pinch. */
+{
+  const CLOSE_CAMERAS = [
+    ["safestTower", "safest-tower", 18],
+    ["emergencyCommander", "emergency-commander", 14],
+  ];
+
+  for (const [path, id, ceiling] of CLOSE_CAMERAS) {
+    const close = await boot(path, { settings: { ...SETTINGS, cameraDistance: "close" } });
+    runFrames(6);
+    const closeDistance = close.instance.__test.camDistance();
+    close.instance.dispose();
+
+    const wide = await boot(path, { settings: { ...SETTINGS, cameraDistance: "wide" } });
+    runFrames(6);
+    const wideDistance = wide.instance.__test.camDistance();
+
+    // And zooming out from the close default still works, so "close"
+    // is a starting point rather than a cage.
+    const closeAgain = await boot(path, { settings: { ...SETTINGS, cameraDistance: "close" } });
+    runFrames(6);
+    const before = closeAgain.instance.__test.camDistance();
+    closeAgain.instance.input.addZoom(900);
+    runFrames(40);
+    const pulledBack = closeAgain.instance.__test.camDistance();
+
+    check(`${id}: the camera starts over the shoulder, not overhead`,
+      closeDistance <= ceiling, `${closeDistance.toFixed(1)} m, wanted no more than ${ceiling} m`);
+    check(`${id}: choosing a wider view really does pull back`,
+      wideDistance > closeDistance * 1.5,
+      `close ${closeDistance.toFixed(1)} m vs wide ${wideDistance.toFixed(1)} m`);
+    check(`${id}: the player can still zoom out from the close default`,
+      pulledBack > before + 1, `${before.toFixed(1)} m → ${pulledBack.toFixed(1)} m`);
+
+    wide.instance.dispose();
+    closeAgain.instance.dispose();
   }
 }
 
