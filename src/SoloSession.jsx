@@ -2,9 +2,10 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import {
   HardHat, Play, Clock, CheckCircle2, XCircle, Trophy, Gem, Target,
   ChevronRight, Percent, Users, Phone, Ban, Gamepad2, ListChecks,
-  Award, Crown, Loader2, AlertTriangle, SkipForward, Zap,
+  Award, Crown, Loader2, AlertTriangle, SkipForward, Zap, Languages,
 } from "lucide-react";
 import { COLORS, inputStyle, btnStyle, linkBtnStyle } from "./theme.js";
+import { getLang, setLang, otherLang, LANGS, onLangChange, t, tOptions } from "./arena/language.js";
 
 const MissionDemo = lazy(() => import("./MissionDemo.jsx"));
 
@@ -49,6 +50,10 @@ export default function SoloSession({
   me, game, plan = [], players, connected, serverOffset = 0, onPersist, onExit,
 }) {
   const [now, setNow] = useState(() => Date.now() + serverOffset);
+  // The questions carry Tamil alongside the English; this mirrors
+  // the shared setting so the screen redraws when it changes.
+  const [lang, setLangState] = useState(getLang);
+  useEffect(() => onLangChange(setLangState), []);
   const [reveal, setReveal] = useState(null);
   const [lifelineView, setLifelineView] = useState({ audience: false, hint: false });
   const timedOutRef = useRef(new Set());
@@ -330,7 +335,7 @@ export default function SoloSession({
               )}
 
               <p style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.35, marginBottom: 18 }}>
-                {question.question}
+                {t(question, "question", lang)}
               </p>
 
               {isFinale && (
@@ -369,7 +374,7 @@ export default function SoloSession({
               )}
 
               <div style={{ display: "grid", gap: 10 }}>
-                {question.options.map((option, i) => {
+                {tOptions(question, lang).map((option, i) => {
                   const isOut = isFinale && eliminated.includes(i);
                   return (
                     <button
@@ -442,9 +447,28 @@ function SessionHeader({ me, connected, progress, label }) {
           </div>
           <div style={{ fontSize: 11, color: COLORS.muted }}>{label}</div>
         </div>
-        <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div style={{ fontWeight: 900, fontSize: 18, color: COLORS.yellow }}>{me.score || 0}</div>
-          <div style={{ fontSize: 10, color: COLORS.muted, fontWeight: 700 }}>POINTS</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          {/* Every question carries Tamil. The switch sits on the
+              question screen itself, not in a settings menu, and takes
+              effect on the question already in front of you. */}
+          <button
+            type="button"
+            onClick={() => setLang(otherLang())}
+            aria-label="Change language"
+            style={{
+              display: "flex", alignItems: "center", gap: 5, cursor: "pointer",
+              background: COLORS.surface, color: COLORS.ink,
+              border: `1px solid ${COLORS.line}`, borderRadius: 8,
+              padding: "6px 10px", fontWeight: 900, fontSize: 11.5,
+            }}
+          >
+            <Languages size={13} color={COLORS.muted} />
+            {(LANGS.find((l) => l.id === getLang()) || LANGS[0]).short}
+          </button>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontWeight: 900, fontSize: 18, color: COLORS.yellow }}>{me.score || 0}</div>
+            <div style={{ fontSize: 10, color: COLORS.muted, fontWeight: 700 }}>POINTS</div>
+          </div>
         </div>
       </div>
       <div style={{ height: 3, background: COLORS.surface, borderRadius: 2, marginTop: 8, overflow: "hidden" }}>
@@ -652,7 +676,7 @@ function QuestionReveal({ question, result, isFinale, onNext, isLast, endsRound,
           CORRECT ANSWER
         </div>
         <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.ink, lineHeight: 1.45 }}>
-          {question.options[question.correct]}
+          {tOptions(question, lang)[question.correct]}
         </div>
         {question.explanation && (
           <p style={{ fontSize: 13, color: COLORS.muted, lineHeight: 1.6, margin: "10px 0 0" }}>

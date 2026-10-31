@@ -623,6 +623,89 @@ section("Finishing a round sooner is worth points");
     runTotals(plan, skipper).total < runTotals(plan, slow).total,
     `skipper ${runTotals(plan, skipper).total} vs slow-but-complete ${runTotals(plan, slow).total}`);
 }
+
+section("Every quiz and finale question is available in Tamil");
+
+{
+  const TAMIL = /[஀-௿]/;
+  const all = [...QUIZ_BANK, ...MILLIONAIRE_BANK];
+
+  const missing = all.filter((q) => !q.ta);
+  check("every question in both banks has Tamil", missing.length === 0,
+    `${missing.length} missing: ${missing.slice(0, 5).map((q) => q.id).join(", ")}`);
+
+  const mismatched = all.filter((q) => q.ta
+    && (q.ta.options || []).length !== q.options.length);
+  check("the Tamil option lists match the English", mismatched.length === 0,
+    mismatched.map((q) => q.id).join(", "));
+
+  const notTamil = all.filter((q) => q.ta && !TAMIL.test(q.ta.question));
+  check("the Tamil questions are actually Tamil", notTamil.length === 0,
+    notTamil.map((q) => q.id).join(", "));
+
+  /* Options may legitimately contain no Tamil characters when the
+   * answer is a product name that stays in English on site — "CO2",
+   * "RCD". What must not happen is a whole list left untranslated. */
+  const untranslatedList = all.filter((q) => {
+    if (!q.ta) return false;
+    const tamilCount = q.ta.options.filter((o) => TAMIL.test(o)).length;
+    return tamilCount < Math.max(1, q.ta.options.length - 2);
+  });
+  check("no option list is left in English", untranslatedList.length === 0,
+    untranslatedList.map((q) => q.id).join(", "));
+
+  // Same answer-shape discipline as the English.
+  const shapeTells = [];
+  all.forEach((q) => {
+    [["EN", q.options], ["TA", q.ta?.options || []]].forEach(([tag, list]) => {
+      if (list.length !== 4) return;
+      const lens = list.map((o) => [...String(o)].length);
+      const others = lens.filter((_, i) => i !== q.correct).sort((a, b) => a - b);
+      const mid = (others[0] + others[others.length - 1]) / 2;
+      // A one-word answer like "CO2" against three phrases is a real
+      // question, not a tell, so only flag long-form lists.
+      if (Math.min(...lens) <= 12) return;    // "CO2" vs three phrases
+      const longestOther = Math.max(...others);
+      // Two separate tells: sitting far off the middle of the list, or
+      // simply being visibly the longest line on screen.
+      if (Math.abs(lens[q.correct] - mid) > 22
+        || lens[q.correct] - longestOther > 6) {
+        shapeTells.push(`${tag}:${q.id}`);
+      }
+    });
+  });
+  check("the answer cannot be picked out by length, in either language",
+    shapeTells.length === 0, shapeTells.join(" "));
+
+  /* ---- and the shuffle has to move BOTH lists together ----
+   *
+   * The Tamil list is parallel to the English one, so applying the
+   * permutation to only one of them would silently put the answer on a
+   * different button depending on which language you were reading. */
+  {
+    const q = QUIZ_BANK.find((x) => x.ta && x.options.length === 4);
+    let checked = 0;
+    for (let i = 0; i < 200; i += 1) {
+      const perm = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+      const applied = applyPermutation(q, perm);
+      const enAnswer = applied.options[applied.correct];
+      const taAnswer = applied.ta.options[applied.correct];
+      if (enAnswer !== q.options[q.correct]) break;
+      if (taAnswer !== q.ta.options[q.correct]) break;
+      checked += 1;
+    }
+    check("shuffling moves the English and Tamil answers together",
+      checked === 200, `${checked} of 200 permutations kept them in step`);
+  }
+
+  // An untranslated question must fall back cleanly rather than crash.
+  {
+    const plain = { question: "x", options: ["a", "b", "c", "d"], correct: 1 };
+    const applied = applyPermutation(plain, [3, 2, 1, 0]);
+    check("a question with no Tamil still permutes",
+      applied.options[applied.correct] === "b" && applied.ta === undefined);
+  }
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   console.log("\nFailures:");

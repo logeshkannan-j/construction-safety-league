@@ -331,6 +331,41 @@ peak and ridge, vest braces — while keeping the whole skeleton, so a crowd sti
 walks properly. After the joint baking its saving is in triangles rather than
 draw calls. The sixteen workers who evacuate in Emergency Response use it.
 
+### Two languages, everywhere
+
+`src/arena/language.js` is the one place that remembers which language is set.
+Content stays **English-first** with a parallel `ta` block, so a half-translated
+file is never a broken file and a reviewer can read the English of any item
+without hunting through a parallel structure.
+
+Everything a player reads is bilingual: all 20 in-game questions (ten ground
+hazards, five crane situations, five escape rooms) and all 42 quiz and finale
+questions. The toggle is in the HUD next to pause and on the question screen
+itself — not in a settings menu — and switching redraws the question already in
+front of you rather than only the next one. The choice is remembered per device.
+
+Signs and boards show **both at once** rather than following the toggle, because
+a sign that needs a toggle first is no use to the person who needs the toggle.
+
+`tOptions()` falls back per LIST, not per item: a half-translated option list
+would put two languages in one question, which is worse than showing it in
+English. And `applyPermutation` shuffles the Tamil list with the English one —
+permuting only one would silently put the answer on a different button
+depending on which language you were reading.
+
+**The answer-shape discipline applies to both.** The correct option must sit
+within about 20 characters of the middle of its list, in Tamil as well as
+English. Enforcing that caught 14 Tamil lists where the answer was longest by 23
+to 39 characters — the correct answers are genuinely more detailed, so the
+distractors were brought up to match rather than the answer cut down and losing
+its meaning.
+
+**The Tamil has NOT been checked by a native speaker.** It is written to be
+understood by site crews rather than translated word for word, and terms used in
+English on Indian sites — helmet, crane, lift, isolator, muster point, CO2, RCD
+— are deliberately left in English. Please have someone read it before the
+event.
+
 ### The HUD talks about the room you are in
 
 `currentArea` was advanced when a puzzle was ANSWERED or a door unlocked, so it
@@ -852,9 +887,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 1,096 assertions with no browser required, across four suites.
+`npm test` runs 1,189 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (780 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (836 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of
@@ -888,7 +923,7 @@ and api, exactly as a player or a phone would:
   alarm/isolation/services flags, the workforce actually walking to the muster point, and a textbook
   response saving the casualty
 
-### `tests/session.test.mjs` — questions, rounds and sessions (132 assertions)
+### `tests/session.test.mjs` — questions, rounds and sessions (139 assertions)
 
 - the bank: 24 + 8 questions, unique ids, 4 options each, valid answer indexes, no duplicate
   options, an explanation on every question, and **all twelve required topics covered with at least
@@ -920,7 +955,7 @@ and api, exactly as a player or a phone would:
 - live event mode: a live paper is still 10 + 5, still shuffled in place, still never moves the
   correct answer away from its text, and still deals a different paper per game
 
-### `tests/app-render.test.mjs` — the app actually mounts (102 assertions)
+### `tests/app-render.test.mjs` — the app actually mounts (132 assertions)
 
 Mounts the **real** React app in jsdom with effects running, clicks through to the admin panel and
 waits for the live Firebase record to arrive. A blank screen is invisible to every other suite

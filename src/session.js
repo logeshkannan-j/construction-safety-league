@@ -188,7 +188,13 @@ export function applyPermutation(question, perm) {
     : question.options.map((_, i) => i);
   const options = order.map((i) => question.options[i]);
   const correct = order.indexOf(question.correct);
-  return { ...question, options, correct, optionOrder: order };
+  // The Tamil list is parallel to the English one, so it has to be
+  // permuted the SAME way — otherwise switching language mid-question
+  // would silently move the answer to a different button.
+  const ta = question.ta?.options?.length === question.options.length
+    ? { ...question.ta, options: order.map((i) => question.ta.options[i]) }
+    : question.ta;
+  return { ...question, options, correct, optionOrder: order, ...(ta ? { ta } : {}) };
 }
 
 /* ---------------------------- creating one ---------------------------- */
