@@ -1425,6 +1425,120 @@ section("The PPE store shows the kit");
   stage.dispose();
 }
 
+section("The answer is never just A");
+
+{
+  /* Every option list in this project is AUTHORED with the correct
+   * answer first, because that is the only sane way to review safety
+   * content. That makes shuffling at display time a requirement, not
+   * a nicety.
+   *
+   * The escape rooms had no shuffle at all: all five decision points
+   * had their correct option first and nothing reordered them, so the
+   * answer was slot A in every room of every play. A player works
+   * that out inside two rooms and the mission stops teaching.
+   *
+   * Measured over many plays rather than reasoned about. */
+  const { shuffledOrder } = await import(`${SRC}/shuffle.js`);
+
+  const flat = (counts) => {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    const biggest = Math.max(...Object.values(counts));
+    return { total, share: biggest / total };
+  };
+
+  // --- the helper itself ---
+  {
+    const counts = {};
+    for (let i = 0; i < 4000; i++) counts[shuffledOrder(4).indexOf(0)] = (counts[shuffledOrder(4).indexOf(0)] || 0) + 1;
+    const f = flat(counts);
+    check("the shuffle spreads a fixed answer across all four slots",
+      Object.keys(counts).length === 4 && f.share < 0.32,
+      `${JSON.stringify(counts)} — biggest ${Math.round(f.share * 100)}%`);
+    check("an empty or silly length does not throw",
+      shuffledOrder(0).length === 0 && shuffledOrder(-3).length === 0);
+  }
+
+  // --- the escape rooms, end to end ---
+  {
+    const { PUZZLES } = await import(`${SRC}/games/escapeChallenge/puzzles.js`);
+    const counts = {};
+    for (let play = 0; play < 60; play += 1) {
+      const { instance } = await boot("escapeChallenge");
+      instance.__test.interactables.forEach((item) => {
+        const puzzle = PUZZLES[item.key];
+        if (!puzzle || !item.order) return;
+        const real = puzzle.options.findIndex((o) => o.correct);
+        const slot = item.order.indexOf(real);
+        counts[slot] = (counts[slot] || 0) + 1;
+      });
+      instance.dispose();
+    }
+    const f = flat(counts);
+    check("escape: every decision point is shuffled per play",
+      Object.keys(counts).length === 4, JSON.stringify(counts));
+    check("escape: the answer is not always in the same slot",
+      f.share < 0.4, `${JSON.stringify(counts)} — biggest ${Math.round(f.share * 100)}% of ${f.total}`);
+  }
+
+  // --- the crane ---
+  {
+    const counts = {};
+    for (let play = 0; play < 60; play += 1) {
+      const { instance, record } = await boot("craneMaster");
+      runFrames(2);
+      const def = instance.__test.chosenInterrupt;
+      instance.__test.raiseInterrupt(def, { subject: instance.__test.lifts[0].group });
+      const slot = (record.dialog?.options || []).findIndex((o) => Number(o.id) === def.correct);
+      counts[slot] = (counts[slot] || 0) + 1;
+      instance.dispose();
+    }
+    const f = flat(counts);
+    check("crane: the answer is not always in the same slot",
+      f.share < 0.45, `${JSON.stringify(counts)} — biggest ${Math.round(f.share * 100)}% of ${f.total}`);
+  }
+
+  // --- the ground hazards ---
+  {
+    const { HAZARDS } = await import(`${SRC}/games/safestTower/hazards.js`);
+    const counts = {};
+    for (let play = 0; play < 40; play += 1) {
+      const { instance } = await boot("safestTower");
+      instance.__test.hazards.forEach((h) => {
+        const slot = h.order.indexOf(h.def.correct);
+        counts[slot] = (counts[slot] || 0) + 1;
+      });
+      instance.dispose();
+    }
+    const f = flat(counts);
+    check("hazards: the answer is not always in the same slot",
+      f.share < 0.35, `${JSON.stringify(counts)} — biggest ${Math.round(f.share * 100)}% of ${f.total}`);
+    check("hazards: every hazard is authored answer-first, for review",
+      HAZARDS.length === 10);
+  }
+
+  // --- and scoring still goes against the DEFINITION, not the slot ---
+  {
+    const { instance, record } = await boot("escapeChallenge");
+    const { PUZZLES } = await import(`${SRC}/games/escapeChallenge/puzzles.js`);
+    const t = instance.__test;
+    const item = t.interactables.find((i) => PUZZLES[i.key]);
+    const puzzle = PUZZLES[item.key];
+    const realId = puzzle.options.find((o) => o.correct).id;
+    t.openPuzzle(item);
+    runFrames(2);
+    const shown = record.dialog?.options || [];
+    const slotOfAnswer = shown.findIndex((o) => o.id === realId);
+    check("the option ids survive the shuffle",
+      slotOfAnswer >= 0 && shown.length === puzzle.options.length,
+      `${shown.length} options, answer in slot ${slotOfAnswer}`);
+    check("the badge letters run A B C D in display order",
+      shown.every((o, i) => o.badge === String.fromCharCode(65 + i)),
+      shown.map((o) => o.badge).join(""));
+    instance.dispose();
+  }
+}
+
 section("Scene content");
 
 {

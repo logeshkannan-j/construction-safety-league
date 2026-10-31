@@ -32,6 +32,7 @@ import {
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
+import { shuffledOrder } from "../../shuffle.js";
 
 /* ============================== metadata ============================== */
 
@@ -655,6 +656,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       onUse,
       manual,
       done: false,
+      // The order THIS player sees this decision's options in. Every
+      // puzzle is authored with the right answer first so it can be
+      // reviewed, so without this the answer is slot A every time.
+      order: shuffledOrder(PUZZLES[key]?.options?.length || 0),
     };
     interactables.push(item);
     return item;
@@ -1366,12 +1371,18 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       title: puzzle.title,
       subtitle: puzzle.subtitle,
       tone: "normal",
-      options: puzzle.options.map((option, i) => ({
-        id: option.id,
-        label: option.label,
-        desc: difficulty.hints || attempts > 0 ? option.desc : undefined,
-        badge: String.fromCharCode(65 + i),
-      })),
+      // Shown in THIS player's order. `id` still carries the real
+      // option id, so the answer is scored against the definition and
+      // never against the slot it landed in.
+      options: (item.order || puzzle.options.map((_, i) => i)).map((realIndex, slot) => {
+        const option = puzzle.options[realIndex];
+        return {
+          id: option.id,
+          label: option.label,
+          desc: difficulty.hints || attempts > 0 ? option.desc : undefined,
+          badge: String.fromCharCode(65 + slot),
+        };
+      }),
       footer: attempts > 0
         ? `Attempt ${attempts + 1}. A wrong answer costs ${Math.abs(SCORING.wrong)} points and 25 seconds.`
         : `Right first time: +${SCORING.firstTry}. Wrong: ${SCORING.wrong} and -25 seconds.`,
@@ -1904,7 +1915,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       get liveArc() { return liveArc; },
       get isolator() { return isolator; },
       isolation, pullIsolator, unlockIsolator,
-      keys, spawnKey, collectKey, hasKey, keyFor, useDoor, doorFor, unlockDoor,
+      keys, spawnKey, collectKey, hasKey, keyFor, useDoor, doorFor, unlockDoor, openPuzzle,
       get planBlend() { return planView.blend; },
       get fire() { return fire; },
       get finishZone() { return finishZone; },

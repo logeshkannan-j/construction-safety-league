@@ -19,6 +19,7 @@ import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import { INTERRUPTS, INTERRUPT_SCORING } from "./interrupts.js";
+import { shuffledOrder } from "../../shuffle.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail,
@@ -1165,7 +1166,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   function raiseInterrupt(def, { subject = null, radius = 3 } = {}) {
     if (interrupts.open || interrupts.seen.has(def.id) || state.finished) return false;
     interrupts.seen.add(def.id);
-    interrupts.open = { def, attempts: 0 };
+    interrupts.open = { def, attempts: 0, order: shuffledOrder(def.options.length) };
 
     // Everything stops. Not slows — stops.
     state.slewVel = 0;
@@ -1188,10 +1189,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       title: def.title,
       subtitle: `${def.warning}\n\n${def.question}`,
       tone: "danger",
-      options: def.options.map((text, index) => ({
-        id: String(index),
-        label: text,
-        badge: String.fromCharCode(65 + index),
+      // Shuffled per play; `id` is the REAL index so the answer is
+      // scored against the definition, not the slot.
+      options: open.order.map((realIndex, slot) => ({
+        id: String(realIndex),
+        label: def.options[realIndex],
+        badge: String.fromCharCode(65 + slot),
       })),
       footer: open.attempts > 0
         ? "Still unresolved. The load stays where it is until it is right."

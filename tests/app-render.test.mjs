@@ -442,7 +442,11 @@ section("The mission briefing renders in both languages");
       demoRoot.render(React.createElement(MissionDemo, {
         gameId: id, game: emptyGame, size, lang: "en", roundLabel: "ROUND 1 OF 5",
       }));
-      await settle(120);
+      // Wait for THIS mission's title rather than a fixed delay — the
+      // briefing lazy-loads a 3D demo now, so a short sleep can still
+      // be showing the previous mission when the check runs.
+      const want = briefs.missionBrief(id, "en").title;
+      for (let i = 0; i < 40 && !visibleText().includes(want); i++) await settle(60);
       const body = visibleText();
       check(`${id} briefing renders at size "${size}"`,
         body.includes(briefs.missionBrief(id, "en").title) && body.length > 300,

@@ -20,6 +20,7 @@ import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
+import { shuffledOrder } from "../../shuffle.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
@@ -159,16 +160,6 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     scene.add(worker);
     animated.push({ object: worker, phase: Math.random() * 6 });
   });
-
-  /** A fresh shuffled index list, e.g. [2,0,3,1]. */
-  function shuffledOrder(length) {
-    const order = Array.from({ length }, (_, i) => i);
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [order[i], order[j]] = [order[j], order[i]];
-    }
-    return order;
-  }
 
   /* ============================ the hazards ============================ */
 
