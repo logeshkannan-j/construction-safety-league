@@ -225,6 +225,44 @@ export default function GameShell({
 
   useEffect(() => teardown, [teardown]);
 
+  /* ------------------------ the back button ------------------------
+   *
+   * On a phone, Back — the button or the edge swipe — leaves the page,
+   * and the page is the event. A player part way through a mission
+   * taps it by reflex and drops out of the game entirely.
+   *
+   * There is no router here, so the fix is a sacrificial history
+   * entry: push one when the mission starts, and when the browser
+   * pops it, push another and PAUSE instead of going anywhere. Back
+   * then means "stop and think", which is what the player meant, and
+   * leaving is only possible through the pause menu's own exit.
+   *
+   * The entry is removed on unmount, so Back works normally
+   * everywhere else in the app.
+   */
+  useEffect(() => {
+    if (phase !== "playing" || typeof window === "undefined") return undefined;
+    let armed = true;
+
+    const onPop = () => {
+      if (!armed) return;
+      // Put the guard entry straight back, or the next Back really
+      // does leave.
+      window.history.pushState({ cslArenaGuard: true }, "");
+      setPaused(true);
+    };
+
+    window.history.pushState({ cslArenaGuard: true }, "");
+    window.addEventListener("popstate", onPop);
+    return () => {
+      armed = false;
+      window.removeEventListener("popstate", onPop);
+      // Take our entry back off, but only if it is still ours — if the
+      // player navigated on, going back here would move them.
+      if (window.history.state?.cslArenaGuard) window.history.back();
+    };
+  }, [phase]);
+
   /* --------------------------- full screen ---------------------------
    *
    * The shell already fills the browser WINDOW, but a window is not a
@@ -623,7 +661,7 @@ export default function GameShell({
                   pointerEvents: "auto",
                 }}
               >
-                <CraneControls input={input} mobile={mobile} readouts={hud.craneReadouts} disabled={hud.controlsLocked} />
+                <CraneControls input={input} mobile={mobile} readouts={hud.craneReadouts} disabled={hud.controlsLocked} hoistOnly={needsJoystick} />
               </div>
             )}
 

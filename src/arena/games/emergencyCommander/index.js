@@ -228,9 +228,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const plate = buildNameplate(station.label.toUpperCase(), {
       sub: step >= 0 ? `STEP ${step + 1} — ${station.action.toUpperCase()}` : "",
       accent: `#${accent.toString(16).padStart(6, "0")}`,
-      width: 5.2,
+      width: 3.8,
     });
-    plate.position.set(anchor.x, 3.5, anchor.z);
+    plate.position.set(anchor.x, 3.2, anchor.z);
     scene.add(plate);
 
     stationMarkers.set(station.id, {

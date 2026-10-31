@@ -331,6 +331,63 @@ peak and ridge, vest braces — while keeping the whole skeleton, so a crowd sti
 walks properly. After the joint baking its saving is in triangles rather than
 draw calls. The sixteen workers who evacuate in Emergency Response use it.
 
+### Tower Crane: one stick, one question, and the load lands on the deck
+
+**One joystick.** The stick already slewed the jib and ran the trolley, the way
+a real cab works — but the control desk still showed SLEW and TROLLEY rockers
+for the same two axes beside it. The desk is now HOIST only.
+
+**One safety situation per lift**, chosen at random from the five. Five
+interruptions in a single lift is a quiz with a crane attached; one is a thing
+that happens to you. Picking at random keeps all five scenarios in play across a
+room and means two people side by side are unlikely to get the same one. A wrong
+answer still costs 200 points and leaves the lift halted.
+
+**The load lands ON the slab.** A pallet group's origin sits ~96 mm above its
+own underside, and the landing ignored that: every delivered load buried its
+bottom 100 mm into the deck. The offset is now measured from the geometry that
+was actually built (`lift.baseOffset`) and used by the rope length, the release
+height check and the landing snap, so the load rests with its base exactly on
+the slab — asserted to within 20 mm.
+
+### Graphics and sound
+
+`resolveQuality("auto")` returns **high on every device**. It was running
+`detectQuality()`, which gave most phones and any four-core laptop the medium
+tier — and medium is a visibly poorer picture, which is behind several of the
+"the graphics are low quality" reports. The scenes are ~1,000 draw calls and
+50–75k triangles, which a phone from the last five years handles. Low and Medium
+are still in the settings menu, so a device that does struggle can be turned
+down on that device rather than for everybody.
+
+Master volume is 1.0, not 0.7. These are alarms and plant noise played on a
+phone speaker in a room full of people.
+
+### Back does not throw you out
+
+On a phone, Back — the button or the edge swipe — left the page, and the page is
+the event: a player part way through a mission tapped it by reflex and dropped
+out. There is no router, so the mission pushes a sacrificial history entry when
+it starts; when the browser pops it, another is pushed and the game **pauses**
+instead of going anywhere. Back now means "stop and think", and leaving is only
+possible through the pause menu's own exit. The entry is removed on unmount, so
+Back works normally everywhere else.
+
+### Labels have to clear what is behind them
+
+A nameplate is a sprite at head height; an information board is a panel on a
+wall. Put both on the same wall and the label sits squarely in front of the
+board — which is exactly what happened in the PPE store and at the main board.
+Boards and the objects they describe are now on opposite walls, plates are
+narrower, and the tests assert no plate is within 2.5 m of a board.
+
+### Choosing your PPE means putting it on
+
+Answering the PPE question correctly now rebuilds the player's avatar wearing
+what they asked for — helmet, hi-vis, boots and a full harness. A decision whose
+result you can see on yourself is worth more than one that prints a line of
+text.
+
 ### Everything you can use has its name over it
 
 `buildNameplate()` is a SPRITE, so it always faces the camera — a name you have
@@ -768,9 +825,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 1,040 assertions with no browser required, across four suites.
+`npm test` runs 1,057 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (712 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (729 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of

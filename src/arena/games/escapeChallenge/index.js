@@ -603,8 +603,16 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       height: 1.0,
       legs: false,
     });
-    // On the north wall, just inside the door you come in through.
-    board.position.set(room.x0 + 3.6, 0, room.z0 + 0.22);
+    /* On the SOUTH wall, facing back the way you came in, and at the
+     * far end of the room from the decision point.
+     *
+     * A nameplate floats at head height in FRONT of whatever is
+     * behind it, so a board on the same wall as the object it
+     * describes is guaranteed to end up behind a label. On opposite
+     * walls you read the board on the way in and the label when you
+     * reach the object. */
+    board.position.set(room.x0 + 3.4, 0, room.z1 - 0.22);
+    board.rotation.y = Math.PI;
     scene.add(board);
   });
 
@@ -626,12 +634,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Name the decision point, so it is obvious which object in the
     // room is the one you are meant to deal with.
     const plate = buildNameplate(String(label).toUpperCase(), {
-      sub: "PRESS E", accent: "#9B7CF2", width: 3.4,
+      sub: "PRESS E", accent: "#9B7CF2", width: 2.3,
     });
     // Most decision points are given as { x, z } with no y at all, so
     // `position.y + 1` is NaN and the plate ends up nowhere. Default
     // it the same way the ring below does.
-    plate.position.set(position.x, (position.y ?? 0.12) + 1.9, position.z);
+    plate.position.set(position.x, (position.y ?? 0.12) + 1.75, position.z);
     scene.add(plate);
     scene.add(marker);
     animated.push({ kind: "ring", object: marker, phase: Math.random() * 6 });
@@ -667,10 +675,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       MAIN.x + isolator.leverAnchor.x, isolator.leverAnchor.y, MAIN.z + isolator.leverAnchor.z
     );
 
-    const mainPlate = buildNameplate("MAIN DISTRIBUTION BOARD", {
-      sub: "THE ISOLATOR IS IN HERE", accent: "#EA4F4F", width: 4.2,
+    const mainPlate = buildNameplate("MAIN BOARD", {
+      sub: "ISOLATOR INSIDE", accent: "#EA4F4F", width: 2.4,
     });
-    mainPlate.position.set(MAIN.x, 3.0, MAIN.z);
+    mainPlate.position.set(MAIN.x, 2.75, MAIN.z);
     scene.add(mainPlate);
 
     const localIsolator = buildElectricalPanel(geo, mat, { unsafe: false, height: 1.2 });
@@ -918,7 +926,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       accent: "#EA4F4F",
       legs: false,
     });
-    fireBoard.position.set(room.x1 - 4.0, 0, room.z0 + 0.22);
+    fireBoard.position.set(room.x0 + 4.2, 0, room.z0 + 0.22);
     scene.add(fireBoard);
 
     // The four extinguishers on the wall. Each one is picked up
@@ -1141,7 +1149,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    * switch to over-the-shoulder. Walks when they walk, and carries the
    * extinguisher in front of them when they have one.
    */
-  const avatar = buildWorker(geo, mat, {
+  // Reassigned when the player draws their PPE and puts it on.
+  let avatar = buildWorker(geo, mat, {
     helmet: true, vest: true, boots: true, helmetColor: "orange",
   });
   avatar.visible = false;
@@ -1150,6 +1159,32 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   avatar.userData.selfAnimated = true;
   scene.add(avatar);
   let walkPhase = 0;
+
+  /**
+   * Puts the chosen PPE on the player.
+   *
+   * The avatar is rebuilt rather than modified: a harness changes the
+   * torso and the helmet changes the head, and buildWorker already
+   * assembles all of that from a few flags. Position, facing and the
+   * walk phase carry across, so it is a change of kit rather than a
+   * teleport.
+   */
+  function wearPPE() {
+    if (state.wearingPPE) return;
+    state.wearingPPE = true;
+    const kitted = buildWorker(geo, mat, {
+      helmet: true, vest: true, boots: true, harness: true, role: "officer",
+    });
+    kitted.position.copy(avatar.position);
+    kitted.rotation.copy(avatar.rotation);
+    kitted.visible = avatar.visible;
+    kitted.userData.selfAnimated = true;
+    scene.remove(avatar);
+    avatar = kitted;
+    scene.add(avatar);
+    sfx.interact();
+    api.toast("Helmet, hi-vis, boots, gloves and harness on. Now cross the floor.", "good");
+  }
 
   function updateAvatar(dt) {
     const moving = controller.moving && !controller.state.frozen;
@@ -1209,6 +1244,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // The plant room is played out rather than answered: pick an
     // extinguisher up, carry it to the fire, discharge it.
     carrying: null,
+    /** True once the player has drawn and put on the right PPE. */
+    wearingPPE: false,
     /** roomKey -> true once its key is in your pocket. */
     keysHeld: {},
     fireAttempts: 0,
@@ -1353,7 +1390,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       closeDialog();
       sfx.correct();
       api.toast(`${option.feedback}`, "good", points);
-      if (item.key === "electrical") {
+      if (item.key === "ppe") {
+        // You asked for the PPE: you are now WEARING it. The avatar
+        // changes, and a decision whose result you can see on
+        // yourself is worth more than one that prints a line of text.
+        wearPPE();
+        spawnKey(item.key);
+      } else if (item.key === "electrical") {
         // Knowing the procedure is not doing it: the board unlocks,
         // and the key is cut once the handle is actually down.
         unlockIsolator();
@@ -1832,7 +1875,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
       zoomFov: () => camera.fov,
-      state, controller, interactables, doors, rooms, ceilings, avatar,
+      state, controller, interactables, doors, rooms, ceilings,
+      get avatar() { return avatar; }, wearPPE,
       fallingDebris, updateFallingDebris,
       get liveArc() { return liveArc; },
       get isolator() { return isolator; },

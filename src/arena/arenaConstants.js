@@ -249,9 +249,9 @@ export function ratingFor(percent) {
 /* ---------------------------- graphics ---------------------------- */
 
 export const QUALITY_LEVELS = [
-  { id: "low", label: "Low", desc: "No shadows, lowest resolution — best for older phones" },
+  { id: "low", label: "Low", desc: "No shadows, lowest resolution — only if the game stutters" },
   { id: "medium", label: "Medium", desc: "Soft shadows, balanced resolution" },
-  { id: "high", label: "High", desc: "Full shadows and resolution — desktop and new tablets" },
+  { id: "high", label: "High", desc: "Full shadows and resolution — the default on every device" },
 ];
 
 /* -------------------------- local storage -------------------------- */

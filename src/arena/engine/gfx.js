@@ -109,7 +109,19 @@ export const QUALITY_PRESETS = {
 
 export function resolveQuality(setting) {
   if (setting === "low" || setting === "medium" || setting === "high") return setting;
-  return detectQuality();
+  /* "auto" now means HIGH on everything.
+   *
+   * detectQuality() was giving most phones and any four-core laptop
+   * the medium tier, and medium is a visibly poorer picture — it was
+   * behind several of the "the graphics are low quality" reports. The
+   * scenes are ~1,000 draw calls and 50-75k triangles, which a phone
+   * from the last five years renders comfortably.
+   *
+   * It is still only the DEFAULT: Low and Medium remain in the
+   * settings menu, so anything that does struggle can be turned down
+   * on the device rather than for everybody.
+   */
+  return "high";
 }
 
 export function preset(quality) {

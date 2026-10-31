@@ -203,7 +203,7 @@ device testing checklist are in **[ARENA.md](ARENA.md)**.
 ```bash
 npm install
 npm run dev
-npm test     # 1040 tests: the 3D games, the question bank, rounds, scoring,
+npm test     # 1057 tests: the 3D games, the question bank, rounds, scoring,
              # rules, and that the app actually renders
 ```
 

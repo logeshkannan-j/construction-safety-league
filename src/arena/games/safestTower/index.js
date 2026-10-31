@@ -533,9 +533,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const plate = buildNameplate(def.title.toUpperCase(), {
       sub: `HAZARD ${HAZARDS.indexOf(def) + 1} OF ${HAZARD_COUNT}`,
       accent: "#EA4F4F",
-      width: 5.6,
+      width: 3.6,
     });
-    plate.position.set(def.at.x, 3.4, def.at.z);
+    plate.position.set(def.at.x, 3.1, def.at.z);
     scene.add(plate);
 
     const marker = buildZoneMarker(mat, { radius: 2.4, ok: false });

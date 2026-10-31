@@ -15,7 +15,10 @@
 let ctx = null;
 let master = null;
 let enabled = true;
-let volume = 0.7;
+// Full. These are warning sounds, alarms and plant noise on a site —
+// at 0.7 on a phone speaker in a room full of people they were simply
+// not audible.
+let volume = 1;
 let unlocked = false;
 
 // Long-running loops (crane motors, alarms) keyed by name.

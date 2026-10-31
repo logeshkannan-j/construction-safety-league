@@ -50,6 +50,7 @@ gfx.__setRendererFactory(() => {
 });
 
 const THREE = await import("three");
+const { INTERRUPT_SCORING: craneScoring } = await import(`${SRC}/games/craneMaster/interrupts.js`);
 
 /** Boots a game module and returns everything a test needs. */
 async function boot(path, { difficulty = "normal", mobile = false } = {}) {
@@ -1151,6 +1152,103 @@ section("Everything you can use has its name over it");
   }
 }
 
+section("Labels do not hide the thing behind them");
+
+{
+  /* A nameplate is a sprite at head height; an information board is a
+   * panel on a wall. Put both on the same wall and the label sits
+   * squarely in front of the board, which is what the screenshots
+   * showed. They have to be far enough apart to read separately. */
+  for (const path of ["escapeChallenge", "emergencyCommander", "safestTower"]) {
+    const { instance } = await boot(path);
+    runFrames(10);
+
+    const plates = [];
+    const boards = [];
+    lastRenderer.lastScene.traverse((o) => {
+      if (o.userData?.nameplate) plates.push(o);
+      if (o.userData?.boardHeight) boards.push(o);
+    });
+
+    const clashes = [];
+    boards.forEach((b) => {
+      plates.forEach((p) => {
+        const d = Math.hypot(p.position.x - b.position.x, p.position.z - b.position.z);
+        if (d < 2.5) clashes.push(`${p.userData.nameplate.text} at ${d.toFixed(1)} m`);
+      });
+    });
+    check(`${path}: no label is parked in front of a board`,
+      clashes.length === 0, clashes.slice(0, 3).join("; "));
+
+    check(`${path}: the labels are small enough to see past`,
+      plates.every((p) => p.scale.x <= 4.0),
+      plates.map((p) => p.scale.x.toFixed(1)).join(", "));
+
+    instance.dispose();
+  }
+}
+
+section("Choosing your PPE means putting it on");
+
+{
+  const { instance, record } = await boot("escapeChallenge");
+  const t = instance.__test;
+  runFrames(10);
+
+  const before = t.avatar;
+  check("the player starts without a harness",
+    before.userData.worker.harness === false);
+  check("the PPE has not been drawn yet", t.state.wearingPPE === false);
+
+  t.wearPPE();
+  runFrames(4);
+
+  check("choosing the right PPE puts it on the player",
+    t.avatar.userData.worker.harness === true
+    && t.avatar.userData.worker.helmet === true
+    && t.avatar.userData.worker.vest === true,
+    JSON.stringify(t.avatar.userData.worker));
+  check("the kitted-out body replaced the old one", t.avatar !== before);
+  check("it stays where the player was standing",
+    t.avatar.position.distanceTo(before.position) < 0.01);
+  check("it is still the player's own body, not crowd scenery",
+    t.avatar.userData.selfAnimated === true);
+  check("drawing PPE twice does not stack up bodies",
+    (() => { t.wearPPE(); const a = t.avatar; t.wearPPE(); return t.avatar === a; })());
+
+  instance.dispose();
+}
+
+section("One stick, one question, and the load lands on the slab");
+
+{
+  const { instance } = await boot("craneMaster");
+  const t = instance.__test;
+  runFrames(10);
+
+  // A load rests ON the deck, not in it. The pallet's origin is ~96 mm
+  // above its own underside, and the landing used to ignore that and
+  // bury the bottom of every load in the slab.
+  const lift = t.lifts[0];
+  check("the lift knows where its own underside is",
+    lift.baseOffset > 0.01 && lift.baseOffset < 0.5, `${lift.baseOffset?.toFixed(3)} m`);
+
+  lift.group.position.set(lift.target.x, lift.targetY + lift.baseOffset, lift.target.z);
+  lift.group.rotation.set(0, 0, 0);
+  lift.group.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(lift.group);
+  check("a landed load sits on the slab rather than sinking into it",
+    Math.abs(box.min.y - lift.targetY) < 0.02,
+    `base ${box.min.y.toFixed(3)} vs slab ${lift.targetY.toFixed(3)}`);
+
+  // One situation per lift, not five.
+  check("the lift has exactly one safety situation set", !!t.chosenInterrupt?.id);
+  check("getting it wrong costs points", craneScoring.wrongAnswer < 0,
+    `${craneScoring.wrongAnswer}`);
+
+  instance.dispose();
+}
+
 section("Scene content");
 
 {
@@ -1578,6 +1676,7 @@ section("Tower Crane Master — lift a load");
   const input = instance.input;
   const { state, lifts, hookWorldPosition, loadWorldPosition, safeWorkingLoad, CRANE } = instance.__test;
   const { interrupts, answerInterrupt } = instance.__test;
+  const { INTERRUPTS } = await import(`${SRC}/games/craneMaster/interrupts.js`);
 
   /* The lift now STOPS when something unsafe happens around it, and
    * will not take another control input until the operator deals with
@@ -1777,16 +1876,23 @@ section("Tower Crane Master — lift a load");
   check("landing a load is scored", state.accuracyPoints > 0 || state.steadyPoints > 0,
     `accuracy=${state.accuracyPoints} steady=${state.steadyPoints}`);
 
-  // The lift is not a transport puzzle: things happened around the load
-  // and the operator had to deal with them to get here at all.
-  check("safety situations interrupted the lift", interruptsHit.length >= 3,
+  /* The lift is not a transport puzzle: something happened around the
+   * load and the operator had to deal with it to get here at all.
+   *
+   * ONE situation per lift, chosen at random from the five — five
+   * interruptions in a single lift is a quiz with a crane attached.
+   * Which one it is varies per play, so the assertion is on the
+   * count and on it being a real one, not on which. */
+  const { chosenInterrupt } = instance.__test;
+  check("a safety situation interrupted the lift", interruptsHit.length === 1,
     `fired: ${interruptsHit.join(", ") || "none"}`);
-  check("the rigging was challenged before the load left the ground",
-    interruptsHit[0] === "rigging", interruptsHit.join(", "));
-  check("no hazard fired twice", new Set(interruptsHit).size === interruptsHit.length,
-    interruptsHit.join(", "));
-  check("resolving them is what let the lift finish",
-    interrupts.resolved === interruptsHit.length && interrupts.open === null,
+  check("it was the one this lift had chosen",
+    interruptsHit[0] === chosenInterrupt.id,
+    `${interruptsHit[0]} vs ${chosenInterrupt.id}`);
+  check("it is one of the five written scenarios",
+    INTERRUPTS.some((d) => d.id === interruptsHit[0]), interruptsHit[0]);
+  check("resolving it is what let the lift finish",
+    interrupts.resolved === 1 && interrupts.open === null,
     `${interrupts.resolved} resolved`);
 
   instance.dispose();

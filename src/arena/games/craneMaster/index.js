@@ -18,7 +18,7 @@ import { createStage, addDaylight, addSky, createZoom } from "../../engine/gfx.j
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
-import { INTERRUPT_SCORING, INTERRUPT_COUNT, interruptById } from "./interrupts.js";
+import { INTERRUPTS, INTERRUPT_SCORING } from "./interrupts.js";
 import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail,
@@ -385,9 +385,18 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     scene.add(box(geo, mat.yellow, 5.4, 0.04, 5.4, lift.target.x, targetY + 0.03, lift.target.z, { shadow: false }));
     scene.add(box(geo, mat.black, 4.4, 0.05, 4.4, lift.target.x, targetY + 0.04, lift.target.z, { shadow: false }));
 
+    /* How far the pallet's ORIGIN sits above its own underside.
+     *
+     * It is not zero and it is not size.y/2 — a pallet group has
+     * bearers below its origin — so it has to be measured from the
+     * geometry that was actually built. Assuming it was 0 is why a
+     * landed load buried its bottom 100 mm into the slab. */
+    const bounds = new THREE.Box3().setFromObject(group);
+    const baseOffset = group.position.y - bounds.min.y;
+
     return {
       ...lift,
-      group, pad, ring, pickRing, pickBoard, landBoard,
+      group, pad, ring, pickRing, pickBoard, landBoard, baseOffset,
       /** Set once the operator has insisted the bundle is re-rigged. */
       rigged: false,
       targetY,
@@ -566,7 +575,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   function ropeLengthFor(lift) {
     // The distance from the hook block down to the load's own origin.
-    return 1.9 + (lift?.size.y || 1) * 0.1;
+    return 1.9 + (lift?.baseOffset || 0);
   }
 
   function safeWorkingLoad(radius) {
@@ -871,7 +880,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // --- releasing ---
     const load = loadWorldPosition(_focus);
     const horizontal = Math.hypot(load.x - lift.target.x, load.z - lift.target.z);
-    const vertical = Math.abs(load.y - (lift.targetY + lift.size.y * 0.1));
+    const vertical = Math.abs(load.y - (lift.targetY + lift.baseOffset));
 
     if (horizontal > RELEASE_RADIUS) {
       api.toast(`Not over the target — ${horizontal.toFixed(1)} m out.`, "warn");
@@ -901,7 +910,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     state.liftsDone += 1;
 
     lift.state = "landed";
-    lift.group.position.set(lift.target.x, lift.targetY, lift.target.z);
+    // Sits ON the slab, not in it.
+    lift.group.position.set(lift.target.x, lift.targetY + lift.baseOffset, lift.target.z);
     lift.group.rotation.set(0, 0, 0);
     lift.ring.visible = false;
     lift.pad.visible = false;
@@ -1174,7 +1184,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     if (!open) return;
     const { def } = open;
     api.dialog({
-      eyebrow: `LIFT HALTED — SAFETY ${interrupts.resolved + 1} OF ${INTERRUPT_COUNT}`,
+      eyebrow: "LIFT HALTED — SAFETY CHECK",
       title: def.title,
       subtitle: `${def.warning}\n\n${def.question}`,
       tone: "danger",
@@ -1224,11 +1234,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     api.toast(def.toast, "good", award);
     applyInterruptFix(def.id);
 
-    if (interrupts.resolved === INTERRUPT_COUNT) {
-      state.score += INTERRUPT_SCORING.allResolved;
-      api.toast("Every hazard on this lift dealt with properly.", "good",
-        INTERRUPT_SCORING.allResolved);
-    }
+    state.score += INTERRUPT_SCORING.allResolved;
+    api.toast("Hazard dealt with properly. Carry on with the lift.", "good",
+      INTERRUPT_SCORING.allResolved);
     pushHud();
   }
 
@@ -1276,58 +1284,62 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
   }
 
-  /** Decides, every frame, whether anything should stop the lift. */
-  function checkInterrupts(dt) {
+  /**
+   * ONE safety situation per lift, chosen at random from the five.
+   *
+   * Five interruptions in a single lift is a quiz with a crane
+   * attached — it stops being a lift and becomes a questionnaire. One
+   * is a thing that happens to you. Picking it at random keeps all
+   * five scenarios in play across a room full of people and means
+   * two players side by side are unlikely to get the same one.
+   */
+  const chosenInterrupt = INTERRUPTS[Math.floor(Math.random() * INTERRUPTS.length)];
+
+  /** Is this the moment for the one situation this lift will get? */
+  function interruptDue(def, lift, load) {
+    switch (def.id) {
+      case "rigging":
+        // As the load takes weight, before it is properly in the air.
+        return !!lift && !!load && load.y > 0.6;
+      case "person-under-load":
+        // Once it is travelling, away from the stockpile.
+        return !!lift && !!load && load.y > 2.5
+          && Math.hypot(load.x - lift.pick.x, load.z - lift.pick.z) > 6;
+      case "swing":
+        return !!lift && !!load && load.y > 2.5 && swingSpeed() > STEADY_LIMIT * 2.2;
+      case "unsafe-instruction":
+        return !!lift && !!load && load.y > 2.5
+          && Math.hypot(load.x - lift.target.x, load.z - lift.target.z) < 26;
+      case "no-barricade":
+        return !!lift && !!load && load.y > 2.5
+          && Math.hypot(load.x - lift.target.x, load.z - lift.target.z) < 9;
+      default:
+        return false;
+    }
+  }
+
+  /** Decides, every frame, whether the lift should stop. */
+  function checkInterrupts() {
     if (interrupts.open || state.finished) return;
+    if (interrupts.seen.has(chosenInterrupt.id)) return;
     if (stage.elapsed < interrupts.cooldownUntil) return;
 
     const lift = state.attached;
     const load = lift ? loadWorldPosition(_focus) : null;
+    if (!interruptDue(chosenInterrupt, lift, load)) return;
 
-    // 1. Rigging — the moment they take the weight of the first load.
-    if (lift && !interrupts.seen.has("rigging") && load && load.y > 0.6) {
-      raiseInterrupt(interruptById("rigging"), { subject: lift.group, radius: 3.4 });
-      return;
-    }
-
-    // Everything below needs a load actually in the air.
-    if (!lift || !load || load.y < 2.5) return;
-
-    // 2. Somebody walks under it, once it is travelling.
-    if (!interrupts.seen.has("person-under-load")
-        && interrupts.seen.has("rigging")
-        && Math.hypot(load.x - lift.pick.x, load.z - lift.pick.z) > 6) {
+    if (chosenInterrupt.id === "person-under-load") {
+      // Walk him in under it first, so the warning is about something
+      // the player can see.
       strayState.active = true;
       strayState.walkedOut = false;
       strayState.from.set(load.x + 14, 0, load.z + 10);
-      stray.position.copy(strayState.from);
-      stray.visible = true;
-      // Put him under it, then halt.
       stray.position.set(load.x, 0, load.z);
-      raiseInterrupt(interruptById("person-under-load"), { subject: stray, radius: 4.2 });
+      stray.visible = true;
+      raiseInterrupt(chosenInterrupt, { subject: stray, radius: 4.2 });
       return;
     }
-
-    // 3. The swing gets away from them.
-    if (!interrupts.seen.has("swing") && swingSpeed() > STEADY_LIMIT * 2.6) {
-      raiseInterrupt(interruptById("swing"), { subject: lift.group, radius: 3.6 });
-      return;
-    }
-
-    // 4. The radio call, part way across.
-    if (!interrupts.seen.has("unsafe-instruction")
-        && interrupts.seen.has("person-under-load")
-        && Math.hypot(load.x - lift.target.x, load.z - lift.target.z) < 26) {
-      raiseInterrupt(interruptById("unsafe-instruction"), { subject: lift.group, radius: 3.4 });
-      return;
-    }
-
-    // 5. The landing area, as they bring it in.
-    if (!interrupts.seen.has("no-barricade")
-        && !landingBarricade.visible
-        && Math.hypot(load.x - lift.target.x, load.z - lift.target.z) < 9) {
-      raiseInterrupt(interruptById("no-barricade"), { subject: lift.group, radius: 4 });
-    }
+    raiseInterrupt(chosenInterrupt, { subject: lift.group, radius: 3.6 });
   }
 
   /* -------------------------------- loop -------------------------------- */
@@ -1382,7 +1394,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       applyMotion(dt);
       updateSwing(dt);
       checkRules(dt);
-      checkInterrupts(dt);
+      checkInterrupts();
     } else {
       stopAllLoops();
     }
@@ -1460,7 +1472,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
       state, lifts, hookWorldPosition, loadWorldPosition, safeWorkingLoad, CRANE,
-      interrupts, raiseInterrupt, answerInterrupt, checkInterrupts,
+      interrupts, raiseInterrupt, answerInterrupt, checkInterrupts, chosenInterrupt,
       stray, landingBarricade,
       zoomFov: () => camera.fov,
       camDistance: () => cam.distance,

@@ -189,7 +189,13 @@ export function Rocker({
  * drives the SAME named actions the keyboard drives, so the crane
  * behaves identically on both.
  */
-export function CraneControls({ input, mobile = false, readouts = null, disabled = false }) {
+export function CraneControls({
+  input, mobile = false, readouts = null, disabled = false,
+  // With a joystick on screen the stick IS the slew and trolley, the
+  // way a real cab works. Showing rockers for the same two axes beside
+  // it is a second set of controls for the same thing.
+  hoistOnly = false,
+}) {
   const size = mobile ? 44 : 48;
   return (
     <div
@@ -200,6 +206,7 @@ export function CraneControls({ input, mobile = false, readouts = null, disabled
         pointerEvents: "none",
       }}
     >
+      {!hoistOnly && (
       <Rocker
         label="SLEW"
         input={input}
@@ -212,6 +219,8 @@ export function CraneControls({ input, mobile = false, readouts = null, disabled
         disabled={disabled}
         value={readouts?.slew}
       />
+      )}
+      {!hoistOnly && (
       <Rocker
         label="TROLLEY"
         input={input}
@@ -224,6 +233,7 @@ export function CraneControls({ input, mobile = false, readouts = null, disabled
         disabled={disabled}
         value={readouts?.radius}
       />
+      )}
       <Rocker
         label="HOIST"
         input={input}
