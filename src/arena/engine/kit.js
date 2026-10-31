@@ -98,9 +98,21 @@ function dirtTexture(repeat, aniso) {
     }
 
     // Compacted fines, then loose stone on top.
-    noise(ctx, w, h, 9000, ["#8d7c5e", "#a3906f", "#ab9a79", "#85765a", "#b4a383"], 3);
-    noise(ctx, w, h, 1400, ["#6f6350", "#c3b494", "#7a6d57"], 5);
-    noise(ctx, w, h, 420, ["#d6cbb2", "#5f5745"], 8);
+    //
+    // Deliberately LOW CONTRAST and fairly coarse. This texture is
+    // tiled 14x across a 260 m ground plane, so anything fine and
+    // high-contrast turns into crawling static when the camera moves —
+    // no amount of mipmapping or anisotropy rescues it, because the
+    // detail is smaller than a pixel by the time it is a few metres
+    // away. Bigger, closer-toned specks read as ground; small, punchy
+    // ones read as a broken screen.
+    ctx.globalAlpha = 0.5;
+    noise(ctx, w, h, 4200, ["#96855f", "#a3906f", "#a89778", "#8e7f63", "#ab9b7d"], 5);
+    ctx.globalAlpha = 0.42;
+    noise(ctx, w, h, 900, ["#7d7059", "#b8a98a", "#857759"], 7);
+    ctx.globalAlpha = 0.34;
+    noise(ctx, w, h, 240, ["#c4b89c", "#6d6450"], 10);
+    ctx.globalAlpha = 1;
 
     // Plant ruts. A dark trough with a lighter lip on one side reads as
     // a depression rather than a painted line.
@@ -124,7 +136,7 @@ function dirtTexture(repeat, aniso) {
     }
 
     // Tread marks across the ruts.
-    ctx.globalAlpha = 0.13;
+    ctx.globalAlpha = 0.09;
     ctx.fillStyle = "#574f3f";
     for (let i = 0; i < 90; i++) {
       const x = (i * 71) % w;
@@ -284,12 +296,33 @@ export { SITE_NAME, SITE_SUBTITLE };
 /** The ARIA brand orange, shared by the banners and the 3D mark. */
 export const ARIA_ORANGE = "#F4631A";
 
+/* The ARIA "A", as ONE outline in a unit space with y pointing UP and
+ * the letter two units tall. Both the flat version on the banners and
+ * the extruded version in the world are built from these numbers, so
+ * the mark on a hoarding and the mark on the building are the same
+ * shape and cannot drift apart.
+ *
+ * The outline walks the apex, down the outside of the right leg, back
+ * up its inside to the crossbar, across, and down the left leg. The
+ * counter (the triangular hole in the A) is the separate path. */
+const ARIA_A_OUTLINE = [
+  [0.00, 1.00],
+  [0.64, -1.00],
+  [0.32, -1.00],
+  [0.19, -0.26],
+  [-0.19, -0.26],
+  [-0.32, -1.00],
+  [-0.64, -1.00],
+];
+const ARIA_A_COUNTER = [
+  [0.00, 0.50],
+  [0.18, -0.02],
+  [-0.18, -0.02],
+];
+
 /**
  * Draws the ARIA mark — the orange "A" with its orbital ring — onto a
- * 2D canvas, centred on (cx, cy) at radius `s`.
- *
- * The same mark exists as real geometry in buildAriaMark(); this is the
- * flat version, for hoarding banners and plates where a decal is right.
+ * 2D canvas, centred on (cx, cy), where `s` is the A's HALF height.
  */
 function drawAriaMark(ctx, cx, cy, s) {
   const grad = ctx.createLinearGradient(cx - s, cy - s, cx + s, cy + s);
@@ -302,25 +335,47 @@ function drawAriaMark(ctx, cx, cy, s) {
   ctx.translate(cx, cy);
   ctx.rotate(-0.36);
   ctx.strokeStyle = grad;
-  ctx.lineWidth = s * 0.14;
+  ctx.lineWidth = s * 0.15;
   ctx.beginPath();
-  ctx.ellipse(0, 0, s * 1.04, s * 0.46, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, s * 1.06, s * 0.47, 0, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 
-  // The A: an outer triangle with the counter punched out of it, so the
-  // legs and the crossbar fall out of one path.
+  // The letter. Canvas y runs DOWN, so the outline's y is negated.
+  const trace = (points) => {
+    points.forEach(([x, y], i) => {
+      const px = cx + x * s;
+      const py = cy - y * s;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.closePath();
+  };
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.moveTo(cx, cy - s * 0.82);
-  ctx.lineTo(cx + s * 0.6, cy + s * 0.82);
-  ctx.lineTo(cx - s * 0.6, cy + s * 0.82);
-  ctx.closePath();
-  ctx.moveTo(cx, cy - s * 0.16);
-  ctx.lineTo(cx + s * 0.21, cy + s * 0.3);
-  ctx.lineTo(cx - s * 0.21, cy + s * 0.3);
-  ctx.closePath();
+  trace(ARIA_A_OUTLINE);
+  trace(ARIA_A_COUNTER);
   ctx.fill("evenodd");
+}
+
+/**
+ * Shrinks `font(px)` until `text` fits in `maxWidth`, and leaves the
+ * chosen font set on the context.
+ *
+ * The banner said "CASAGRAND AR" for a while because the name was set
+ * at a fixed 86px and simply ran off the end of the canvas. Anything
+ * driven by SITE_NAME has to fit whatever the name happens to be.
+ */
+function fitFont(ctx, text, maxWidth, startPx, minPx, apply) {
+  let px = startPx;
+  apply(px);
+  // measureText is stubbed in the headless tests, so this loop has to
+  // terminate on its own rather than relying on a real measurement.
+  while (px > minPx && ctx.measureText(text).width > maxWidth) {
+    px -= 2;
+    apply(px);
+  }
+  return px;
 }
 
 export function brandTexture(
@@ -338,25 +393,38 @@ export function brandTexture(
     ctx.fillRect(0, 0, w, 7);
     ctx.fillRect(0, h - 7, w, 7);
 
-    // The mark sits on the left of the banner, as it does on the real
-    // hoarding, with the name set beside it rather than under it.
-    drawAriaMark(ctx, 132, h / 2, 76);
+    // The mark sits on the left, as it does on the real hoarding, with
+    // the name set beside it rather than under it.
+    drawAriaMark(ctx, 118, h / 2, 62);
 
-    const textCx = (236 + w) / 2;
+    // Everything right of the mark, with a margin at each end.
+    const left = 196;
+    const right = w - 28;
+    const textCx = (left + right) / 2;
+    const maxWidth = right - left;
+
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
+
+    // Letter spacing scales WITH the size. Held fixed, it dominates at
+    // small sizes and a long name can never be shrunk enough to fit.
     ctx.fillStyle = fg;
-    ctx.font = "800 86px Georgia, 'Times New Roman', serif";
-    ctx.letterSpacing = "13px";
+    fitFont(ctx, title, maxWidth, 76, 20, (px) => {
+      ctx.font = `800 ${px}px Georgia, 'Times New Roman', serif`;
+      ctx.letterSpacing = `${(px * 0.13).toFixed(1)}px`;
+    });
     ctx.fillText(title, textCx, h / 2 - 20);
 
     ctx.fillStyle = accent;
     ctx.fillRect(textCx - 140, h / 2 + 30, 280, 3);
 
     ctx.fillStyle = dark ? "#9FB0C0" : "#5A6B7A";
-    ctx.font = "600 29px system-ui, sans-serif";
-    ctx.letterSpacing = "7px";
+    fitFont(ctx, subtitle, maxWidth, 28, 12, (px) => {
+      ctx.font = `600 ${px}px system-ui, sans-serif`;
+      ctx.letterSpacing = `${(px * 0.22).toFixed(1)}px`;
+    });
     ctx.fillText(subtitle, textCx, h / 2 + 64);
+    ctx.letterSpacing = "0px";
   });
 }
 
@@ -364,39 +432,46 @@ export function brandTexture(
  * The ARIA mark as REAL GEOMETRY, not a picture on a plane.
  *
  * The brand is an orange gradient "A" with an orbital ring sweeping
- * around it. Here the ring is an actual torus tilted off-axis and the
- * A is extruded, so it catches the light and reads as a sign from any
- * angle — including from directly above, which a flat decal does not.
+ * around it. The ring is an actual torus tilted off-axis and the A is
+ * extruded from ARIA_A_OUTLINE, so it catches the light and reads as a
+ * sign from any angle — including from directly above, which a flat
+ * decal does not.
  *
- * Returns { group, ring } so a caller can slowly rotate the ring.
+ * The A was previously three leaning boxes. At the lean they had, the
+ * legs never met at the top and the crossbar ran straight across, so
+ * the mark read as a capital H. It is now the real letter outline with
+ * its counter punched out.
+ *
+ * `size` is the full height of the letter. Returns { group, ring }.
  */
 export function buildAriaMark(geo, mat, { size = 3, depth = 0.22 } = {}) {
   const group = new THREE.Group();
-  const s = size / 3;
+  const s = size / 2;
 
-  // --- the orbital ring ---
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(1.55 * s, 0.1 * s, 10, 48),
+  const shape = new THREE.Shape(
+    ARIA_A_OUTLINE.map(([x, y]) => new THREE.Vector2(x * s, y * s))
+  );
+  shape.holes.push(new THREE.Path(
+    ARIA_A_COUNTER.map(([x, y]) => new THREE.Vector2(x * s, y * s))
+  ));
+
+  const letter = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 1 }),
     mat.ariaOrange
   );
-  // Tilted and rolled the way the mark sweeps behind the letter.
-  ring.rotation.set(1.16, 0.0, 0.42);
-  group.add(ring);
+  letter.position.z = -depth / 2;
+  letter.castShadow = false;
+  group.add(letter);
 
-  // --- the A, built from three extruded bars ---
-  const bar = (w, h, d, x, y, z, rotZ) => {
-    const m = new THREE.Mesh(geo.box, mat.ariaOrange);
-    m.scale.set(w, h, d);
-    m.position.set(x, y, z);
-    if (rotZ) m.rotation.z = rotZ;
-    m.castShadow = false;
-    return m;
-  };
-  const legH = 2.5 * s;
-  const lean = 0.22;
-  group.add(bar(0.30 * s, legH, depth, -0.52 * s, 0, 0, lean));
-  group.add(bar(0.30 * s, legH, depth, 0.52 * s, 0, 0, -lean));
-  group.add(bar(0.86 * s, 0.26 * s, depth * 1.02, 0, -0.30 * s, 0, 0));
+  // The ring orbiting the letter. Tilted so it reads as a sweep around
+  // the A rather than a circle drawn on top of it.
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(s * 1.02, s * 0.075, 10, 48),
+    mat.ariaOrange
+  );
+  ring.rotation.set(1.16, 0.0, 0.42);
+  ring.castShadow = false;
+  group.add(ring);
 
   return { group, ring };
 }
@@ -507,7 +582,14 @@ export function createMaterials(cfg) {
   const P = (params) => new THREE.MeshPhongMaterial(params);
 
   return {
-    ground: L({ map: dirtTexture([14, 14], aniso) }),
+    // polygonOffset pushes the ground very slightly away from the
+    // camera in the depth buffer. Everything laid flat ON the ground —
+    // yard slabs, zone markings, puddles — sits at or near y = 0, and
+    // without this they z-fight with it and the ground flickers.
+    ground: L({
+      map: dirtTexture([14, 14], aniso),
+      polygonOffset: true, polygonOffsetFactor: 1.2, polygonOffsetUnits: 1.2,
+    }),
     concrete: L({ map: concreteTexture([2, 2], aniso) }),
     concreteSlab: L({ map: concreteTexture([6, 6], aniso) }),
     concreteDark: L({ color: 0x8e8c86 }),

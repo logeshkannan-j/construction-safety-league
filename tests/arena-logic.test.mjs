@@ -371,6 +371,7 @@ console.log("\n== textures are not shared across scenes ==");
       fillRect: noop, strokeRect: noop, clearRect: noop,
       beginPath: noop, closePath: noop, moveTo: noop, lineTo: noop,
       bezierCurveTo: noop, quadraticCurveTo: noop, arc: noop, ellipse: noop,
+      measureText: () => ({ width: 10 }),
       stroke: noop, fill: noop, fillText: noop, save: noop, restore: noop,
       translate: noop, rotate: noop, scale: noop,
       createLinearGradient: () => ({ addColorStop: noop }),
@@ -412,6 +413,102 @@ console.log("\n== textures are not shared across scenes ==");
   }
 }
 
+
+console.log("\n== the name actually fits on the hoarding ==");
+{
+  // Regression test. The banner read "CASAGRAND AR" on site, because
+  // the name was drawn at a fixed 86px and simply ran off the right of
+  // the 1024px canvas. brandTexture now shrinks the font to fit, so
+  // this measures every fillText with a realistic metric and checks
+  // that the drawn text stays inside the canvas and clear of the mark.
+  //
+  // The 2D stubs elsewhere return a constant measureText width, which
+  // would let the bug straight back in — hence a measuring stub here.
+  const CHAR_W = 0.62;        // rough average for bold Georgia caps
+  const MARK_RIGHT = 190;     // the ARIA mark occupies the left of the banner
+
+  const drawn = [];
+  const ctxStub = () => {
+    const noop = () => {};
+    const state = { px: 10, spacing: 0 };
+    const ctx = {
+      fillStyle: "", strokeStyle: "", lineWidth: 1, globalAlpha: 1,
+      textAlign: "", textBaseline: "",
+      set font(v) {
+        state.px = parseFloat(String(v).match(/(\d+(?:\.\d+)?)px/)?.[1] || "10");
+      },
+      get font() { return `${state.px}px`; },
+      set letterSpacing(v) { state.spacing = parseFloat(v) || 0; },
+      get letterSpacing() { return `${state.spacing}px`; },
+      measureText: (t) => ({ width: t.length * (state.px * CHAR_W + state.spacing) }),
+      fillText: (text, x) => {
+        drawn.push({ text, x, width: text.length * (state.px * CHAR_W + state.spacing) });
+      },
+      fillRect: noop, strokeRect: noop, clearRect: noop,
+      beginPath: noop, closePath: noop, moveTo: noop, lineTo: noop,
+      bezierCurveTo: noop, quadraticCurveTo: noop, arc: noop, ellipse: noop,
+      stroke: noop, fill: noop, save: noop, restore: noop,
+      translate: noop, rotate: noop, scale: noop,
+      createLinearGradient: () => ({ addColorStop: noop }),
+      createRadialGradient: () => ({ addColorStop: noop }),
+      getImageData: () => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 }),
+      putImageData: noop, drawImage: noop,
+    };
+    return ctx;
+  };
+
+  const hadDocument = typeof globalThis.document !== "undefined";
+  if (!hadDocument) {
+    globalThis.document = {
+      createElement: () => ({ width: 0, height: 0, style: {}, getContext: ctxStub }),
+      createElementNS: () => ({ width: 0, height: 0, style: {}, getContext: ctxStub }),
+    };
+  }
+
+  try {
+    const kit = await import(`${SRC}/engine/kit.js`);
+    const { SITE_NAME, SITE_SUBTITLE } = await import(`${SRC}/arenaConstants.js`);
+
+    kit.clearTextureCache();
+    drawn.length = 0;
+    kit.brandTexture();
+
+    check("the banner draws the site name and the subtitle", drawn.length >= 2,
+      JSON.stringify(drawn.map((d) => d.text)));
+
+    const name = drawn.find((d) => d.text === SITE_NAME);
+    const sub = drawn.find((d) => d.text === SITE_SUBTITLE);
+    check(`the banner draws "${SITE_NAME}" in full`, !!name,
+      JSON.stringify(drawn.map((d) => d.text)));
+
+    [["the site name", name], ["the subtitle", sub]].forEach(([label, d]) => {
+      if (!d) return;
+      const left = d.x - d.width / 2;
+      const right = d.x + d.width / 2;
+      check(`${label} does not run off the right of the banner`, right <= 1024,
+        `right edge ${right.toFixed(0)} of 1024`);
+      check(`${label} does not run off the left of the banner`, left >= 0,
+        `left edge ${left.toFixed(0)}`);
+      check(`${label} clears the ARIA mark`, left >= MARK_RIGHT - 6,
+        `left edge ${left.toFixed(0)}, mark ends ${MARK_RIGHT}`);
+    });
+
+    // And a name far longer than the real one must still fit, since
+    // SITE_NAME is a constant somebody will eventually change.
+    kit.clearTextureCache();
+    drawn.length = 0;
+    const longName = "CASAGRAND ARIA PHASE TWO RESIDENCES";
+    kit.brandTexture({ title: longName });
+    const long = drawn.find((d) => d.text === longName);
+    check("a much longer site name is shrunk to fit too",
+      !!long && long.x + long.width / 2 <= 1024 && long.x - long.width / 2 >= MARK_RIGHT - 6,
+      long ? `spans ${(long.x - long.width / 2).toFixed(0)}..${(long.x + long.width / 2).toFixed(0)}` : "not drawn");
+  } catch (e) {
+    check("the banner fit test ran", false, `${e.message}`);
+  } finally {
+    if (!hadDocument) delete globalThis.document;
+  }
+}
 console.log("\n== security rules match the game config ==");
 {
   const fs = await import("node:fs");

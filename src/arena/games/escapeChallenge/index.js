@@ -571,7 +571,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   {
     const last = rooms[rooms.length - 1];
     const yardX = last.x1 + 10;
-    scene.add(box(geo, mat.ground, 40, 0.2, 40, yardX + 6, -0.1, last.centreZ));
+    // Sat with its top face at exactly y = 0, the same plane as the site
+    // ground, which z-fought across the whole yard. Lifted clear.
+    scene.add(box(geo, mat.ground, 40, 0.2, 40, yardX + 6, 0.04, last.centreZ));
     const musterSign = buildSign(geo, mat, { text: "Muster point A", kind: "emergency", height: 2.6, width: 1.3 });
     musterSign.position.set(yardX + 4, 0, last.centreZ);
     scene.add(musterSign);
