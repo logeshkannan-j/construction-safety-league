@@ -555,6 +555,49 @@ section("The worker is a person, not a pile of boxes");
   const box3 = new THREE.Box3().setFromObject(person);
   check("the figure is a believable height", box3.max.y > 1.7 && box3.max.y < 2.0,
     `${box3.max.y.toFixed(2)} m`);
+
+  /* ---- the parts have to be the right size RELATIVE TO EACH OTHER ----
+   *
+   * The first version of this figure shipped wearing a sombrero: the
+   * brim was a radius-0.5 cylinder scaled by 0.5, which is 0.5 m
+   * across against a 0.21 m head — two and a half times the width of
+   * the skull — and a 0.3 m slab stuck out of the crown. Everything
+   * else about it was fine, which is exactly why nobody caught it from
+   * the numbers. So the ratios are measured. */
+  const widthOf = (obj, pred) => {
+    let w = 0;
+    obj.traverse((c) => {
+      if (!c.isMesh || !pred(c)) return;
+      const b = new THREE.Box3().setFromObject(c);
+      w = Math.max(w, b.max.x - b.min.x);
+    });
+    return w;
+  };
+  const rig2 = person.userData.rig;
+  const headWidth = widthOf(rig2.head, (c) => c.material === mat.skin);
+  const hatWidth = widthOf(rig2.head, (c) => c.material === mat.yellow);
+  check("the head is the size of a head",
+    headWidth > 0.13 && headWidth < 0.24, `${headWidth.toFixed(3)} m across`);
+  check("the hard hat is a hard hat, not a sombrero",
+    hatWidth / headWidth > 1.1 && hatWidth / headWidth < 1.7,
+    `brim is ${(hatWidth / headWidth).toFixed(2)}x the head`);
+
+  const headBox = new THREE.Box3().setFromObject(rig2.head);
+  check("nothing sticks out of the top of the head",
+    headBox.max.y - headBox.min.y < 0.42,
+    `head and hat are ${(headBox.max.y - headBox.min.y).toFixed(2)} m tall`);
+  check("the head is a sensible fraction of the whole figure",
+    (headBox.max.y - headBox.min.y) / box3.max.y < 0.22,
+    `${(((headBox.max.y - headBox.min.y) / box3.max.y) * 100).toFixed(0)}% of height`);
+
+  // Shoulders wider than the waist, and the waist narrower than the
+  // hips — the thing that makes a torso read as a body.
+  const shoulderW = widthOf(rig2.spine, () => true);
+  check("the shoulders are wider than the head", shoulderW > headWidth * 1.8,
+    `${shoulderW.toFixed(2)} m across the shoulders`);
+  check("the figure is wider than it is deep",
+    (box3.max.x - box3.min.x) > (box3.max.z - box3.min.z),
+    `${(box3.max.x - box3.min.x).toFixed(2)} wide, ${(box3.max.z - box3.min.z).toFixed(2)} deep`);
   check("the figure is a believable width",
     (box3.max.x - box3.min.x) > 0.4 && (box3.max.x - box3.min.x) < 0.8,
     `${(box3.max.x - box3.min.x).toFixed(2)} m`);
@@ -631,10 +674,29 @@ section("The worker is a person, not a pile of boxes");
   const crowdMember = kit.buildWorker(geo, mat, { detail: "low" });
   check("the low-detail figure still has a full skeleton",
     !!crowdMember.userData.rig?.legL?.userData?.knee);
-  const countMeshesIn = (o) => { let n = 0; o.traverse((c) => { if (c.isMesh) n++; }); return n; };
-  check("the low-detail figure is meaningfully cheaper",
-    countMeshesIn(crowdMember) < countMeshesIn(person) * 0.75,
-    `${countMeshesIn(crowdMember)} vs ${countMeshesIn(person)} meshes`);
+  // Each joint is baked down to one mesh per material, so a figure is
+  // ~20 draw calls whatever its detail level. What "low" now buys is
+  // TRIANGLES — the jaw, ears, nose, hat peak and braces come off —
+  // which is what this measures, rather than a draw-call claim that
+  // the baking made untrue.
+  const costOf = (o) => {
+    let meshes = 0;
+    let tris = 0;
+    o.traverse((c) => {
+      if (!c.isMesh) return;
+      meshes += 1;
+      const g = c.geometry;
+      tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    });
+    return { meshes, tris };
+  };
+  const fullCost = costOf(person);
+  const lowCost = costOf(crowdMember);
+  check("a figure is cheap enough to put a crowd of them on screen",
+    fullCost.meshes <= 26, `${fullCost.meshes} draw calls`);
+  check("the low-detail figure drops real geometry",
+    lowCost.tris < fullCost.tris && lowCost.meshes <= fullCost.meshes,
+    `${lowCost.tris} vs ${fullCost.tris} triangles, ${lowCost.meshes} vs ${fullCost.meshes} meshes`);
 
   check("poseWorker ignores something that is not a worker",
     (() => { try { kit.poseWorker(null, {}); kit.poseWorker({}, {}); return true; } catch { return false; } })());

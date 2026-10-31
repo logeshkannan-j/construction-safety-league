@@ -260,11 +260,31 @@ longest in 9 of 10 by a 60-character margin — findable without reading a word.
 ### People
 
 `buildWorker()` builds a **skeleton**, not a pile of boxes at fixed heights:
-hips, spine, shoulders, elbows, knees and neck are nested groups, and every limb
-mesh hangs off the joint it rotates about. Proportions are a real 1.78 m adult
-(shoulder 1.44, elbow 1.16, hip 0.94, knee 0.50). Limbs are capsules rather than
-boxes — a few more triangles, and the single biggest difference between a person
-and some crates stacked up.
+hips, spine, shoulders, elbows, knees and neck are nested groups, and every part
+hangs off the joint it rotates about. Proportions are a real 1.78 m adult (crown
+1.78, head centre 1.66, shoulder 1.44, elbow 1.15, wrist 0.89, hip 0.94, knee
+0.50, ankle 0.09).
+
+Every part is a **tapered** section — `geo.taper(ratio)`, a shared cone-frustum
+cached per taper ratio — with a sphere at each joint so nothing shows a seam. A
+thigh is half again as thick at the hip as at the knee and a forearm narrows to
+the wrist; built from even tubes the same figure reads as scaffold poles. The
+torso is three lofted sections, flattened front to back, so it goes hips →
+waist → chest instead of being one slab.
+
+**Proportions between the parts are tested, not eyeballed.** The first version
+shipped wearing a sombrero: the brim was a radius-0.5 cylinder scaled by 0.5,
+which is 0.5 m across against a 0.21 m head — 2.4× the width of the skull — plus
+a 0.3 m slab out of the crown. Every individual number looked plausible, which
+is exactly why it survived. `tests/arena-games.test.mjs` now measures the hat
+against the head (must be 1.1–1.7×), the head against the body, the shoulders
+against the head, and that nothing sticks out of the crown.
+
+Each joint is then baked down to one mesh per material (`compactJoint`). Within
+a joint nothing moves relative to anything else — the skull, jaw, ears, nose and
+eyes all turn with the head — so a figure is **22 draw calls and 2,700
+triangles** instead of 54 and 5,800, and the rig still animates because it is
+the joint that rotates, not the parts.
 
 `poseWorker(worker, { phase, moving, pose })` drives it: opposite arm to leg,
 knees that only bend backwards, and a small bob and sway. The five poses the
@@ -272,11 +292,10 @@ games use (`stand`, `work`, `reach`, `crouch`, `kneel`) are all distinct, which
 the tests assert — a figure meant to be kneeling in a trench should not be
 standing in it.
 
-A full figure is 32 draw calls, which is too many for a crowd, so
-`detail: "low"` drops what you cannot see past about 15 m (eyes, jaw, heels,
-shoulder caps, the hat ridge) and takes it to 20 while keeping the whole
-skeleton, so the crowd still walks properly. The sixteen workers who evacuate in
-Emergency Response use it; nobody the player stands next to does.
+`detail: "low"` drops what you cannot see past about 15 m — jaw, ears, nose, hat
+peak and ridge, vest braces — while keeping the whole skeleton, so a crowd still
+walks properly. After the joint baking its saving is in triangles rather than
+draw calls. The sixteen workers who evacuate in Emergency Response use it.
 
 ### Moving, in all five missions
 
@@ -591,9 +610,9 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 900 assertions with no browser required, across four suites.
+`npm test` runs 907 assertions with no browser required, across four suites.
 
-### `tests/arena-games.test.mjs` — the 3D games, actually played (592 assertions)
+### `tests/arena-games.test.mjs` — the 3D games, actually played (599 assertions)
 
 This suite boots each game's **real** world and runs its **real** frame loop headlessly, by
 injecting a renderer stub through a test seam in `engine/gfx.js` and stubbing the small amount of

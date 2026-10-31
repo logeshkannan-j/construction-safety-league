@@ -685,6 +685,8 @@ export function createMaterials(cfg) {
 /* ========================= shared geometry ========================= */
 
 export function createGeometries(cfg) {
+  // Per-scene, so disposing a scene disposes these with it.
+  const taperCache = new Map();
   const seg = Math.max(5, cfg.segments || 10);
   return {
     box: new THREE.BoxGeometry(1, 1, 1),
@@ -694,6 +696,28 @@ export function createGeometries(cfg) {
     cone: new THREE.ConeGeometry(0.5, 1, Math.max(6, seg - 2)),
     sphere: new THREE.SphereGeometry(0.5, seg, Math.max(5, (seg / 2) | 0)),
     capsule: new THREE.CapsuleGeometry(0.3, 0.6, 3, seg),
+
+    /**
+     * A TAPERED tube, cached per taper ratio.
+     *
+     * Limbs are cones, not tubes: a thigh is half again as thick at the
+     * hip as it is at the knee, and a figure built from even-width
+     * cylinders reads as scaffold poles no matter what else is right.
+     * A uniform cylinder cannot be scaled into a tapered one, so these
+     * are real geometries — but there are only a handful of distinct
+     * ratios in a body, so they are shared, and they live on this
+     * object so they die with the scene rather than outliving it.
+     *
+     * Bottom radius is 1 and height is 1, so the caller scales by
+     * (rBottom, length, rBottom).
+     */
+    taper(topRatio) {
+      const key = Math.round(topRatio * 24);
+      if (!taperCache.has(key)) {
+        taperCache.set(key, new THREE.CylinderGeometry(key / 24, 1, 1, seg, 1, true));
+      }
+      return taperCache.get(key);
+    },
     torus: new THREE.TorusGeometry(0.4, 0.1, 6, seg),
   };
 }
@@ -1757,27 +1781,68 @@ export function updateHoistRope(parts) {
 /* ============================ workers ============================ */
 
 /**
+ * Collapses the loose meshes hanging directly off a joint into one
+ * mesh per material, leaving child GROUPS alone.
+ *
+ * A figure built from anatomical parts is 54 draw calls, and sixteen of
+ * them in a crowd is most of a phone's budget. But within one joint
+ * nothing moves relative to anything else — the skull, jaw, ears, nose
+ * and eyes all turn with the head — so they can be baked together and
+ * still animate, because it is the JOINT that rotates, not the parts.
+ *
+ * Child groups are left untouched: the knee has to keep moving inside
+ * the leg.
+ */
+function compactJoint(group) {
+  const byMaterial = new Map();
+  const keep = [];
+
+  for (const child of group.children) {
+    if (!child.isMesh) { keep.push(child); continue; }
+    child.updateMatrix();
+    const baked = child.geometry.clone().applyMatrix4(child.matrix);
+    if (!byMaterial.has(child.material)) byMaterial.set(child.material, []);
+    byMaterial.get(child.material).push(baked);
+  }
+  if (!byMaterial.size) return;
+
+  group.clear();
+  keep.forEach((c) => group.add(c));
+
+  byMaterial.forEach((geoms, material) => {
+    let merged;
+    if (geoms.length === 1) {
+      merged = geoms[0];
+    } else {
+      merged = mergeGeometries(geoms, false);
+      geoms.forEach((g) => g.dispose());
+      // mergeGeometries returns null if the attribute sets differ.
+      if (!merged) return;
+    }
+    const mesh = new THREE.Mesh(merged, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  });
+}
+
+/**
  * A person.
  *
- * Built as a real SKELETON rather than a pile of boxes at fixed
- * heights: hips, spine, shoulders, elbows, knees and neck are all
- * nested groups, and every limb mesh hangs off the joint it rotates
- * about. That is what lets poseWorker() walk them, and it is also what
- * makes them read as people standing still — a figure whose arms hang
- * from the shoulder and whose knees are in the right place looks human
- * even at a low polygon count.
+ * Built the way a base mesh is: a skeleton of nested joint groups, with
+ * every part a TAPERED section rather than an even tube, and a sphere
+ * at each joint so nothing has a seam or a gap. That taper is most of
+ * the difference between a person and a set of scaffold poles — a
+ * thigh is half again as thick at the hip as it is at the knee, a
+ * forearm narrows to the wrist, and a torso is a shape, not a box.
  *
  * Proportions are a real 1.78 m adult, in metres from the sole:
  *
- *      eye 1.68   head centre 1.60   shoulder 1.44   elbow 1.16
- *      wrist 0.90   hip 0.94   knee 0.50   ankle 0.09
+ *      crown 1.78   head centre 1.66   chin 1.58   shoulder 1.44
+ *      elbow 1.15   wrist 0.89   hip 0.94   knee 0.50   ankle 0.09
  *
- * Limbs are capsules, not boxes. A rounded limb costs a few more
- * triangles and is the single biggest difference between a person and
- * some crates stacked up.
- *
- * Returns the group, with the rig on userData.rig for animation and the
- * PPE state on userData.worker for the games that inspect it.
+ * Returns the group, with the rig on `userData.rig` for animation and
+ * the PPE state on `userData.worker` for the games that inspect it.
  */
 export function buildWorker(geo, mat, {
   helmet = true, vest = true, harness = false, boots = true,
@@ -1788,27 +1853,45 @@ export function buildWorker(geo, mat, {
   // alone is not enough at distance or on a small screen.
   role = "worker",
   vestColor = null,
-  // "low" drops the detail you cannot see past about 15 m — eyes, jaw,
-  // heels, shoulder caps, the hat ridge — and takes a figure from 32
-  // draw calls to 20 while keeping the full skeleton, so a crowd still
-  // walks properly. Use it for background crowds, not for anyone the
-  // player stands next to.
+  // "low" drops the detail you cannot see past about 15 m and takes a
+  // figure from ~34 draw calls to ~22 while keeping the whole
+  // skeleton, so a crowd still walks properly. Use it for background
+  // crowds, not for anyone the player stands next to.
   detail = "high",
 } = {}) {
-  const fine = detail !== "low";
   const group = new THREE.Group();
   const officer = role === "officer";
+  const fine = detail !== "low";
   const palette = { yellow: mat.yellow, white: mat.white, blue: mat.blue, orange: mat.orange, green: mat.green, hiVis: mat.hiVis };
   const helmetMat = palette[helmetColor] || (officer ? mat.white : mat.yellow);
   const vestMat = palette[vestColor] || (officer ? mat.orange : mat.hiVis);
   const skinMat = skin === "dark" ? mat.skinDark : mat.skin;
 
-  // A capsule of a given length and radius, hanging DOWN from its
-  // parent origin — which is the joint it pivots about.
-  const limb = (material, radius, length, { y = -length / 2, z = 0, x = 0 } = {}) => {
-    const m = new THREE.Mesh(geo.capsule, material);
-    // geo.capsule is radius 0.3 with a 0.6 cylinder: 1.2 long overall.
-    m.scale.set(radius / 0.3, length / 1.2, radius / 0.3);
+  /**
+   * A tapered section hanging DOWN from its parent origin, which is
+   * the joint it pivots about. `rTop` is at the joint.
+   */
+  const limb = (material, rTop, rBottom, length, { flat = 1 } = {}) => {
+    const m = new THREE.Mesh(geo.taper(rTop / rBottom), material);
+    m.scale.set(rBottom, length, rBottom * flat);
+    m.position.y = -length / 2;
+    m.castShadow = true;
+    return m;
+  };
+
+  /** A tapered section standing UP from `yBottom`. */
+  const section = (material, rBottom, rTop, length, yBottom, { flat = 1 } = {}) => {
+    const m = new THREE.Mesh(geo.taper(rTop / rBottom), material);
+    m.scale.set(rBottom, length, rBottom * flat);
+    m.position.y = yBottom + length / 2;
+    m.castShadow = true;
+    return m;
+  };
+
+  /** A joint, so two tapered sections never show a step between them. */
+  const joint = (material, radius, y, { x = 0, z = 0, flat = 1 } = {}) => {
+    const m = new THREE.Mesh(geo.sphere, material);
+    m.scale.set(radius * 2, radius * 2, radius * 2 * flat);
     m.position.set(x, y, z);
     m.castShadow = true;
     return m;
@@ -1821,19 +1904,23 @@ export function buildWorker(geo, mat, {
 
   /* ------------------------------ legs ------------------------------ */
   const legs = [];
-  [-0.11, 0.11].forEach((sx) => {
+  [-0.095, 0.095].forEach((sx) => {
     const leg = new THREE.Group();
     leg.position.set(sx, 0, 0);
-    leg.add(limb(mat.denim, 0.085, 0.46));           // thigh, hip to knee
+    leg.add(joint(mat.denim, 0.098, 0));                 // hip
+    leg.add(limb(mat.denim, 0.098, 0.066, 0.44));        // thigh
 
     const knee = new THREE.Group();
     knee.position.y = -0.44;
-    knee.add(limb(mat.denim, 0.072, 0.42));          // shin, knee to ankle
+    knee.add(joint(mat.denim, 0.068, 0));                // knee
+    knee.add(limb(mat.denim, 0.066, 0.044, 0.41));       // calf to ankle
+
     if (boots) {
-      // Ankle, foot and a toe box, so the foot has a direction.
-      knee.add(box(geo, mat.black, 0.13, 0.12, 0.15, 0, -0.42, -0.01));
-      knee.add(box(geo, mat.black, 0.14, 0.075, 0.17, 0, -0.455, 0.11));
-      if (fine) knee.add(box(geo, mat.black, 0.125, 0.05, 0.07, 0, -0.47, 0.2));
+      // Ankle, foot and a toe box, so a foot has a direction.
+      knee.add(joint(mat.black, 0.052, -0.40));
+      knee.add(box(geo, mat.black, 0.115, 0.075, 0.16, 0, -0.44, 0.015));
+      knee.add(box(geo, mat.black, 0.105, 0.055, 0.1, 0, -0.465, 0.1));
+      if (fine) knee.add(box(geo, mat.black, 0.1, 0.05, 0.06, 0, -0.41, -0.07));
     }
     leg.add(knee);
     leg.userData.knee = knee;
@@ -1841,129 +1928,137 @@ export function buildWorker(geo, mat, {
     legs.push(leg);
   });
 
-  /* ----------------------------- torso ------------------------------ */
+  /* ----------------------------- torso ------------------------------
+   * Three lofted sections, flattened front-to-back, so the body goes
+   * hips -> waist -> chest instead of being one slab. */
   const spine = new THREE.Group();
   hips.add(spine);
 
-  // Chest and waist as two capsules, so the body tapers instead of
-  // being one slab.
-  const chest = limb(mat.denim, 0.165, 0.40, { y: 0.34 });
-  chest.scale.z *= 0.72;                             // a person is not round
-  spine.add(chest);
-  if (fine) {
-    const waist = limb(mat.denim, 0.14, 0.22, { y: 0.11 });
-    waist.scale.z *= 0.74;
-    spine.add(waist);
-  }
+  const bodyMat = mat.denim;
+  spine.add(section(bodyMat, 0.155, 0.132, 0.20, -0.02, { flat: 0.78 }));  // pelvis
+  spine.add(section(bodyMat, 0.132, 0.150, 0.18, 0.18, { flat: 0.76 }));   // waist
+  spine.add(section(bodyMat, 0.150, 0.188, 0.19, 0.36, { flat: 0.74 }));   // chest
+  // Shoulder yoke across the top, so the arms come off something.
+  spine.add(joint(bodyMat, 0.1, 0.52, { x: -0.13, flat: 0.8 }));
+  spine.add(joint(bodyMat, 0.1, 0.52, { x: 0.13, flat: 0.8 }));
 
   if (vest) {
-    const v = limb(vestMat, 0.185, 0.44, { y: 0.32 });
-    v.scale.z *= 0.74;
-    spine.add(v);
-    // Reflective bands round the body, and the two braces over it.
-    [0.42, 0.22].forEach((by) => {
-      const band = new THREE.Mesh(geo.cyl, mat.white);
-      band.scale.set(0.38, 0.045, 0.28);
+    // Over the chest and waist, a touch proud of the body.
+    spine.add(section(vestMat, 0.148, 0.2, 0.20, 0.355, { flat: 0.76 }));
+    spine.add(section(vestMat, 0.142, 0.15, 0.17, 0.19, { flat: 0.78 }));
+    // Reflective bands round the body.
+    [0.46, 0.27].forEach((by) => {
+      const band = new THREE.Mesh(geo.taper(1), mat.white);
+      const r = by > 0.4 ? 0.196 : 0.152;
+      band.scale.set(r, 0.04, r * 0.77);
       band.position.y = by;
       band.castShadow = false;
       spine.add(band);
     });
     if (fine) {
-      [-0.09, 0.09].forEach((bx) => {
-        spine.add(box(geo, mat.white, 0.05, 0.3, 0.3, bx, 0.4, 0, { shadow: false }));
+      [-0.085, 0.085].forEach((bx) => {
+        spine.add(box(geo, mat.white, 0.045, 0.22, 0.3, bx, 0.45, 0.01, { shadow: false }));
       });
     }
   }
 
   if (harness) {
-    [-0.1, 0.1].forEach((sx) => {
-      spine.add(box(geo, mat.black, 0.05, 0.42, 0.05, sx, 0.34, 0.13, { shadow: false }));
+    [-0.09, 0.09].forEach((sx) => {
+      spine.add(box(geo, mat.black, 0.045, 0.4, 0.045, sx, 0.4, 0.1, { shadow: false }));
     });
-    spine.add(box(geo, mat.black, 0.3, 0.05, 0.05, 0, 0.18, 0.13, { shadow: false }));
-    spine.add(box(geo, mat.steel, 0.08, 0.08, 0.05, 0, 0.42, -0.14, { shadow: false }));
-    spine.add(box(geo, mat.orange, 0.05, 0.7, 0.05, 0, 0.18, -0.3, { rotX: 0.34, shadow: false }));
+    spine.add(box(geo, mat.black, 0.26, 0.045, 0.045, 0, 0.24, 0.1, { shadow: false }));
+    spine.add(box(geo, mat.steel, 0.07, 0.07, 0.04, 0, 0.47, -0.12, { shadow: false }));
+    spine.add(box(geo, mat.orange, 0.045, 0.6, 0.045, 0, 0.26, -0.26, { rotX: 0.34, shadow: false }));
   }
 
   /* ------------------------------ arms ------------------------------ */
   const arms = [];
-  [-0.21, 0.21].forEach((sx) => {
+  [-0.185, 0.185].forEach((sx) => {
     const arm = new THREE.Group();
-    arm.position.set(sx, 0.50, 0);                   // shoulder
-    // Sleeve to the elbow, bare forearm below it.
-    arm.add(limb(vest ? vestMat : mat.denim, 0.062, 0.28));
+    arm.position.set(sx, 0.50, 0);                       // shoulder
+    const sleeveMat = vest ? vestMat : bodyMat;
+    arm.add(joint(sleeveMat, 0.062, 0));                 // deltoid
+    arm.add(limb(sleeveMat, 0.058, 0.044, 0.29));        // upper arm
 
     const elbow = new THREE.Group();
-    elbow.position.y = -0.28;
-    elbow.add(limb(skinMat, 0.052, 0.26));
-    // Glove: palm, then a thumb off the side. Two boxes, and the hand
-    // stops reading as the end of a stick.
+    elbow.position.y = -0.29;
+    elbow.add(joint(skinMat, 0.046, 0));                 // elbow
+    elbow.add(limb(skinMat, 0.044, 0.031, 0.26));        // forearm
+
+    // Glove: palm, then a thumb off the side.
     const hand = new THREE.Group();
-    hand.position.y = -0.27;
-    hand.add(box(geo, mat.black, 0.075, 0.115, 0.055, 0, -0.045, 0));
-    if (fine) hand.add(box(geo, mat.black, 0.035, 0.06, 0.045, 0.045, -0.015, 0.01, { rotZ: 0.5 }));
+    hand.position.y = -0.26;
+    hand.add(joint(mat.black, 0.036, -0.02, { flat: 0.7 }));
+    hand.add(box(geo, mat.black, 0.062, 0.095, 0.042, 0, -0.07, 0));
+    if (fine) hand.add(box(geo, mat.black, 0.03, 0.05, 0.038, 0.036, -0.035, 0.008, { rotZ: 0.5 }));
     elbow.add(hand);
     arm.userData.hand = hand;
+
     arm.add(elbow);
     arm.userData.elbow = elbow;
-
-    // Shoulder cap, so the arm is not socketed into thin air.
-    if (fine) arm.add(limb(vest ? vestMat : mat.denim, 0.075, 0.1, { y: 0.01 }));
     spine.add(arm);
     arms.push(arm);
   });
 
   /* -------------------------- neck and head -------------------------- */
   const neck = new THREE.Group();
-  neck.position.y = 0.54;
+  neck.position.y = 0.55;
   spine.add(neck);
-  neck.add(limb(skinMat, 0.05, 0.1, { y: 0.03 }));
+  neck.add(section(skinMat, 0.054, 0.05, 0.1, -0.01));
 
   const head = new THREE.Group();
-  head.position.y = 0.15;
+  head.position.y = 0.17;          // head centre, world 1.66
   neck.add(head);
 
+  // Cranium: taller than it is wide, deeper than it is wide.
   const skull = new THREE.Mesh(geo.sphere, skinMat);
-  skull.scale.set(0.21, 0.25, 0.22);
+  skull.scale.set(0.168, 0.225, 0.202);
   skull.castShadow = true;
   head.add(skull);
   if (fine) {
-    // Jaw, so the profile is not a perfect ball.
-    head.add(box(geo, skinMat, 0.15, 0.1, 0.17, 0, -0.08, 0.015, { shadow: false }));
-    // Eyes. At this distance it is all it takes for a head to face you.
-    [-0.05, 0.05].forEach((ex) => {
-      head.add(box(geo, mat.black, 0.025, 0.02, 0.02, ex, 0.02, 0.1, { shadow: false }));
+    // Jaw and chin, so the profile is not a ball.
+    head.add(joint(skinMat, 0.062, -0.075, { z: 0.012, flat: 1.15 }));
+    head.add(box(geo, skinMat, 0.075, 0.05, 0.055, 0, -0.095, 0.052, { shadow: false }));
+    // Ears, nose. Tiny, and they are what make a head face forwards.
+    [-0.082, 0.082].forEach((ex) => {
+      head.add(box(geo, skinMat, 0.016, 0.042, 0.03, ex, -0.005, 0.004, { shadow: false }));
+    });
+    head.add(box(geo, skinMat, 0.022, 0.035, 0.03, 0, -0.022, 0.1, { shadow: false }));
+    [-0.042, 0.042].forEach((ex) => {
+      head.add(box(geo, mat.black, 0.022, 0.014, 0.012, ex, 0.025, 0.093, { shadow: false }));
     });
   }
 
   if (helmet) {
-    const dome = new THREE.Mesh(geo.sphere, helmetMat);
-    dome.scale.set(0.245, 0.22, 0.25);
-    dome.position.y = 0.06;
-    dome.castShadow = true;
-    head.add(dome);
-    // Brim all the way round, and a deeper peak at the front.
-    const brim = new THREE.Mesh(geo.cyl, helmetMat);
-    brim.scale.set(0.5, 0.022, 0.5);
-    brim.position.y = -0.03;
-    brim.castShadow = false;
+    // A hard hat sits ON the head: the shell is a little wider than the
+    // skull and the brim a little wider again. Getting this wrong by a
+    // factor of two is the difference between a hard hat and a sombrero.
+    const shell = new THREE.Mesh(geo.sphere, helmetMat);
+    shell.scale.set(0.206, 0.19, 0.236);
+    shell.position.y = 0.055;
+    shell.castShadow = true;
+    head.add(shell);
+
+    // Brim right round, 0.125 m radius against a 0.084 m head radius.
+    const brim = cylinder(geo, helmetMat, 0.125, 0.016, 0, -0.025, 0.004, { shadow: false });
     head.add(brim);
     if (fine) {
-      head.add(box(geo, helmetMat, 0.22, 0.025, 0.11, 0, -0.025, 0.17, { shadow: false }));
-      // The ridge down the crown that every hard hat has.
-      head.add(box(geo, helmetMat, 0.04, 0.08, 0.3, 0, 0.17, 0, { shadow: false }));
+      // A deeper peak at the front, and the ridge over the crown.
+      head.add(box(geo, helmetMat, 0.15, 0.018, 0.055, 0, -0.028, 0.125, { shadow: false }));
+      head.add(box(geo, helmetMat, 0.028, 0.03, 0.17, 0, 0.142, 0.005, { shadow: false }));
     }
   }
 
   if (officer) {
-    // A clipboard in the left hand. It is the detail that makes
-    // somebody read as the person inspecting rather than the person
-    // working, before you are close enough to see the vest colour.
+    // A clipboard in the left hand. It is what makes somebody read as
+    // the person inspecting rather than the person working, before you
+    // are close enough to see the vest colour.
     const board = new THREE.Group();
-    board.position.set(0, -0.09, 0.05);
+    board.position.set(0, -0.08, 0.05);
     board.rotation.set(-1.2, 0, 0.2);
-    board.add(box(geo, mat.timber, 0.2, 0.01, 0.27, 0, 0, 0));
-    board.add(box(geo, mat.white, 0.17, 0.008, 0.23, 0, 0.012, -0.01, { shadow: false }));
-    board.add(box(geo, mat.steel, 0.09, 0.015, 0.03, 0, 0.022, 0.11, { shadow: false }));
+    board.add(box(geo, mat.timber, 0.18, 0.012, 0.24, 0, 0, 0));
+    board.add(box(geo, mat.white, 0.15, 0.008, 0.2, 0, 0.012, -0.012, { shadow: false }));
+    board.add(box(geo, mat.steel, 0.08, 0.014, 0.028, 0, 0.022, 0.095, { shadow: false }));
     arms[0].userData.hand.add(board);
     arms[0].userData.board = board;
   }
@@ -1974,6 +2069,16 @@ export function buildWorker(geo, mat, {
   };
   group.userData.role = role;
   group.userData.worker = { helmet, vest, harness, boots };
+
+  // Bake each joint down to one mesh per material. Done last, so
+  // everything is in place; the rig still works because it is the
+  // joints that rotate, not the parts inside them.
+  [hips, spine, neck, head, ...legs, ...arms].forEach(compactJoint);
+  legs.forEach((leg) => compactJoint(leg.userData.knee));
+  arms.forEach((arm) => {
+    compactJoint(arm.userData.elbow);
+    compactJoint(arm.userData.hand);
+  });
 
   // A standing person is not at attention: break the symmetry so a
   // crowd of these does not look like a shop display.
