@@ -4,7 +4,8 @@ import {
   SkipForward, RotateCcw, Eye, EyeOff, Award, Wifi, WifiOff, Flag,
   ChevronRight, Shield, Zap, Crown, QrCode, LogIn, Volume2, VolumeX,
   Target, Upload, Trash2, MapPin, ImagePlus, X, Percent, Phone, Gem, Ban,
-  Pencil, UserMinus, Save, AlertTriangle, ListChecks, Lock, Gamepad2
+  Pencil, UserMinus, Save, AlertTriangle, ListChecks, Lock, Gamepad2,
+  Projector, Languages
 } from "lucide-react";
 
 // The 3D Safety Gaming Arena is loaded on demand. Everything it needs
@@ -20,6 +21,7 @@ const SoloSession = lazy(() => import("./SoloSession.jsx"));
 // Only pulled in when the host opens a mission preview, so the 3D
 // bundle never loads for an admin who does not ask for it.
 const GameShell = lazy(() => import("./arena/ui/GameShell.jsx"));
+const MissionDemo = lazy(() => import("./MissionDemo.jsx"));
 
 /* ------------------------------------------------------------------ *
  *  CONSTRUCTION SAFETY LEAGUE (standalone build)
@@ -40,6 +42,9 @@ import {
   QUIZ_PER_ROUND, QUIZ_PER_ROUND_OPTIONS, MQ_PER_ROUND,
   ITEM_GAME3D, ITEM_QUIZ, ITEM_MILLIONAIRE,
 } from "./session.js";
+import {
+  LANGUAGES, MISSION_BRIEFS, emptyMissionVideos, missionBrief,
+} from "./missionBriefs.js";
 
 // The palette and the shared control styles now live in theme.js so the
 // integrated session screens can reuse them verbatim. Same values.
@@ -363,7 +368,7 @@ function defaultGame() {
   return {
     gameCode: genGameCode(),
     gameName: "Construction Safety League",
-    status: "lobby", // lobby | question | reveal | leaderboard | ended
+    status: "lobby", // lobby | demo | question | reveal | leaderboard | ended
 
     // There is ONE event now. The questions and the 3D missions live in
     // a single ordered plan (see buildEventPlan), which the admin can
@@ -382,6 +387,14 @@ function defaultGame() {
     teamModeEnabled: false,
     teams: ["Civil Team", "MEP Team", "Electrical Team", "Mechanical Team", "Safety Team"],
     teamScoringMode: "total", // 'total' | 'average'
+    // Demo / instruction videos the host pastes in, one per mission per
+    // language. Same storage, same rules and same admin flow as the
+    // leaderboard media below. Empty until the host adds them, and the
+    // demo screen falls back to the written brief while they are.
+    missionVideos: emptyMissionVideos(),
+    // Which mission the TV is currently briefing.
+    demoGameId: "",
+
     leaderboardMediaUrl: "",
     leaderboardTop1MediaUrl: "",
     leaderboardTop2MediaUrl: "",
@@ -1054,6 +1067,16 @@ function AdminView({ onExit }) {
     await patchGame({ releasedRound: next, status: "question" });
   }
 
+  // The mission the next round will open with — what the TV should be
+  // briefing while the room waits.
+  const nextRoundIndex = Math.min(ROUND_COUNT - 1, releasedRound + 1);
+  const nextMissionId = ROUND_GAMES[nextRoundIndex] || ROUND_GAMES[0];
+
+  /** Puts the instruction screen for one mission up on the TV. */
+  async function showDemo(gameId) {
+    await patchGame({ status: "demo", demoGameId: gameId });
+  }
+
   return (
     <div style={{ padding: "20px 20px 60px", maxWidth: 880, margin: "0 auto" }}>
       <TopBar title="Admin Control Panel" onExit={onExit} connected={connected} onLock={lockAdmin} />
@@ -1118,6 +1141,12 @@ function AdminView({ onExit }) {
                       disabled={players.length === 0}
                     />
                   )}
+                  <ActionBtn
+                    icon={<Projector size={15} />}
+                    label={`Show Round ${nextRoundIndex + 1} demo on TV`}
+                    color={COLORS.purple}
+                    onClick={() => showDemo(nextMissionId)}
+                  />
                   <ActionBtn icon={<Trophy size={15} />} label="Show live race on TV" color={COLORS.yellow} dark onClick={showLeaderboard} />
                   <ActionBtn icon={<QrCode size={15} />} label="Show join code on TV" color={COLORS.surfaceRaised} onClick={backToLobby} />
                   <ActionBtn icon={<Flag size={15} />} label="Show final results on TV" color={COLORS.orange} onClick={endGame} />
@@ -1134,6 +1163,55 @@ function AdminView({ onExit }) {
                 </p>
               </>
             )}
+          </Panel>
+
+          <Panel title="Mission demo videos" icon={<Projector size={18} color={COLORS.purple} />}>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 10, lineHeight: 1.55 }}>
+              One demo video per mission, per language. Paste a public YouTube, MP4 or WebM link.
+              Use <b style={{ color: COLORS.ink }}>Show Round&nbsp;N demo on TV</b> in Game status to
+              put it up before you release the round.
+              {" "}Missions with no video still show the full written briefing, in both languages,
+              and it can be read aloud on the device.
+            </p>
+            <div style={{ display: "grid", gap: 12 }}>
+              {Object.keys(MISSION_BRIEFS).map((id) => (
+                <div key={id}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.ink, marginBottom: 6 }}>
+                    {missionBrief(id, "en")?.title || id}
+                  </div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {LANGUAGES.map((l) => (
+                      <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          flex: "0 0 auto", width: 38, textAlign: "center",
+                          fontSize: 11, fontWeight: 900, color: COLORS.muted,
+                          border: `1px solid ${COLORS.line}`, borderRadius: 5, padding: "5px 0",
+                        }}>
+                          {l.short}
+                        </span>
+                        <input
+                          style={{ ...inputStyle, marginBottom: 0 }}
+                          type="url"
+                          aria-label={`${missionBrief(id, "en")?.title || id} demo video, ${l.label}`}
+                          placeholder={`${l.label} demo video URL (optional)`}
+                          defaultValue={game.missionVideos?.[id]?.[l.id] || ""}
+                          onBlur={(e) => patchGame({
+                            missionVideos: {
+                              ...emptyMissionVideos(),
+                              ...(game.missionVideos || {}),
+                              [id]: {
+                                ...(game.missionVideos?.[id] || {}),
+                                [l.id]: e.target.value.trim(),
+                              },
+                            },
+                          })}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </Panel>
 
           <Panel title="Leaderboard fun media" icon={<Volume2 size={18} color={COLORS.purple} />}>
@@ -2474,6 +2552,12 @@ function TVView({ onExit }) {
     [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
   );
 
+  // Which round the mission on screen belongs to, for the demo header.
+  const demoRoundLabel = useMemo(() => {
+    const i = ROUND_GAMES.indexOf(game?.demoGameId);
+    return i >= 0 ? `ROUND ${i + 1} OF ${ROUND_COUNT} · BRIEFING` : "MISSION BRIEFING";
+  }, [game?.demoGameId]);
+
   if (!game) {
     return (
       <Centered>
@@ -2500,6 +2584,18 @@ function TVView({ onExit }) {
       </div>
 
       {game.status === "lobby" && <LobbyDisplay game={game} players={players} />}
+      {game.status === "demo" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px 30px" }}>
+          <Suspense fallback={<div style={{ color: COLORS.muted, textAlign: "center", padding: 40 }}>Loading the briefing…</div>}>
+            <MissionDemo
+              gameId={game.demoGameId || ROUND_GAMES[0]}
+              game={game}
+              size="tv"
+              roundLabel={demoRoundLabel}
+            />
+          </Suspense>
+        </div>
+      )}
       {game.status === "question" && curQ && curQ.round === "millionaire" && <MillionaireDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} ladder={millionaireQs} />}
       {game.status === "question" && curQ && curQ.round !== "millionaire" && <QuestionDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} />}
       {game.status === "reveal" && curQ && <RevealDisplay q={curQ} qIndex={game.qIndex} total={questions.length} players={players} />}

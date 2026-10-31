@@ -147,6 +147,55 @@ tier and 64–92% erased by fog on it. It is now 12 m beyond each game's hoardin
 `tests/arena-games.test.mjs` asserts that for every game, on every quality tier, nothing is
 clipped and the towers still read through the fog.
 
+### Mission briefings and demo videos
+
+`src/missionBriefs.js` holds, for each of the five missions and in both
+**English and Tamil**: what the mission asks, how to play it, and how it is
+scored — plus the event's rules and regulations. `src/MissionDemo.jsx` renders
+that as a screen, at `size="tv"` for the projector and `size="compact"` on a
+phone.
+
+The host pastes a **demo video per mission per language** into Admin → *Mission
+demo videos*. They are stored as `missionVideos[gameId][lang]` on the game
+record, which is the same storage, the same security rules and the same admin
+flow as the leaderboard media that was already there — no new database paths and
+no rules change. A YouTube link becomes an embed, an MP4 or WebM becomes a
+`<video>`, and anything that is not `http(s)` is refused rather than embedded.
+Until a video is added the screen says so and the written briefing *is* the
+instruction set, so it is useful today.
+
+"With voice" is the browser's own speech synthesiser reading the briefing aloud
+in either language, built from the same text that is on screen so the two can
+never disagree. It needs no files, but it does need the device to have a voice
+for that language installed — Tamil is not on every device, so the button says
+*No voice* rather than silently doing nothing.
+
+Two ways in: the host puts it on the TV with **Show Round N demo on TV** before
+releasing the round, and each player can open it themselves from their waiting
+screen.
+
+**The Tamil has not been checked by a native speaker.** It is written to be
+understood by site crews rather than translated word for word, and terms that
+are used in English on Indian sites (helmet, crane, lift, muster point) are
+deliberately left in English. Have someone read it before the event.
+
+### The race
+
+The host already released each round to everybody at once; that is now worth
+something. Each round's clock runs from the release to the moment the
+participant finishes the last row of it, and banks a speed bonus that decays
+from `ROUND_SPEED_BONUS` (250) to nothing between 210s and 660s. Time spent
+waiting for the host between rounds is never counted against anybody.
+
+It is deliberately small next to the 1,000 a mission is worth: it has to pay to
+be quick without paying to abandon the 3D mission. Skipping a mission to bank
+the bonus trades 1,000 points for 250, and `tests/session.test.mjs` asserts that
+a skipper finishes behind someone who played it slowly.
+
+All three leaderboards share one comparator — score first, then who got there
+fastest on `playingMs`. A missing or zero time means they have not finished a
+round, so it loses the tie-break rather than winning it.
+
 ### The top view
 
 Every mission has one, on `T` or the **TOP VIEW** button: the camera lifts off and orbits the
@@ -433,7 +482,7 @@ leaderboard to extend — the Arena's profiles are the persistent layer, linked 
 
 ## 7. Testing
 
-`npm test` runs 619 assertions with no browser required, across four suites.
+`npm test` runs 684 assertions with no browser required, across four suites.
 
 ### `tests/arena-games.test.mjs` — the 3D games, actually played (378 assertions)
 
@@ -469,7 +518,7 @@ and api, exactly as a player or a phone would:
   alarm/isolation/services flags, the workforce actually walking to the muster point, and a textbook
   response saving the casualty
 
-### `tests/session.test.mjs` — questions, rounds and sessions (116 assertions)
+### `tests/session.test.mjs` — questions, rounds and sessions (132 assertions)
 
 - the bank: 24 + 8 questions, unique ids, 4 options each, valid answer indexes, no duplicate
   options, an explanation on every question, and **all twelve required topics covered with at least
@@ -501,7 +550,7 @@ and api, exactly as a player or a phone would:
 - live event mode: a live paper is still 10 + 5, still shuffled in place, still never moves the
   correct answer away from its text, and still deals a different paper per game
 
-### `tests/app-render.test.mjs` — the app actually mounts (52 assertions)
+### `tests/app-render.test.mjs` — the app actually mounts (92 assertions)
 
 Mounts the **real** React app in jsdom with effects running, clicks through to the admin panel and
 waits for the live Firebase record to arrive. A blank screen is invisible to every other suite
@@ -516,7 +565,7 @@ React at all.
   return, with the detector itself tested against a known-bad, a known-good and a
   `return`-inside-a-callback sample so it cannot silently stop working
 
-### `tests/arena-logic.test.mjs` — engine and backend (73 assertions)
+### `tests/arena-logic.test.mjs` — engine and backend (82 assertions)
 
 - the first-person controller: gravity, wall collision, step-up onto a tread, refusing to climb a
   1.2 m ledge, a full 3.4 m stair flight up *and* back down, falling into an excavation and being

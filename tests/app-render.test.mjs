@@ -177,6 +177,20 @@ if (!denied) {
   check("the admin panel renders Game status", text.includes("Game status"));
   check("the admin panel renders the event plan panel", text.includes("The event plan"));
   check("the admin panel renders the Arena section", text.includes("3D Gaming Arena"));
+
+  // The host supplies the demo videos and puts the briefing on the TV,
+  // so both controls have to actually be on the panel.
+  check("the admin panel offers the mission demo videos",
+    text.includes("Mission demo videos"));
+  // Placeholders are attributes, not text nodes, so read the DOM.
+  const videoSlots = [...document.querySelectorAll("input[type=url]")]
+    .map((i) => i.getAttribute("placeholder") || "");
+  check("the admin panel offers a demo video slot per language",
+    videoSlots.some((v) => v.includes("English demo video"))
+    && videoSlots.some((v) => v.includes("தமிழ் demo video")),
+    videoSlots.slice(0, 4).join(" | "));
+  check("the admin can put a mission briefing on the TV",
+    /Show Round \d demo on TV/.test(text), text.slice(0, 200));
 }
 check("NO React errors after unlocking admin", reactErrors.length === 0,
   reactErrors.slice(0, 2).join(" | "));
@@ -330,6 +344,149 @@ section("Every session stage renders");
     reactErrors.slice(before, before + 2).join(" | "));
 
   stageRoot.unmount();
+}
+
+/* ------------------- the mission demo / instructions ------------------- */
+
+section("The mission briefing renders in both languages");
+
+{
+  const briefs = await server.ssrLoadModule("/src/missionBriefs.js");
+  const { default: MissionDemo } = await server.ssrLoadModule("/src/MissionDemo.jsx");
+  const { ROUND_GAMES } = await server.ssrLoadModule("/src/session.js");
+
+  /* ---- the content itself ---- */
+
+  check("every mission in the event plan has a briefing",
+    ROUND_GAMES.every((id) => !!briefs.MISSION_BRIEFS[id]),
+    ROUND_GAMES.filter((id) => !briefs.MISSION_BRIEFS[id]).join(", "));
+
+  briefs.LANGUAGES.forEach((lang) => {
+    const missing = [];
+    ROUND_GAMES.forEach((id) => {
+      const b = briefs.missionBrief(id, lang.id);
+      if (!b || !b.title || !b.oneLiner || !b.goal) missing.push(`${id}:fields`);
+      if (!b?.steps?.length) missing.push(`${id}:steps`);
+      if (!b?.scoring?.length) missing.push(`${id}:scoring`);
+    });
+    check(`every mission is fully written in ${lang.label}`, missing.length === 0,
+      missing.join(", "));
+
+    const rules = briefs.eventRules(lang.id);
+    check(`the rules and regulations exist in ${lang.label}`,
+      !!rules?.title && (rules.items || []).length >= 5, `${rules?.items?.length} items`);
+  });
+
+  // A missing translation that silently falls back to English is worse
+  // than no Tamil at all, because nobody notices.
+  const untranslated = ROUND_GAMES.filter((id) => {
+    const en = briefs.missionBrief(id, "en");
+    const ta = briefs.missionBrief(id, "ta");
+    return en.goal === ta.goal || en.title === ta.title;
+  });
+  check("the Tamil is actually translated, not the English repeated",
+    untranslated.length === 0, untranslated.join(", "));
+
+  check("the English rules are not the Tamil rules",
+    briefs.eventRules("en").items[0] !== briefs.eventRules("ta").items[0]);
+
+  // The voice-over reads the text on screen, so it has to have some.
+  ROUND_GAMES.forEach((id) => {
+    briefs.LANGUAGES.forEach((lang) => {
+      const spoken = briefs.briefSpeech(id, lang.id);
+      check(`${id} has a voice-over script in ${lang.short}`, spoken.length > 200,
+        `${spoken.length} chars`);
+    });
+  });
+
+  check("an unknown mission id does not throw",
+    briefs.missionBrief("nope") === null && briefs.briefSpeech("nope") === "");
+
+  /* ---- the screen ---- */
+
+  const demoRoot = ReactDOMClient.createRoot(rootEl);
+  const before = reactErrors.length;
+  const emptyGame = { missionVideos: briefs.emptyMissionVideos() };
+
+  for (const id of ROUND_GAMES) {
+    for (const size of ["tv", "compact"]) {
+      demoRoot.render(React.createElement(MissionDemo, {
+        gameId: id, game: emptyGame, size, lang: "en", roundLabel: "ROUND 1 OF 5",
+      }));
+      await settle(120);
+      const body = visibleText();
+      check(`${id} briefing renders at size "${size}"`,
+        body.includes(briefs.missionBrief(id, "en").title) && body.length > 300,
+        `${body.length} chars: ${body.slice(0, 90)}`);
+    }
+  }
+
+  // Tamil must actually reach the screen, not just the data file.
+  demoRoot.render(React.createElement(MissionDemo, {
+    gameId: ROUND_GAMES[0], game: emptyGame, size: "tv", lang: "ta",
+  }));
+  await settle(150);
+  const tamil = visibleText();
+  check("the briefing renders in Tamil",
+    tamil.includes(briefs.missionBrief(ROUND_GAMES[0], "ta").title),
+    tamil.slice(0, 120));
+  check("the Tamil screen is not showing the English text",
+    !tamil.includes(briefs.missionBrief(ROUND_GAMES[0], "en").goal));
+
+  // With no video the screen must SAY so rather than show a dead frame.
+  demoRoot.render(React.createElement(MissionDemo, {
+    gameId: ROUND_GAMES[0], game: emptyGame, size: "tv", lang: "en",
+  }));
+  await settle(150);
+  check("with no video the screen says so and still briefs",
+    visibleText().includes("No demo video"),
+    visibleText().slice(0, 120));
+  check("with no video no empty player element is left on the page",
+    !rootEl.querySelector("video") && !rootEl.querySelector("iframe"));
+
+  // And with one, it plays it.
+  const withVideo = {
+    missionVideos: {
+      ...briefs.emptyMissionVideos(),
+      [ROUND_GAMES[0]]: { en: "https://example.com/demo.mp4", ta: "" },
+    },
+  };
+  demoRoot.render(React.createElement(MissionDemo, {
+    gameId: ROUND_GAMES[0], game: withVideo, size: "tv", lang: "en",
+  }));
+  await settle(150);
+  check("a pasted MP4 link becomes a video player",
+    !!rootEl.querySelector("video"));
+  check("the briefing is still shown underneath the video",
+    visibleText().includes(briefs.missionBrief(ROUND_GAMES[0], "en").goal));
+
+  // A Tamil viewer with only an English video still gets a video rather
+  // than nothing, because one video is better than none.
+  demoRoot.render(React.createElement(MissionDemo, {
+    gameId: ROUND_GAMES[0], game: withVideo, size: "tv", lang: "ta",
+  }));
+  await settle(150);
+  check("a missing Tamil video falls back to the English one",
+    !!rootEl.querySelector("video"));
+
+  // A hostile or broken URL must not become an embed.
+  const badVideo = {
+    missionVideos: {
+      ...briefs.emptyMissionVideos(),
+      [ROUND_GAMES[0]]: { en: "javascript:alert(1)", ta: "" },
+    },
+  };
+  demoRoot.render(React.createElement(MissionDemo, {
+    gameId: ROUND_GAMES[0], game: badVideo, size: "tv", lang: "en",
+  }));
+  await settle(150);
+  check("a non-http video link is refused, not embedded",
+    !rootEl.querySelector("video") && !rootEl.querySelector("iframe"));
+
+  check("no React errors rendering any briefing",
+    reactErrors.length === before, reactErrors.slice(before, before + 2).join(" | "));
+
+  demoRoot.unmount();
 }
 
 

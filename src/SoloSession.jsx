@@ -6,6 +6,8 @@ import {
 } from "lucide-react";
 import { COLORS, inputStyle, btnStyle, linkBtnStyle } from "./theme.js";
 
+const MissionDemo = lazy(() => import("./MissionDemo.jsx"));
+
 /** "7m 12s" — playing time, for the speed bonus line. */
 function formatPlayTime(ms) {
   const total = Math.max(0, Math.round(Number(ms) || 0) / 1000);
@@ -237,6 +239,7 @@ export default function SoloSession({
     return (
       <RoundWaiting
         me={me}
+        game={game}
         connected={connected}
         session={session}
         roundIndex={Math.min(nextRoundIndex, roundCount - 1)}
@@ -460,7 +463,8 @@ function SessionHeader({ me, connected, progress, label }) {
  * where a participant sits until `game.releasedRound` reaches them —
  * before Round 1, and after finishing each round's finale question.
  */
-function RoundWaiting({ me, connected, session, plan = [], roundCount = 1, roundIndex, justFinishedRound, onExit }) {
+function RoundWaiting({ me, game, connected, session, plan = [], roundCount = 1, roundIndex, justFinishedRound, onExit }) {
+  const [briefOpen, setBriefOpen] = useState(false);
   const progress = runProgress(plan, session);
   const totals = runTotals(plan, session);
   // The mission that OPENS the round being waited on, read from the
@@ -546,6 +550,37 @@ function RoundWaiting({ me, connected, session, plan = [], roundCount = 1, round
               <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Gem size={13} color={COLORS.purple} /> {finaleCount} finale question{finaleCount === 1 ? "" : "s"}</span>
             </div>
           </div>
+
+          {/* The full instructions for the mission about to start, in
+              English or Tamil, with the host's demo video if there is
+              one. Collapsed by default so the waiting screen stays
+              short, because most people will have watched it on the TV. */}
+          <button
+            type="button"
+            onClick={() => setBriefOpen((v) => !v)}
+            style={{
+              ...btnStyle, width: "100%", marginBottom: 12,
+              background: briefOpen ? COLORS.surfaceRaised : COLORS.surface,
+              color: COLORS.ink, border: `1px solid ${COLORS.line}`,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}
+          >
+            <ListChecks size={15} color={COLORS.green} />
+            {briefOpen ? "Hide the briefing" : "How to play this mission · தமிழ்"}
+          </button>
+
+          {briefOpen && gameId && (
+            <div style={{ marginBottom: 12 }}>
+              <Suspense fallback={<p style={{ color: COLORS.muted, fontSize: 13, textAlign: "center" }}>Loading the briefing…</p>}>
+                <MissionDemo
+                  gameId={gameId}
+                  game={game}
+                  size="compact"
+                  roundLabel={`ROUND ${roundIndex + 1} OF ${roundCount}`}
+                />
+              </Suspense>
+            </div>
+          )}
 
           <div style={{
             background: COLORS.surfaceRaised, borderRadius: 10, padding: "14px 14px",
