@@ -53,7 +53,7 @@ const THREE = await import("three");
 const { INTERRUPT_SCORING: craneScoring } = await import(`${SRC}/games/craneMaster/interrupts.js`);
 
 /** Boots a game module and returns everything a test needs. */
-async function boot(path, { difficulty = "normal", mobile = false, settings = SETTINGS } = {}) {
+async function boot(path, { difficulty = "normal", mobile = false, settings = SETTINGS, config = null } = {}) {
   const container = makeElement("div", { width: 1280, height: 720 });
   const { api, record } = makeApi();
   const mod = await import(`${SRC}/games/${path}/index.js`);
@@ -63,6 +63,7 @@ async function boot(path, { difficulty = "normal", mobile = false, settings = SE
     difficulty: DIFFICULTY[difficulty],
     quality: "medium",
     settings,
+    config,
     mobile,
     api,
   });
@@ -3511,6 +3512,8 @@ section("The Safety Mission hazard catalogue is bilingual");
     missing.map((h) => h.id).join(", "));
   check("those are actually Tamil",
     H.HAZARDS.every((h) => TAMIL.test(h.ta.title) && TAMIL.test(h.ta.detail)));
+  check("every hazard has a scenario-specific bilingual character line",
+    H.HAZARDS.every((h) => h.voice?.en?.length > 20 && TAMIL.test(h.voice?.ta || "")));
 
   const cats = Object.values(H.CATEGORIES);
   const acts = Object.values(H.ACTIONS);
@@ -3933,10 +3936,33 @@ section("Safety Mission Simulator — full playthrough");
     check("the result is under the anti-cheat ceiling", result.score <= 12000, `${result.score}`);
     check("the result reports hazard stats", result.stats?.hazardsFound === 10, JSON.stringify(result.stats));
     check("the result has a performance breakdown", (result.breakdown || []).length > 5);
+    check("the final breakdown names the hazards that earned points",
+      result.breakdown.some((row) => row.label === "Correct classification: Worker with no head protection"));
+    check("the final breakdown reports the final score", result.breakdown.some((row) => row.label === "Final score" && row.value === String(result.score)));
+    check("the run records the scoring values used", result.scoring?.identify === 100 && result.scoring?.action === 150);
   }
 
   instance.dispose();
   check("game 1 disposes without throwing", true);
+
+  const configured = await boot("safetyMission", {
+    config: { games: { "safety-mission": { scoring: { identify: 25, action: 40 } } } },
+  });
+  check("admin scoring overrides reach Safety Mission", configured.instance.__test.scoring.identify === 25 && configured.instance.__test.scoring.action === 40);
+  configured.instance.dispose();
+
+  const characterVoice = await boot("safetyMission");
+  const spoken = [];
+  characterVoice.api.say = (line, options) => { spoken.push({ line, options }); return line.en; };
+  const firstHazard = characterVoice.instance.__test.hazards[0];
+  characterVoice.instance.__test.controller.teleport(firstHazard.position.x, firstHazard.data.place.y, firstHazard.position.z);
+  runFrames(2);
+  check("approaching a hazard triggers its character's scenario line",
+    spoken.length === 1 && spoken[0].line.en === firstHazard.data.voice.en && !!spoken[0].options.interrupt);
+  check("the hazard callout includes a Tamil version", /[஀-௿]/.test(spoken[0]?.line.ta || ""));
+  runFrames(30);
+  check("a character does not repeat the same hazard callout", spoken.length === 1, `${spoken.length} lines`);
+  characterVoice.instance.dispose();
 }
 
 /* ================================================================ *

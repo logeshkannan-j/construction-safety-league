@@ -154,6 +154,20 @@
               }
             },
 
+            "breakdown": {
+              "$index": {
+                ".validate": "newData.hasChildren(['label', 'value'])",
+                "label": { ".validate": "newData.isString() && newData.val().length <= 120" },
+                "value": { ".validate": "newData.isString() && newData.val().length <= 40" },
+                "tone": { ".validate": "newData.isString() && (newData.val() === 'good' || newData.val() === 'bad' || newData.val() === 'info')" },
+                "$other": { ".validate": false }
+              }
+            },
+
+            "scoring": {
+              "$key": { ".validate": "newData.isNumber() && newData.val() >= -10000 && newData.val() <= 10000" }
+            },
+
             "$other": { ".validate": false }
           }
         }
@@ -182,6 +196,20 @@
           "accuracy": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
           "timeTakenMs": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 7200000" },
           "completed": { ".validate": "newData.isBoolean()" },
+
+          "breakdown": {
+            "$index": {
+              ".validate": "newData.hasChildren(['label', 'value'])",
+              "label": { ".validate": "newData.isString() && newData.val().length <= 120" },
+              "value": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "tone": { ".validate": "newData.isString() && (newData.val() === 'good' || newData.val() === 'bad' || newData.val() === 'info')" },
+              "$other": { ".validate": false }
+            }
+          },
+
+          "scoring": {
+            "$key": { ".validate": "newData.isNumber() && newData.val() >= -10000 && newData.val() <= 10000" }
+          },
 
           "createdAt": {
             ".validate": "newData.isNumber() && newData.val() <= now + 300000 && newData.val() >= now - 600000"
@@ -242,6 +270,15 @@
             ".validate": "$gameId === 'safety-mission' || $gameId === 'crane-master' || $gameId === 'safest-tower' || $gameId === 'escape-challenge' || $gameId === 'emergency-commander'",
             "enabled": { ".validate": "newData.isBoolean()" },
             "note": { ".validate": "newData.isString() && newData.val().length <= 200" },
+            "scoring": {
+              "identify": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000" },
+              "action": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000" },
+              "wrong": { ".validate": "newData.isNumber() && newData.val() >= -10000 && newData.val() <= 0" },
+              "allHazardsBonus": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000" },
+              "completionBonus": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000" },
+              "timeBonusPerSecond": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000" },
+              "$other": { ".validate": false }
+            },
             "$other": { ".validate": false }
           }
         }

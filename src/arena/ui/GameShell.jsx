@@ -190,6 +190,7 @@ export default function GameShell({
     fetchArenaConfig().then((c) => { if (!cancelled) setFetchedConfig(c || null); }).catch(() => {});
     return () => { cancelled = true; };
   }, [config]);
+  const arenaConfig = config || fetchedConfig;
   const quality = useMemo(() => resolveQuality(settings.quality), [settings.quality]);
 
   // The registry entry (title, cover, accent, ceiling) plus whatever the
@@ -197,14 +198,33 @@ export default function GameShell({
   const gameInfo = useMemo(() => {
     const meta = gameModule?.default || gameModule || null;
     if (!meta) return game;
+    const scoring = arenaConfig?.games?.["safety-mission"]?.scoring;
+    const scoringValues = [
+      scoring?.identify,
+      scoring?.action,
+      scoring?.wrong,
+      scoring?.allHazardsBonus,
+      scoring?.completionBonus,
+      scoring?.timeBonusPerSecond,
+    ];
+    const briefing = game.id === "safety-mission" && scoring
+      ? {
+        ...meta.briefing,
+        scoring: meta.briefing.scoring.map((item, index) => {
+          const value = scoringValues[index];
+          if (!Number.isFinite(Number(value))) return item;
+          return { ...item, value: index === 5 ? `+${value} / second` : `${Number(value) > 0 ? "+" : ""}${value}` };
+        }),
+      }
+      : meta.briefing;
     return {
       ...game,
       controls: meta.controls || game.controls,
-      briefing: meta.briefing || null,
+      briefing: briefing || null,
       desktopControls: meta.desktopControls || [],
       mobileControls: meta.mobileControls || [],
     };
-  }, [game, gameModule]);
+  }, [arenaConfig, game, gameModule]);
 
   /* --------------------------- responsiveness --------------------------- */
 
@@ -473,6 +493,7 @@ export default function GameShell({
         difficulty,
         quality,
         settings,
+        config: arenaConfig,
         // The touch layer drives a tablet's game, as it does a phone's.
         mobile: mobile || touchUi,
         api,
@@ -484,7 +505,7 @@ export default function GameShell({
       setLoadError(`This game failed to start: ${e.message}`);
       setPhase("briefing");
     }
-  }, [api, difficulty, game.id, gameModule, mobile, touchUi, quality, settings, teardown]);
+  }, [api, arenaConfig, difficulty, game.id, gameModule, mobile, touchUi, quality, settings, teardown]);
 
   const restart = useCallback(() => {
     teardown();
@@ -528,13 +549,14 @@ export default function GameShell({
   useEffect(() => {
     if (phase !== "playing") return;
     guideRef.current?.reset();
+    if (game.id === "safety-mission") return;
     const en = missionBrief(game.id, "en");
     const ta = missionBrief(game.id, "ta");
     if (en?.oneLiner) guideRef.current?.say({ en: `${game.title}. ${en.oneLiner}`, ta: ta?.oneLiner ? `${ta.title || game.title}. ${ta.oneLiner}` : undefined }, { interrupt: true });
-  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [game.id, phase]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (paused) guideRef.current?.stop();
-  }, [paused]);
+    if (paused || phase !== "playing") guideRef.current?.stop();
+  }, [paused, phase]);
 
   /* --------------------------- live on the TV ---------------------------
    *
@@ -665,6 +687,8 @@ export default function GameShell({
         timeTakenMs: enriched.timeTakenMs || 0,
         rating: enriched.rating,
         stats: enriched.stats || {},
+        breakdown: enriched.breakdown || [],
+        scoring: enriched.scoring || {},
       });
 
       if (stale()) return;

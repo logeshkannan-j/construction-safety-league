@@ -168,6 +168,8 @@ export async function submitRun(playerId, run) {
     timeTakenMs: Math.max(0, Math.round(Number(run.timeTakenMs) || 0)),
     rating: String(run.rating || ""),
     stats: sanitizeStats(run.stats),
+    breakdown: sanitizeBreakdown(run.breakdown),
+    scoring: sanitizeStats(run.scoring),
     createdAt: stampedAt,
   };
 
@@ -207,6 +209,8 @@ export async function submitRun(playerId, run) {
       completed: record.completed,
       accuracy: record.accuracy,
       timeTakenMs: record.timeTakenMs,
+      breakdown: record.breakdown,
+      scoring: record.scoring,
       createdAt: record.createdAt,
     });
   } catch (e) {
@@ -228,6 +232,17 @@ function sanitizeStats(stats) {
     else if (typeof v === "string") out[k] = v.slice(0, 80);
   });
   return out;
+}
+
+function sanitizeBreakdown(breakdown) {
+  if (!Array.isArray(breakdown)) return [];
+  return breakdown.slice(0, 80).flatMap((row) => {
+    if (!row || typeof row !== "object") return [];
+    const label = String(row.label || "").slice(0, 120);
+    const value = String(row.value ?? "").slice(0, 40);
+    if (!label || !value) return [];
+    return [{ label, value, tone: ["good", "bad", "info"].includes(row.tone) ? row.tone : "info" }];
+  });
 }
 
 // Folds a finished run into the player's persistent profile inside one
@@ -427,6 +442,25 @@ export async function setGameEnabled(gameId, enabled) {
     return true;
   } catch (e) {
     console.error("[arena] setGameEnabled failed", e);
+    return false;
+  }
+}
+
+export async function setSafetyMissionScoring(scoring) {
+  const keys = ["identify", "action", "wrong", "allHazardsBonus", "completionBonus", "timeBonusPerSecond"];
+  const values = {};
+  for (const key of keys) {
+    const value = Number(scoring?.[key]);
+    if (!Number.isInteger(value) || value < -10000 || value > 10000) return false;
+    if (key === "wrong" ? value > 0 : value < 0) return false;
+    values[key] = value;
+  }
+  try {
+    await update(ref(db(), `${ARENA}/config/games/safety-mission`), { scoring: values });
+    await update(ref(db(), `${ARENA}/config`), { updatedAt: Date.now() });
+    return true;
+  } catch (e) {
+    console.error("[arena] setSafetyMissionScoring failed", e);
     return false;
   }
 }

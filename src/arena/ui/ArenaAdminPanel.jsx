@@ -5,9 +5,10 @@ import {
 import { C, GAME_IDS, getGame } from "../arenaConstants.js";
 import {
   fetchAllProfiles, fetchFeed, fetchArenaConfig, setGameEnabled, setControlDefaults,
-  findSuspiciousRuns, buildLeaderboard,
+  setSafetyMissionScoring, findSuspiciousRuns, buildLeaderboard,
 } from "../arenaDb.js";
 import { BUTTON_POSITIONS } from "../identity.js";
+import { SCORING as DEFAULT_SAFETY_SCORING } from "../games/safetyMission/hazards.js";
 import { ARENA_KEYFRAMES, formatClock } from "./Hud.jsx";
 
 /* ------------------------------------------------------------------ *
@@ -32,6 +33,8 @@ export default function ArenaAdminPanel({ panelStyleOverride }) {
   const [error, setError] = useState("");
   const [busyGame, setBusyGame] = useState(null);
   const [busyControls, setBusyControls] = useState(false);
+  const [busyScoring, setBusyScoring] = useState(false);
+  const [scoringDraft, setScoringDraft] = useState(DEFAULT_SAFETY_SCORING);
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState("games");
 
@@ -43,6 +46,7 @@ export default function ArenaAdminPanel({ panelStyleOverride }) {
       setProfiles(p);
       setFeed(f);
       setConfig(c);
+      setScoringDraft({ ...DEFAULT_SAFETY_SCORING, ...(c?.games?.["safety-mission"]?.scoring || {}) });
     } catch (e) {
       console.error("[arena admin] load failed", e);
       setError("Could not read the Arena data. Check the Firebase connection and the database rules.");
@@ -116,6 +120,15 @@ export default function ArenaAdminPanel({ panelStyleOverride }) {
     if (!ok) setError("Could not save the control setting. Check that rules.json allows writes to arena/config.");
     await load();
     setBusyControls(false);
+  }
+
+  async function saveScoring() {
+    setBusyScoring(true);
+    const ok = await setSafetyMissionScoring(scoringDraft);
+    if (!ok) setError("Could not save scoring. Use whole numbers between -10000 and 10000 and check the database connection.");
+    else setError("");
+    await load();
+    setBusyScoring(false);
   }
 
   function copyReport() {
@@ -284,6 +297,44 @@ export default function ArenaAdminPanel({ panelStyleOverride }) {
             confused by a menu that changes shape. Existing scores are never deleted.
           </p>
 
+          <div style={{ background: C.surfaceRaised, borderRadius: 9, padding: "10px 12px", marginTop: 8 }}>
+            <div style={{ fontWeight: 800, fontSize: 13.5 }}>Safety Mission scoring</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2, lineHeight: 1.5 }}>
+              New runs use these values. Each run keeps the scoring snapshot used to calculate its result.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8, marginTop: 10 }}>
+              {[
+                ["identify", "Correct classification"],
+                ["action", "Correct corrective action"],
+                ["wrong", "Wrong answer"],
+                ["allHazardsBonus", "All hazards bonus"],
+                ["completionBonus", "Mission completion bonus"],
+                ["timeBonusPerSecond", "Time bonus per second"],
+              ].map(([key, label]) => (
+                <label key={key} style={{ display: "grid", gap: 4, color: C.muted, fontSize: 11, fontWeight: 700 }}>
+                  {label}
+                  <input
+                    type="number"
+                    step="1"
+                    min={key === "wrong" ? -10000 : 0}
+                    max={key === "wrong" ? 0 : 10000}
+                    value={scoringDraft[key]}
+                    onChange={(event) => setScoringDraft((current) => ({ ...current, [key]: event.target.value }))}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", borderRadius: 6, border: `1px solid ${C.line}`, background: C.surface, color: C.ink, fontSize: 13 }}
+                  />
+                </label>
+              ))}
+            </div>
+            <button
+              type="button"
+              disabled={busyScoring}
+              onClick={saveScoring}
+              style={{ marginTop: 10, padding: "7px 12px", borderRadius: 7, border: `1px solid ${C.yellow}`, background: C.yellow + "1f", color: C.ink, fontSize: 12, fontWeight: 800, cursor: busyScoring ? "wait" : "pointer" }}
+            >
+              {busyScoring ? "Saving…" : "Save scoring values"}
+            </button>
+          </div>
+
           {/* Where the action buttons sit on phones, for everybody. */}
           <div style={{ background: C.surfaceRaised, borderRadius: 9, padding: "10px 12px", marginTop: 8 }}>
             <div style={{ fontWeight: 800, fontSize: 13.5 }}>Phone controls — where the buttons sit</div>
@@ -357,6 +408,34 @@ export default function ArenaAdminPanel({ panelStyleOverride }) {
             <p style={{ color: C.muted, fontSize: 13, marginTop: 10 }}>
               No Arena games have been played yet.
             </p>
+          )}
+          {!!feed.some((run) => run.gameId === "safety-mission") && (
+            <section style={{ marginTop: 18 }}>
+              <h3 style={{ fontSize: 13, margin: "0 0 8px", color: C.ink }}>Safety Mission run details</h3>
+              <div style={{ display: "grid", gap: 6 }}>
+                {feed
+                  .filter((run) => run.gameId === "safety-mission")
+                  .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+                  .slice(0, 30)
+                  .map((run) => (
+                    <details key={run.runId} style={{ background: C.surfaceRaised, borderRadius: 7, padding: "8px 10px" }}>
+                      <summary style={{ cursor: "pointer", fontSize: 12, color: C.ink }}>
+                        <b>{run.playerName || "Player"}</b> · {run.createdAt ? new Date(run.createdAt).toLocaleString() : "Date unknown"} · <b>{run.score || 0} points</b>
+                      </summary>
+                      <div style={{ display: "grid", gap: 4, marginTop: 8 }}>
+                        {(run.breakdown || []).map((row, index) => (
+                          <div key={`${row.label}-${index}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11.5 }}>
+                            <span>{row.label}</span>
+                            <b style={{ color: row.tone === "bad" ? C.red : row.tone === "good" ? C.green : C.ink, whiteSpace: "nowrap" }}>{row.value}</b>
+                          </div>
+                        ))}
+                        {!run.breakdown?.length && <span style={{ color: C.muted, fontSize: 11 }}>This older run has no saved point breakdown.</span>}
+                        {run.scoring && <div style={{ color: C.muted, fontSize: 10.5, marginTop: 4 }}>Scoring snapshot: classification +{run.scoring.identify}, action +{run.scoring.action}, wrong answer {run.scoring.wrong}</div>}
+                      </div>
+                    </details>
+                  ))}
+              </div>
+            </section>
           )}
         </div>
       )}

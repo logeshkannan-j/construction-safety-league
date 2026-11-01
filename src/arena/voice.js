@@ -103,7 +103,7 @@ export function createGuide({ lang = () => "en", enabled = () => true } = {}) {
 
   return {
     /** The words that were spoken, or null when nothing was. */
-    say(line, { interrupt = false } = {}) {
+    say(line, { interrupt = false, pitch = 1, rate = 1 } = {}) {
       if (!line || !synth || !Utterance || !enabled() || !isSoundEnabled() || getVolume() <= 0) return null;
       const tamilVoice = lang() === "ta" && line.ta ? find((l) => l.startsWith("ta")) : null;
       const words = String(tamilVoice ? line.ta : line.en || "").trim();
@@ -115,8 +115,8 @@ export function createGuide({ lang = () => "en", enabled = () => true } = {}) {
         u.lang = tamilVoice ? "ta-IN" : "en-IN";
         if (voice) u.voice = voice;
         u.volume = getVolume();
-        u.rate = 1;
-        u.pitch = 1;
+        u.rate = Math.max(0.75, Math.min(1.25, rate));
+        u.pitch = Math.max(0.75, Math.min(1.35, pitch));
         synth.speak(u);
       } catch {
         return null;

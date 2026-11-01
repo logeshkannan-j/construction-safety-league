@@ -100,6 +100,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.HOUSEKEEPING, CATEGORIES.STRUCK, CATEGORIES.HEIGHT],
     actionDecoys: [ACTIONS.TELL_SUPERVISOR_LATER, ACTIONS.CARRY_ON_WATCH, ACTIONS.EXCLUSION_ZONE],
     lesson: "Head protection is mandatory wherever there is any risk of a falling object — not only directly under a lift.",
+    voice: { en: "I'm working under the lifting area without my helmet. I need to stop and get the right protection.", ta: "தூக்கும் பணி நடக்கும் இடத்தின் கீழே ஹெல்மெட் இல்லாமல் வேலை செய்கிறேன். வேலையை நிறுத்தி சரியான பாதுகாப்பைப் பெற வேண்டும்." },
     place: { x: -16, y: 0, z: -4, radius: 3.6, eyeY: 1.5 },
     ta: {
       title: "தலைக் கவசம் இல்லாமல் வேலை செய்பவர்",
@@ -115,6 +116,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.HOUSEKEEPING, CATEGORIES.STRUCK, CATEGORIES.SCAFFOLD],
     actionDecoys: [ACTIONS.TAPE_IT_UP, ACTIONS.SIGN_THE_ROUTE, ACTIONS.TELL_SUPERVISOR_LATER],
     lesson: "Floor openings need a secured, load-rated cover or full edge protection — signage alone does not stop a fall.",
+    voice: { en: "There is an open floor hole here. Keep back until it has a secured cover and barrier.", ta: "இங்கே தரையில் திறந்த துளை உள்ளது. உறுதியான மூடியும் தடுப்பும் போடும் வரை அருகில் செல்லாதீர்கள்." },
     place: { x: -15, y: 3.4, z: 13, radius: 3.4, eyeY: 1.2 },
     ta: {
       title: "மூடப்படாத தரைத் துளை",
@@ -130,6 +132,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.HOUSEKEEPING, CATEGORIES.OVERLOAD, CATEGORIES.EMERGENCY],
     actionDecoys: [ACTIONS.TAPE_IT_UP, ACTIONS.CARRY_ON_WATCH, ACTIONS.TIDY_AREA],
     lesson: "Damaged or exposed electrical equipment must be isolated and locked off — never repaired with tape or left in service.",
+    voice: { en: "This cable is damaged and may be live. Do not touch it. Isolate and lock off the supply.", ta: "இந்த கேபிள் சேதமடைந்துள்ளது; மின்சாரம் இருக்கலாம். தொடாதீர்கள். மின்சாரத்தை நிறுத்தி பூட்டுங்கள்." },
     place: { x: -30, y: 0, z: -6, radius: 3.6, eyeY: 1.5 },
     ta: {
       title: "சேதமான மின் கேபிள்",
@@ -145,6 +148,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.HOUSEKEEPING, CATEGORIES.OVERLOAD, CATEGORIES.STRUCK],
     actionDecoys: [ACTIONS.CARRY_ON_WATCH, ACTIONS.SIGN_THE_ROUTE, ACTIONS.EXCLUSION_ZONE],
     lesson: "A part-boarded scaffold must be tagged out of use until the platform is complete and re-inspected by a competent person.",
+    voice: { en: "This scaffold platform is missing boards. Stop using it until it is completed and checked.", ta: "இந்த சாரக்கட்டுத் தளத்தில் பலகைகள் இல்லை. முழுமையாக அமைத்து ஆய்வு செய்யும் வரை பயன்படுத்துவதை நிறுத்துங்கள்." },
     // Generous radius: a part-boarded lift is clearly visible from the
     // ground, so the player should not have to climb to report it.
     place: { x: -12, y: 6, z: 1.6, radius: 7, eyeY: 1.2 },
@@ -162,6 +166,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.STRUCK, CATEGORIES.OVERLOAD, CATEGORIES.HEIGHT],
     actionDecoys: [ACTIONS.CARRY_ON_WATCH, ACTIONS.TELL_SUPERVISOR_LATER, ACTIONS.TIDY_AREA],
     lesson: "Nobody works or walks under a suspended load. Stop the lift, land it safely and re-plan the operation.",
+    voice: { en: "There is a suspended load over the walkway. Keep everyone clear and stop the lift.", ta: "நடைபாதைக்கு மேலே சுமை தொங்குகிறது. அனைவரையும் விலக்கி தூக்கும் பணியை நிறுத்துங்கள்." },
     place: { x: 22, y: 0, z: 2, radius: 5.2, eyeY: 1.6 },
     ta: {
       title: "ஆட்கள் மேல் செல்லும் தொங்கும் சுமை",
@@ -177,6 +182,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.PPE, CATEGORIES.SCAFFOLD, CATEGORIES.STRUCK],
     actionDecoys: [ACTIONS.ISSUE_PPE, ACTIONS.CARRY_ON_WATCH, ACTIONS.SIGN_THE_ROUTE],
     lesson: "A harness only protects anybody once the lanyard is attached to a suitable, rated anchor point.",
+    voice: { en: "I'm working at the edge, but my harness is not clipped on. I must stop and connect to a rated anchor.", ta: "விளிம்பில் வேலை செய்கிறேன்; ஆனால் ஹார்னஸ் கொளுவப்படவில்லை. வேலையை நிறுத்தி உறுதியான ஆங்கரில் கொளுவ வேண்டும்." },
     // Level 2, at the unprotected south edge. Reaching this one needs
     // the stair core, which is the point of making the site climbable.
     place: { x: -7, y: 6.8, z: 15.6, radius: 4.2, eyeY: 1.4 },
@@ -194,6 +200,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.EMERGENCY, CATEGORIES.STRUCK, CATEGORIES.ELECTRICAL],
     actionDecoys: [ACTIONS.SIGN_THE_ROUTE, ACTIONS.TELL_SUPERVISOR_LATER, ACTIONS.CARRY_ON_WATCH],
     lesson: "Slips, trips and falls are the most common site injury. Walkways get cleared as work proceeds, not at the end of the shift.",
+    voice: { en: "Loose material and a cable are blocking this walkway. Clear it now before somebody trips.", ta: "சிதறிய பொருட்களும் கேபிளும் நடைபாதையை அடைக்கின்றன. யாராவது இடறி விழும் முன் இப்போதே அகற்றுங்கள்." },
     place: { x: -2, y: 0, z: -14, radius: 3.8, eyeY: 1.1 },
     ta: {
       title: "பாதையை அடைக்கும் பொருட்கள்",
@@ -209,6 +216,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.HOUSEKEEPING, CATEGORIES.STRUCK, CATEGORIES.OVERLOAD],
     actionDecoys: [ACTIONS.SIGN_THE_ROUTE, ACTIONS.TIDY_AREA, ACTIONS.TELL_SUPERVISOR_LATER],
     lesson: "Escape routes must be kept clear at all times — in a fire, a blocked exit is the difference between an evacuation and a fatality.",
+    voice: { en: "The emergency exit is blocked. Move these materials and keep the escape route clear.", ta: "அவசர வெளியேறும் வழி அடைக்கப்பட்டுள்ளது. பொருட்களை அகற்றி தப்பிக்கும் பாதையைத் திறந்துவையுங்கள்." },
     place: { x: -42, y: 0, z: 18, radius: 4.4, eyeY: 1.4 },
     ta: {
       title: "அடைக்கப்பட்ட அவசர வெளியேறும் வழி",
@@ -224,6 +232,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.HEIGHT, CATEGORIES.HOUSEKEEPING, CATEGORIES.STRUCK],
     actionDecoys: [ACTIONS.DEEPEN_EXCAVATION, ACTIONS.SIGN_THE_ROUTE, ACTIONS.CARRY_ON_WATCH],
     lesson: "Any excavation over about 1.2 m needs shoring or battering. Collapses happen without warning and a cubic metre of soil weighs over a tonne.",
+    voice: { en: "This trench has unsupported sides and spoil at the edge. Keep out until it is shored and protected.", ta: "இந்த அகழியின் பக்கங்களுக்கு ஆதரவு இல்லை; மண்ணும் விளிம்பில் குவிந்துள்ளது. ஆதரவும் தடுப்பும் போடும் வரை உள்ளே செல்லாதீர்கள்." },
     place: { x: 18, y: 0, z: 22, radius: 5.6, eyeY: 1.4 },
     ta: {
       title: "ஆதரவு இல்லாத அகழி",
@@ -239,6 +248,7 @@ export const HAZARDS = [
     categoryDecoys: [CATEGORIES.LIFTING, CATEGORIES.STRUCK, CATEGORIES.SCAFFOLD],
     actionDecoys: [ACTIONS.EXCLUSION_ZONE, ACTIONS.CARRY_ON_WATCH, ACTIONS.TELL_SUPERVISOR_LATER],
     lesson: "Every hoist has a marked safe working load. Overloading risks a structural or brake failure with the load over people below.",
+    voice: { en: "This material hoist is overloaded. Stop it, reduce the load, and check its safe working limit.", ta: "இந்தப் பொருள் ஹாய்ஸ்டில் அதிக சுமை ஏற்றப்பட்டுள்ளது. நிறுத்தி சுமையைக் குறைத்து பாதுகாப்பான வேலை வரம்பைச் சரிபாருங்கள்." },
     place: { x: 2.2, y: 0, z: 10, radius: 4.2, eyeY: 1.6 },
     ta: {
       title: "அதிக சுமை ஏற்றிய பொருள் ஹாய்ஸ்ட்",

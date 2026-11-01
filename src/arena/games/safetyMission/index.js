@@ -116,7 +116,13 @@ const STEP_TEXT = {
   },
 };
 
-export function create({ container, difficulty, quality, settings, mobile, api }) {
+export function create({ container, difficulty, quality, settings, mobile, config, api }) {
+  const configuredScoring = config?.games?.["safety-mission"]?.scoring || {};
+  const scoring = Object.fromEntries(Object.entries(SCORING).map(([key, fallback]) => {
+    const value = Number(configuredScoring[key]);
+    const validSign = key === "wrong" ? value <= 0 : value >= 0;
+    return [key, Number.isFinite(value) && validSign ? Math.max(-10000, Math.min(10000, Math.round(value))) : fallback];
+  }));
   const stage = createStage(container, { quality, fov: mobile ? 76 : 72 });
   const { scene, camera, cfg } = stage;
   const mat = createMaterials(cfg);
@@ -727,6 +733,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       beacon,
       position: new THREE.Vector3(data.place.x, data.place.y + (data.place.eyeY || 1.3), data.place.z),
       radius: data.place.radius,
+      voiceHeard: false,
       reported: false,
       identifiedCorrectly: false,
       actedCorrectly: false,
@@ -818,6 +825,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const state = {
     remainingMs: missionMs,
     score: 0,
+    scoreEvents: [],
     reported: 0,
     identifiedCorrect: 0,
     actionCorrect: 0,
@@ -833,18 +841,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     lastPromptId: null,
   };
 
-  function addScore(amount) {
-    state.score += amount;
+  function addScore(amount, label, tone = "info") {
+    const before = state.score;
+    state.scoreEvents.push({ label, points: amount, tone });
+    const subtotal = state.scoreEvents.reduce((sum, event) => sum + event.points, 0);
+    state.score = Math.max(0, Math.round(subtotal * difficulty.scoreScale));
+    api.toast(label, tone, state.score - before);
   }
 
   function registerFall(distance) {
     state.falls += 1;
-    addScore(-75);
-    api.toast(
-      `You fell ${distance.toFixed(1)} m. On a real site that is a fatality.`,
-      "bad",
-      -75
-    );
+    addScore(-75, `Fall of ${distance.toFixed(1)} m: safety penalty`, "bad");
   }
 
   /* --------------------------- mobile buttons --------------------------- */
@@ -923,6 +930,26 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
   }
 
+  function speakNearbyHazard() {
+    let closest = null;
+    let closestDistance = Infinity;
+    for (const hazard of hazards) {
+      if (hazard.reported || hazard.voiceHeard || !hazard.data.voice) continue;
+      const dx = hazard.position.x - controller.position.x;
+      const dy = (hazard.position.y - controller.position.y) * 0.8;
+      const dz = hazard.position.z - controller.position.z;
+      const distance = Math.hypot(dx, dy, dz);
+      if (distance <= 3.2 && distance < closestDistance) {
+        closest = hazard;
+        closestDistance = distance;
+      }
+    }
+    if (!closest) return;
+    closest.voiceHeard = true;
+    const pitch = 0.92 + (hazards.indexOf(closest) % 4) * 0.08;
+    api.say?.(closest.data.voice, { interrupt: true, pitch, rate: 0.96 + (hazards.indexOf(closest) % 3) * 0.04 });
+  }
+
   /* `options` is passed back in when the dialog is simply being
    * repainted — switching language must not reshuffle the answers
    * under the player's finger. */
@@ -946,19 +973,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         labelAlt: lang === "ta" ? (o.labelTa ? o.label : "") : (o.labelTa || ""),
         badge: String.fromCharCode(65 + i),
       })),
-      footer: `Correct classification +${SCORING.identify} · wrong answer ${SCORING.wrong}`,
+      footer: `Correct classification +${scoring.identify} · wrong answer ${scoring.wrong}`,
       onPick: (id) => {
         const picked = options.find((o) => o.id === id);
         const correct = !!picked?.correct;
         if (correct) {
           hazard.identifiedCorrectly = true;
           state.identifiedCorrect += 1;
-          addScore(SCORING.identify);
-          api.toast(`Correct: ${hazard.data.category}`, "good", SCORING.identify);
+          addScore(scoring.identify, `Correct classification: ${hazard.data.title}`, "good");
         } else {
           state.wrongAnswers += 1;
-          addScore(SCORING.wrong);
-          api.toast(`Not quite — this is ${hazard.data.category}`, "bad", SCORING.wrong);
+          addScore(scoring.wrong * difficulty.penaltyScale, `Incorrect classification: ${hazard.data.title}`, "bad");
         }
         openActionDialog(hazard);
       },
@@ -981,15 +1006,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         labelAlt: lang === "ta" ? (o.labelTa ? o.label : "") : (o.labelTa || ""),
         badge: String.fromCharCode(65 + i),
       })),
-      footer: `Correct action +${SCORING.action} · wrong answer ${SCORING.wrong}`,
+      footer: `Correct action +${scoring.action} · wrong answer ${scoring.wrong}`,
       onPick: (id) => {
         const picked = options.find((o) => o.id === id);
         const correct = !!picked?.correct;
         if (correct) {
           hazard.actedCorrectly = true;
           state.actionCorrect += 1;
-          addScore(SCORING.action);
-          api.toast("Corrective action applied on site", "good", SCORING.action);
+          addScore(scoring.action, `Corrective action: ${hazard.data.title}`, "good");
           // Said on the radio too, in the player's language.
           api.say?.({
             en: `Put right: ${hazard.data.title}.`,
@@ -998,8 +1022,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
           try { resolvers[hazard.data.id]?.(); } catch (e) { console.error("[arena] resolver failed", hazard.data.id, e); }
         } else {
           state.wrongAnswers += 1;
-          addScore(SCORING.wrong);
-          api.toast(`Wrong action. The right call: ${hazard.data.action}`, "bad", SCORING.wrong);
+          addScore(scoring.wrong * difficulty.penaltyScale, `Incorrect action: ${hazard.data.title}`, "bad");
         }
         completeHazard(hazard);
       },
@@ -1040,16 +1063,16 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const remainingSeconds = Math.max(0, Math.floor(state.remainingMs / 1000));
     const allFound = state.reported >= total;
 
-    const identifyPoints = state.identifiedCorrect * SCORING.identify;
-    const actionPoints = state.actionCorrect * SCORING.action;
-    const penalty = Math.round(state.wrongAnswers * Math.abs(SCORING.wrong) * difficulty.penaltyScale);
+    const penalty = Math.round(state.wrongAnswers * Math.abs(scoring.wrong) * difficulty.penaltyScale);
     const fallPenalty = state.falls * 75;
-    const allBonus = allFound ? SCORING.allHazardsBonus : 0;
-    const completionBonus = completed ? SCORING.completionBonus : 0;
-    const timeBonus = completed ? remainingSeconds * SCORING.timeBonusPerSecond : 0;
-
-    const raw = identifyPoints + actionPoints + allBonus + completionBonus + timeBonus - penalty - fallPenalty;
-    const score = Math.max(0, Math.round(raw * difficulty.scoreScale));
+    const allBonus = allFound ? scoring.allHazardsBonus : 0;
+    const completionBonus = completed ? scoring.completionBonus : 0;
+    const timeBonus = completed ? remainingSeconds * scoring.timeBonusPerSecond : 0;
+    if (allBonus) addScore(allBonus, "All hazards reported bonus", "good");
+    if (completionBonus) addScore(completionBonus, "Mission completed bonus", "good");
+    if (timeBonus) addScore(timeBonus, `Time remaining bonus (${remainingSeconds} seconds)`, "good");
+    const rawScore = state.scoreEvents.reduce((sum, event) => sum + event.points, 0);
+    const score = state.score;
 
     // Performance = correct decisions out of every decision that was
     // available, so skipped hazards count against the rating.
@@ -1082,14 +1105,16 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         { label: "Wrong decisions", value: `${state.wrongAnswers}`, tone: state.wrongAnswers ? "bad" : "good" },
         { label: "Hazards missed", value: `${missed}`, tone: missed ? "bad" : "good" },
         ...(state.falls ? [{ label: "Falls from height", value: `${state.falls} (−${fallPenalty})`, tone: "bad" }] : []),
-        { label: "Identification points", value: `+${identifyPoints}`, tone: "info" },
-        { label: "Corrective action points", value: `+${actionPoints}`, tone: "info" },
-        ...(allBonus ? [{ label: "All hazards found bonus", value: `+${allBonus}`, tone: "good" }] : []),
-        ...(completionBonus ? [{ label: "Mission completion bonus", value: `+${completionBonus}`, tone: "good" }] : []),
-        ...(timeBonus ? [{ label: `Time bonus (${remainingSeconds}s left)`, value: `+${timeBonus}`, tone: "good" }] : []),
-        ...(penalty ? [{ label: "Wrong answer penalty", value: `−${penalty}`, tone: "bad" }] : []),
+        ...state.scoreEvents.map((event) => ({
+          label: event.label,
+          value: `${event.points > 0 ? "+" : ""}${Number.isInteger(event.points) ? event.points : event.points.toFixed(1)}`,
+          tone: event.tone,
+        })),
+        { label: "Total before difficulty multiplier", value: String(Math.round(rawScore)), tone: "info" },
         { label: `Difficulty multiplier (${difficulty.label})`, value: `×${difficulty.scoreScale}`, tone: "info" },
+        { label: "Final score", value: String(score), tone: "good" },
       ],
+      scoring,
       lessons,
     });
   }
@@ -1165,6 +1190,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     if (!state.dialogOpen && !state.finished && !siteView.active) {
       controller.update(dt);
+      speakNearbyHazard();
       if (input.wasPressed("viewmode")) { controller.setThirdPerson(!controller.thirdPerson); sfx.click(); }
       if (input.wasPressed("zoom")) { zoom.toggle(); sfx.click(); }
       setTarget(findTarget());
@@ -1262,7 +1288,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs to drive a real
     // playthrough headlessly. Nothing in the app reads this.
     __test: {
-      state, controller, hazards, scene, colliders, avatar, walkers, resolvers,
+      state, controller, hazards, scene, colliders, avatar, walkers, resolvers, scoring,
       zoomFov: () => camera.fov,
     },
   };
