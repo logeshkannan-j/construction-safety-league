@@ -37,6 +37,21 @@ export function isTouchDevice() {
   );
 }
 
+/**
+ * True when the touch controls are needed: a touch screen whose main
+ * pointer is a finger (phones and tablets), or any small touch screen.
+ * Tied to screen size alone, an iPad — 820 px and up on its short side —
+ * got no joystick, look pad or buttons, and four of the five missions
+ * could not be played on it. A touch laptop, whose main pointer is still
+ * the mouse, keeps the desktop controls.
+ */
+export function wantsTouchControls() {
+  if (typeof window === "undefined" || !isTouchDevice()) return false;
+  let coarse = false;
+  try { coarse = !!window.matchMedia?.("(pointer: coarse)")?.matches; } catch { /* old browser */ }
+  return coarse || isMobileLayout();
+}
+
 export function isMobileLayout() {
   if (typeof window === "undefined") return false;
   return isTouchDevice() && Math.min(window.innerWidth, window.innerHeight) < 820;

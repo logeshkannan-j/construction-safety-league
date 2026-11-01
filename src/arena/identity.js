@@ -113,7 +113,9 @@ export async function resolveIdentity() {
 export const DEFAULT_SETTINGS = {
   quality: "auto",      // 'auto' | 'low' | 'medium' | 'high'
   sound: true,
-  volume: 0.7,
+  // Full volume by default: at 0.7 the game was not audible on many
+  // phones (the reason audio.js starts at 1, which this used to undo).
+  volume: 1,
   lookSensitivity: 1,
   invertY: false,
   // Which kind of on-screen stick. See ui/Joystick.jsx for what each

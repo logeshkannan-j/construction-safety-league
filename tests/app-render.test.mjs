@@ -1693,6 +1693,102 @@ section("The session screen: nothing strands a participant, nothing wipes them")
   probe.remove();
 }
 
+section("The Arena shell: tablets, quitting an event mission, the look pad");
+
+{
+  const probe = document.createElement("div");
+  document.body.appendChild(probe);
+  const probeRoot = ReactDOMClient.createRoot(probe);
+  const probeText = () => (probe.textContent || "").replace(/\s+/g, " ").trim();
+  const errorsBefore = reactErrors.length;
+  const waitFor = async (test, ms = 3000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (test()) return true; await settle(30); }
+    return test();
+  };
+
+  /* Touch controls followed screen size alone, so an iPad (820 px and
+   * up on its short side) got no joystick, look pad or buttons. */
+  const gfx = await server.ssrLoadModule("/src/arena/engine/gfx.js");
+  const saved = { mm: dom.window.matchMedia, w: dom.window.innerWidth, h: dom.window.innerHeight, touch: "ontouchstart" in dom.window };
+  const device = ({ touch, coarse, w, h }) => {
+    if (touch) dom.window.ontouchstart = null; else delete dom.window.ontouchstart;
+    dom.window.matchMedia = (q) => ({ matches: /pointer: coarse/.test(q) ? coarse : false, addEventListener() {}, removeEventListener() {} });
+    Object.defineProperty(dom.window, "innerWidth", { value: w, configurable: true });
+    Object.defineProperty(dom.window, "innerHeight", { value: h, configurable: true });
+  };
+  device({ touch: true, coarse: true, w: 820, h: 1180 });
+  check("an iPad in portrait gets the touch controls", gfx.wantsTouchControls() === true);
+  device({ touch: true, coarse: true, w: 1366, h: 1024 });
+  check("so does a 12.9-inch iPad in landscape", gfx.wantsTouchControls() === true);
+  device({ touch: true, coarse: false, w: 1920, h: 1080 });
+  check("a touch-screen laptop, mouse first, keeps the desktop controls", gfx.wantsTouchControls() === false);
+  device({ touch: true, coarse: true, w: 390, h: 844 });
+  check("a phone, of course, gets them", gfx.wantsTouchControls() === true);
+  device({ touch: false, coarse: false, w: 1920, h: 1080 });
+  check("and a desktop does not", gfx.wantsTouchControls() === false);
+  dom.window.matchMedia = saved.mm;
+  Object.defineProperty(dom.window, "innerWidth", { value: saved.w, configurable: true });
+  Object.defineProperty(dom.window, "innerHeight", { value: saved.h, configurable: true });
+  if (!saved.touch) delete dom.window.ontouchstart;
+
+  /* In an event, one tap on Quit threw the mission away at 0 points. */
+  const { PauseMenu } = await server.ssrLoadModule("/src/arena/ui/GameShell.jsx");
+  const game = { id: "safety-mission", title: "Safety Mission", accent: "#FFC629" };
+  let quits = 0;
+  const pauseProps = {
+    game, settings: { quality: "medium", sound: true, volume: 1, lookSensitivity: 1 }, updateSettings: () => {}, quality: "medium",
+    showSettings: false, setShowSettings: () => {}, onResume: () => {}, onRestart: () => {}, onQuit: () => { quits += 1; }, mobile: false, buttonPosition: "raised",
+  };
+  const quitButton = () => [...probe.querySelectorAll("button")].find((b) => /Leave this mission|Tap again|Quit to Gaming Arena/.test(b.textContent));
+  probeRoot.render(React.createElement(PauseMenu, { ...pauseProps, embedded: true }));
+  await waitFor(() => !!quitButton());
+  check("in an event the pause menu says leaving scores 0", probeText().includes("scores it 0"));
+  quitButton()?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  check("one tap does not leave the mission", await waitFor(() => /Tap again/.test(quitButton()?.textContent || "")) && quits === 0);
+  quitButton()?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  check("a second tap does", await waitFor(() => quits === 1));
+  quits = 0;
+  probeRoot.render(React.createElement(PauseMenu, { ...pauseProps, embedded: false }));
+  await waitFor(() => /Quit to Gaming Arena/.test(quitButton()?.textContent || ""));
+  quitButton()?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  check("outside an event, quitting a practice run is still one tap", await waitFor(() => quits === 1));
+
+  /* The look pad: a pinch could end with a tap on the world, and the
+   * look sensitivity was applied twice. */
+  const { default: TouchLook } = await server.ssrLoadModule("/src/arena/ui/TouchLook.jsx");
+  const looks = [];
+  const taps = [];
+  const fakeInput = { addLook: (dx, dy) => looks.push([dx, dy]), addZoom: () => {}, registerTap: (x, y) => taps.push([x, y]) };
+  probeRoot.render(React.createElement(TouchLook, { input: fakeInput, sensitivity: 2 }));
+  await settle(50);
+  const pad = probe.firstElementChild;
+  const finger = (type, id, x, y) => {
+    const ev = new dom.window.Event(type, { bubbles: true, cancelable: true });
+    Object.assign(ev, { pointerId: id, clientX: x, clientY: y, pointerType: "touch", isPrimary: id === 1 });
+    pad.dispatchEvent(ev);
+  };
+  finger("pointerdown", 1, 100, 100);
+  finger("pointerdown", 2, 200, 100);
+  finger("pointermove", 2, 260, 100);
+  finger("pointerup", 2, 260, 100);
+  finger("pointerup", 1, 100, 100);
+  check("a pinch never ends as a tap on the world, whichever finger lifts last", taps.length === 0, JSON.stringify(taps));
+  finger("pointerdown", 1, 100, 100);
+  finger("pointerup", 1, 101, 100);
+  check("a real tap still taps", taps.length === 1);
+  looks.length = 0;
+  finger("pointerdown", 1, 100, 100);
+  finger("pointermove", 1, 110, 100);
+  finger("pointerup", 1, 110, 100);
+  check("the look sensitivity is not applied here as well as in the input (it was squared)",
+    looks.length > 0 && Math.abs(looks[0][0] - 15.5) < 1e-6, JSON.stringify(looks));
+
+  check("no React errors in the shell", reactErrors.length === errorsBefore, reactErrors.slice(errorsBefore).join(" | "));
+  probeRoot.unmount();
+  probe.remove();
+}
+
 section("Live on the TV: the host picks a participant, the TV shows them");
 
 /* "Host the live players' gaming to the TV: whoever joined to play, the

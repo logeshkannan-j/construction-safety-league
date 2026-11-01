@@ -7,8 +7,8 @@ import {
 import {
   C, DIFFICULTIES, getDifficulty, QUALITY_LEVELS, ratingFor,
 } from "../arenaConstants.js";
-import { supportsWebGL, resolveQuality, isMobileLayout, isTouchDevice } from "../engine/gfx.js";
-import { submitRun, fetchAllProfiles, buildLeaderboard } from "../arenaDb.js";
+import { supportsWebGL, resolveQuality, isMobileLayout, isTouchDevice, wantsTouchControls } from "../engine/gfx.js";
+import { submitRun, fetchAllProfiles, buildLeaderboard, fetchArenaConfig } from "../arenaDb.js";
 import { loadSettings, saveSettings, CAMERA_DISTANCES, AVATARS, BUTTON_POSITIONS, buttonPositionFor } from "../identity.js";
 import { sfx, setSoundEnabled, setVolume, unlockAudio, disposeAudio } from "../audio.js";
 import { ArenaButton, Overlay, Pill, panelStyle } from "./primitives.jsx";
@@ -131,6 +131,11 @@ export default function GameShell({
   const [paused, setPaused] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [mobile, setMobile] = useState(isMobileLayout);
+  // Touch controls, separately from the compact layout: a tablet wants
+  // the joystick and buttons, at full size.
+  const [touchUi, setTouchUi] = useState(wantsTouchControls);
+  // "Play in portrait anyway" sticks for this mission.
+  const portraitOkRef = useRef(false);
   const [portraitBlock, setPortraitBlock] = useState(false);
   const [hud, setHud] = useState({});
   const [dialog, setDialog] = useState(null);
@@ -167,7 +172,22 @@ export default function GameShell({
   // the component first mounted.
   const finishHandlerRef = useRef(null);
 
-  const difficulty = useMemo(() => getDifficulty(difficultyId), [difficultyId]);
+  // An event mission is the same for everybody: Site Officer. Its
+  // points come from how well it was done, and a choice of difficulty
+  // would let a participant pick an easier mission for the same points.
+  const effectiveDifficultyId = embedded ? "normal" : difficultyId;
+  const difficulty = useMemo(() => getDifficulty(effectiveDifficultyId), [effectiveDifficultyId]);
+
+  // The host's default button position (admin panel) for players who
+  // have not chosen one. The standalone Arena passes it in; an event
+  // mission and the admin's preview fetch it here.
+  const [fetchedConfig, setFetchedConfig] = useState(null);
+  useEffect(() => {
+    if (config) return undefined;
+    let cancelled = false;
+    fetchArenaConfig().then((c) => { if (!cancelled) setFetchedConfig(c || null); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [config]);
   const quality = useMemo(() => resolveQuality(settings.quality), [settings.quality]);
 
   // The registry entry (title, cover, accent, ceiling) plus whatever the
@@ -189,8 +209,9 @@ export default function GameShell({
   useEffect(() => {
     function check() {
       setMobile(isMobileLayout());
+      setTouchUi(wantsTouchControls());
       const portrait = window.innerHeight > window.innerWidth;
-      setPortraitBlock(isTouchDevice() && portrait && window.innerWidth < 760);
+      setPortraitBlock(!portraitOkRef.current && isTouchDevice() && portrait && window.innerWidth < 760);
     }
     check();
     window.addEventListener("resize", check);
@@ -339,7 +360,9 @@ export default function GameShell({
       if (active) {
         (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
       } else {
-        (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el, { navigationUI: "hide" });
+        // A promise where supported: a refusal is expected (iPhone Safari,
+        // a tap the browser did not count) and is not an error.
+        (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el, { navigationUI: "hide" })?.catch?.(() => {});
       }
     } catch (e) {
       // Safari on iPhone refuses this outright. Nothing to recover
@@ -436,7 +459,8 @@ export default function GameShell({
         difficulty,
         quality,
         settings,
-        mobile,
+        // The touch layer drives a tablet's game, as it does a phone's.
+        mobile: mobile || touchUi,
         api,
       });
       setPhase("playing");
@@ -446,7 +470,7 @@ export default function GameShell({
       setLoadError(`This game failed to start: ${e.message}`);
       setPhase("briefing");
     }
-  }, [api, difficulty, game.id, gameModule, mobile, quality, settings, teardown]);
+  }, [api, difficulty, game.id, gameModule, mobile, touchUi, quality, settings, teardown]);
 
   const restart = useCallback(() => {
     teardown();
@@ -463,6 +487,17 @@ export default function GameShell({
     setResult(null);
     setPhase("briefing");
   }, [teardown]);
+
+  /* --------------------- settings while playing --------------------- */
+
+  // The look sensitivity and vertical inversion apply as soon as they are
+  // changed in the pause menu, not from the next mission.
+  useEffect(() => {
+    if (phase !== "playing") return;
+    const input = instanceRef.current?.input;
+    input?.setSensitivity?.(settings.lookSensitivity ?? 1);
+    input?.setInvertY?.(!!settings.invertY);
+  }, [phase, settings.lookSensitivity, settings.invertY]);
 
   /* ------------------------------ pausing ------------------------------ */
 
@@ -508,10 +543,12 @@ export default function GameShell({
 
   // While a decision dialog is open the player must not also be walking
   // around behind it, so input is muted (the clock keeps running).
+  // Nor during a cutscene: the game turns input off for it, and turning
+  // it back on here after a pause handed the camera back mid-scene.
   useEffect(() => {
     if (phase !== "playing") return;
-    instanceRef.current?.input?.setEnabled(!dialog && !paused);
-  }, [dialog, paused, phase]);
+    instanceRef.current?.input?.setEnabled(!dialog && !paused && !hud.cutscene);
+  }, [dialog, paused, phase, hud.cutscene]);
 
   // Pause automatically if the tab is hidden or the window loses focus,
   // so a timed mission can't run down while the player is elsewhere.
@@ -519,9 +556,22 @@ export default function GameShell({
     function onHidden() {
       if (document.hidden && phase === "playing") setPaused(true);
     }
+    // Switching to another window with this one still visible.
+    function onBlur() {
+      if (phase === "playing") setPaused(true);
+    }
     document.addEventListener("visibilitychange", onHidden);
-    return () => document.removeEventListener("visibilitychange", onHidden);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("blur", onBlur);
+    };
   }, [phase]);
+
+  // The rotate-your-phone prompt covers the game, so the game waits.
+  useEffect(() => {
+    if (portraitBlock && phase === "playing") setPaused(true);
+  }, [portraitBlock, phase]);
 
   /* --------------------------- finishing a run --------------------------- */
 
@@ -568,12 +618,17 @@ export default function GameShell({
     }
     setSubmitState("saving");
     setSubmitMessage("");
+    // The run this save belongs to. On slow Wi-Fi, PLAY AGAIN can start
+    // the next run before this answers; the answer must not then land
+    // on the next run's results (or play its jingle mid-mission).
+    const runId = runIdRef.current;
+    const stale = () => runIdRef.current !== runId;
     try {
       const outcome = await submitRun(identity.id, {
-        runId: runIdRef.current,
+        runId,
         playerName: identity.name || "Player",
         gameId: game.id,
-        difficulty: difficultyId,
+        difficulty: effectiveDifficultyId,
         score: enriched.score,
         completed: !!enriched.completed,
         accuracy: enriched.accuracy || 0,
@@ -582,6 +637,7 @@ export default function GameShell({
         stats: enriched.stats || {},
       });
 
+      if (stale()) return;
       if (!outcome.ok) {
         setSubmitState("error");
         setSubmitMessage(outcome.message || "");
@@ -596,15 +652,17 @@ export default function GameShell({
 
       // One extra read to show the player where they now stand.
       const profiles = await fetchAllProfiles();
+      if (stale()) return;
       const board = buildLeaderboard({ profiles, period: "alltime", gameId: game.id });
       const mine = board.find((r) => r.playerId === identity.id);
       setRank(mine ? mine.rank : null);
     } catch (e) {
       console.error("[arena] submit failed", e);
+      if (stale()) return;
       setSubmitState("error");
       setSubmitMessage("Unexpected error while saving. See the browser console for detail.");
     }
-  }, [difficultyId, game.id, identity]);
+  }, [effectiveDifficultyId, game.id, identity]);
 
   /* ------------------------------ render ------------------------------ */
 
@@ -618,9 +676,9 @@ export default function GameShell({
   // away until it is over.
   const cutscene = hud.cutscene || null;
   const layers = hudLayersFor({ cutscene });
-  const buttonPosition = buttonPositionFor(settings, config);
+  const buttonPosition = buttonPositionFor(settings, config || fetchedConfig);
   const interactive = phase === "playing" && !paused && !dialog && !portraitBlock && !cutscene;
-  const showMobileControls = mobile && interactive;
+  const showMobileControls = (mobile || touchUi) && interactive;
 
   /* ---- what the cab is driven with ----
    *
@@ -643,7 +701,7 @@ export default function GameShell({
   // play area on touch devices in all of them. On desktop the engine's
   // own mouse handling does the job, so the pad is not rendered there
   // (rendering both would double the look speed).
-  const needsTouchLook = mobile && interactive;
+  const needsTouchLook = (mobile || touchUi) && interactive;
   const needsCraneDesk = interactive && controlLayout.desk;
 
   /* With the stick in the cab the hoist has nowhere else to go, so it
@@ -843,7 +901,7 @@ export default function GameShell({
             {/* Action buttons: always on touch, and on desktop for the
                 schemes whose actions have no natural key (crane release,
                 command decisions). */}
-            {interactive && shownButtons.length > 0 && (mobile || scheme === "crane" || scheme === "build" || scheme === "command") && (
+            {interactive && shownButtons.length > 0 && (mobile || touchUi || scheme === "crane" || scheme === "build" || scheme === "command") && (
               <div
                 style={{
                   position: "absolute",
@@ -907,7 +965,7 @@ export default function GameShell({
           ready={!!gameModule}
           embedded={embedded}
           roundLabel={roundLabel}
-          difficultyId={difficultyId}
+          difficultyId={effectiveDifficultyId}
           setDifficultyId={setDifficultyId}
           onStart={startGame}
           onExit={onExit}
@@ -933,6 +991,7 @@ export default function GameShell({
           onResume={() => setPaused(false)}
           onRestart={restart}
           onQuit={() => { teardown(); onExit(); }}
+          embedded={embedded}
           mobile={mobile}
         />
       )}
@@ -963,7 +1022,7 @@ export default function GameShell({
 
       {/* ---------------- portrait prompt ---------------- */}
       {portraitBlock && phase === "playing" && (
-        <RotatePrompt onPlayAnyway={() => setPortraitBlock(false)} />
+        <RotatePrompt onPlayAnyway={() => { portraitOkRef.current = true; setPortraitBlock(false); }} />
       )}
     </div>
   );
@@ -1081,6 +1140,7 @@ function BriefingScreen({
           {ready && tab === "controls" && <ControlsTab game={game} mobile={mobile} />}
           {tab === "difficulty" && (
             <DifficultyTab
+              locked={embedded}
               difficultyId={difficultyId}
               setDifficultyId={setDifficultyId}
               quality={quality}
@@ -1249,10 +1309,15 @@ function ControlsTab({ game, mobile }) {
   );
 }
 
-function DifficultyTab({ difficultyId, setDifficultyId, quality, settings, updateSettings, mobile, buttonPosition }) {
+function DifficultyTab({ difficultyId, setDifficultyId, quality, settings, updateSettings, mobile, buttonPosition, locked = false }) {
   return (
     <div>
-      <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
+      {locked && (
+        <p style={{ color: C.muted, fontSize: 12.5, lineHeight: 1.5, margin: "0 0 14px" }}>
+          Event missions are played at <b style={{ color: C.ink }}>Site Officer</b> difficulty — the same for everybody.
+        </p>
+      )}
+      <div style={{ display: locked ? "none" : "grid", gap: 8, marginBottom: 18 }}>
         {DIFFICULTIES.map((d) => {
           const active = d.id === difficultyId;
           return (
@@ -1504,10 +1569,18 @@ function LoadingScreen({ game, difficulty }) {
 
 /* ============================= pause menu ============================= */
 
-function PauseMenu({
+export function PauseMenu({
   game, settings, updateSettings, quality, showSettings, setShowSettings,
-  onResume, onRestart, onQuit, mobile, buttonPosition,
+  onResume, onRestart, onQuit, mobile, buttonPosition, embedded = false,
 }) {
+  // In an event, leaving a mission scores it 0 and it cannot be played
+  // again, so — like Skip on the briefing — it takes a second tap. One
+  // tap on Back opens this menu by reflex; one more must not lose a round.
+  const [quitArmed, setQuitArmed] = useState(false);
+  const quit = () => {
+    if (embedded && !quitArmed) { setQuitArmed(true); return; }
+    onQuit();
+  };
   return (
     <Overlay onBackdrop={onResume}>
       <div style={{ ...panelStyle, width: "min(100%, 520px)", padding: mobile ? 16 : 22, animation: "cslArenaRise .25s ease-out" }}>
@@ -1545,11 +1618,13 @@ function PauseMenu({
             <ArenaButton onClick={onRestart} color={C.orange} variant="outline" icon={<RotateCcw size={16} />} full>
               Restart mission
             </ArenaButton>
-            <ArenaButton onClick={onQuit} color={C.red} variant="outline" icon={<LogOut size={16} />} full>
-              Quit to Gaming Arena
+            <ArenaButton onClick={quit} color={C.red} variant={quitArmed ? "solid" : "outline"} icon={<LogOut size={16} />} full>
+              {!embedded ? "Quit to Gaming Arena" : quitArmed ? "Tap again: leave it — it scores 0" : "Leave this mission"}
             </ArenaButton>
             <p style={{ fontSize: 11, color: C.muted, textAlign: "center", margin: "6px 0 0" }}>
-              Quitting abandons this run — nothing is saved to the leaderboard.
+              {embedded
+                ? "Leaving a mission scores it 0, and it cannot be played again."
+                : "Quitting abandons this run — nothing is saved to the leaderboard."}
             </p>
           </div>
         ) : (

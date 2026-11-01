@@ -25,6 +25,7 @@ export default function TouchLook({ input, sensitivity = 1, children, showHint =
   // Every live finger on the pad, so a second one can start a pinch.
   const pointsRef = useRef(new Map());
   const pinchRef = useRef(null);
+  const pinchedRef = useRef(false);
   const [hintVisible, setHintVisible] = useState(showHint);
 
   const release = useCallback(() => {
@@ -43,6 +44,9 @@ export default function TouchLook({ input, sensitivity = 1, children, showHint =
     // Second finger down: switch from looking to pinch-zooming.
     if (pointsRef.current.size === 2) {
       pinchRef.current = spread();
+      // Remembered until every finger is up: whichever lifts last, a
+      // gesture that pinched is never a tap on the world.
+      pinchedRef.current = true;
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       e.preventDefault();
       return;
@@ -84,14 +88,22 @@ export default function TouchLook({ input, sensitivity = 1, children, showHint =
     lastRef.current = { x: e.clientX, y: e.clientY };
     movedRef.current += Math.abs(dx) + Math.abs(dy);
     // Touch look wants to feel a little quicker than a mouse, because the
-    // physical travel available on a screen is much smaller.
-    input?.addLook(dx * 1.55 * sensitivity, dy * 1.55 * sensitivity);
+    // physical travel available on a screen is much smaller. The look
+    // sensitivity setting is applied once, by the input (setSensitivity):
+    // applying it here too squared it.
+    input?.addLook(dx * 1.55, dy * 1.55);
     e.preventDefault();
   }
 
   function onPointerUp(e) {
     pointsRef.current.delete(e.pointerId);
-    if (pointsRef.current.size < 2) pinchRef.current = null;
+    if (pointsRef.current.size < 2 && pinchRef.current !== null) {
+      pinchRef.current = null;
+      // The finger left behind carries on looking from where it is now,
+      // not from where it was before the pinch (the view jumped).
+      const left = pointsRef.current.get(pointerIdRef.current);
+      if (left) lastRef.current = { x: left.x, y: left.y };
+    }
 
     if (pointerIdRef.current !== e.pointerId) {
       try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
@@ -101,9 +113,10 @@ export default function TouchLook({ input, sensitivity = 1, children, showHint =
     // A finger that barely moved is a tap on the world, not a camera
     // drag — that is how the build game places components on a phone.
     // A finger that was part of a pinch is never a tap.
-    if (movedRef.current < 14 && pinchRef.current === null && pointsRef.current.size === 0) {
+    if (movedRef.current < 14 && !pinchedRef.current && pointsRef.current.size === 0) {
       input?.registerTap?.(e.clientX, e.clientY);
     }
+    if (pointsRef.current.size === 0) pinchedRef.current = false;
     release();
     e.preventDefault();
   }

@@ -179,7 +179,10 @@ export function HudTopBar({
           type="button"
           aria-label={fullscreen ? "Leave full screen" : "Full screen"}
           title={fullscreen ? "Leave full screen" : "Full screen"}
-          onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); onFullscreen(); }}
+          // Full screen is asked for on the tap's release: Chrome on
+          // Android does not count a press as a gesture and refused it.
+          onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+          onClick={(e) => { e.stopPropagation(); onFullscreen(); }}
           style={{
             pointerEvents: "auto",
             width: mobile ? 38 : 42,

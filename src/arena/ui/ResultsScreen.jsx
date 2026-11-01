@@ -196,7 +196,7 @@ export default function ResultsScreen({
             marginBottom: 14, minHeight: 18, lineHeight: 1.5,
           }}
         >
-          {submitState === "session" && (<><CheckCircle2 size={12} color={C.green} /> Added to your session score. Next: the safety quiz.</>)}
+          {submitState === "session" && (<><CheckCircle2 size={12} color={C.green} /> Press CONTINUE to bank this score. Next: the safety quiz.</>)}
           {submitState === "saving" && (<><Loader2 size={12} style={{ animation: "cslArenaSpin 1s linear infinite" }} /> Saving your score to the leaderboard…</>)}
           {submitState === "saved" && (<><CheckCircle2 size={12} color={C.green} /> Score saved to the Arena leaderboard.</>)}
           {submitState === "duplicate" && (<><CheckCircle2 size={12} color={C.green} /> This run was already saved — no double points awarded.</>)}
