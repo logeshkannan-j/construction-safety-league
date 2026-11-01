@@ -1,19 +1,22 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  HardHat, Play, Clock, CheckCircle2, XCircle, Trophy, Gem, Target,
+  HardHat, Clock, CheckCircle2, XCircle, Trophy, Gem, Target,
   ChevronRight, Percent, Users, Phone, Ban, Gamepad2, ListChecks,
-  Award, Crown, Loader2, AlertTriangle, SkipForward, Zap, Languages,
+  Award, Crown, Loader2, Zap, Languages,
 } from "lucide-react";
-import { COLORS, inputStyle, btnStyle, linkBtnStyle } from "./theme.js";
+import { COLORS, btnStyle, linkBtnStyle } from "./theme.js";
+import { HazardQuestion, HazardReveal } from "./HazardRound.jsx";
 import { getLang, setLang, otherLang, LANGS, onLangChange, t, tOptions } from "./arena/language.js";
 
 const MissionDemo = lazy(() => import("./MissionDemo.jsx"));
 
 /** "7m 12s" — playing time, for the speed bonus line. */
 function formatPlayTime(ms) {
-  const total = Math.max(0, Math.round(Number(ms) || 0) / 1000);
+  // Whole seconds first, then split: rounding the two parts separately
+  // could show "1m 60s".
+  const total = Math.max(0, Math.round((Number(ms) || 0) / 1000));
   const m = Math.floor(total / 60);
-  const sec = Math.round(total % 60);
+  const sec = total % 60;
   return m ? `${m}m ${sec}s` : `${sec}s`;
 }
 import {
@@ -21,8 +24,9 @@ import {
   ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS,
   ITEM_GAME3D, ITEM_MILLIONAIRE,
   createRun, isRunValid, currentItem, answerItem, advanceRun, releaseRun,
-  completeItemGame, skipItemGame, runRoundIndex, planRoundCount, planSummary,
+  completeItemGame, skipItemGame, runRoundIndex, planSummary,
   runTotals, runSummary, runProgress, itemRemainingMs, runPlayingMs,
+  isHazardItem, answerHazard, settleRun, waitingRounds, compareStanding, HAZARD_SECONDS,
 } from "./session.js";
 
 // The 3D game runs inside the Arena's own shell, loaded on demand so a
@@ -85,7 +89,9 @@ export default function SoloSession({
         game3d: totals.game3d, quiz: totals.quiz,
         millionaire: totals.millionaire, speed: totals.speed,
       },
-      score: totals.total,
+      // The host's correction, if any (admin panel), rides on top of the
+      // run's own totals — recomputing from the run alone undid it.
+      score: totals.total + (Number(me.scoreAdjust) || 0),
       // Time actually spent playing, for the leaderboard tie-break.
       // Two people on the same score are separated by who got there
       // first, which is the point of releasing rounds together.
@@ -103,6 +109,7 @@ export default function SoloSession({
   const index = session?.roundIndex ?? runRoundIndex(plan, session);
   const itemIndex = session?.itemIndex ?? 0;
   const question = item && item.round !== ITEM_GAME3D ? item : null;
+  const isPicture = isHazardItem(question);
   const answered = session?.answers?.[itemIndex];
   const remainingMs = itemRemainingMs(plan, session, now);
   // Where this question sits within its own round, for the header.
@@ -124,14 +131,39 @@ export default function SoloSession({
 
   // Running out of time records a zero-score answer rather than leaving
   // the participant stuck on a dead question.
+  // A picture round hands in whatever is matched; the question on screen
+  // does that itself when its time runs out (HazardRound.jsx), and this
+  // only marks it if nothing was on screen to do so (a refresh after the
+  // time ran out). One hand-in per row either way.
+  const submitPicture = useCallback((matches) => {
+    if (!isPicture || answered !== undefined) return;
+    const key = String(itemIndex);
+    if (timedOutRef.current.has(key)) return;
+    timedOutRef.current.add(key);
+    const step = answerHazard(plan, session, { matches, now: Date.now() + serverOffset });
+    if (!step.changed) return;
+    persist(step.run);
+    setReveal({ ...step.result, question });
+  }, [answered, isPicture, itemIndex, persist, plan, question, serverOffset, session]);
+
   useEffect(() => {
     if (!question || answered !== undefined) return;
     if (remainingMs > 0) return;
+    if (isPicture) { submitPicture({}); return; }
     const key = String(itemIndex);
     if (timedOutRef.current.has(key)) return;
     timedOutRef.current.add(key);
     submit(-1);
-  }, [answered, itemIndex, question, remainingMs, submit]);
+  }, [answered, isPicture, itemIndex, question, remainingMs, submit, submitPicture]);
+
+  // Somebody standing where nothing can be played — past the end of the
+  // plan, or on a row this build cannot show — is moved on, not left on
+  // "Preparing the next question…" for good.
+  useEffect(() => {
+    if (!valid) return;
+    const step = settleRun(plan, session, { now: Date.now() + serverOffset });
+    if (step.changed) persist(step.run);
+  }, [persist, plan, serverOffset, session, valid]);
 
   const next = useCallback(() => {
     setReveal(null);
@@ -174,7 +206,10 @@ export default function SoloSession({
   /* ---------------------------- lifelines ---------------------------- */
 
   const lifelines = me.lifelines || { fifty: false, audience: false, phone: false };
-  const eliminated = (me.lifelineData || {})[`mq${index}`]?.fiftyEliminated || [];
+  // Kept per plan row: kept per round, a 50:50 used on one finale struck
+  // the same two slots out of the next finale in that round.
+  const eliminated = ((me.lifelineData || {})[`item${itemIndex}`]
+    ?? (me.lifelineData || {})[`mq${index}`])?.fiftyEliminated || [];
 
   const useLifeline = useCallback((type) => {
     if (!question || lifelines[type]) return;
@@ -186,12 +221,12 @@ export default function SoloSession({
         .filter((i) => i !== question.correct)
         .sort(() => Math.random() - 0.5)
         .slice(0, 2);
-      nextData[`mq${index}`] = { fiftyEliminated: wrong };
+      nextData[`item${itemIndex}`] = { fiftyEliminated: wrong };
     }
     if (type === "audience") setLifelineView((v) => ({ ...v, audience: true }));
     if (type === "phone") setLifelineView((v) => ({ ...v, hint: true }));
     persist(session, { lifelines: nextLifelines, lifelineData: nextData });
-  }, [index, lifelines, me.lifelineData, persist, question, session]);
+  }, [itemIndex, lifelines, me.lifelineData, persist, question, session]);
 
   // "Ask the room" reads what other participants picked on this exact
   // question, wherever they are in their own session.
@@ -217,6 +252,17 @@ export default function SoloSession({
   }, [itemIndex, lifelineView.audience, me.id, plan, players, question]);
 
   /* ------------------------------ stages ------------------------------ */
+
+  // The plan has not arrived (still loading, or a read that failed and
+  // came back empty). Wait for it: the button below would deal a new
+  // run — score 0, Round 1 — against nothing.
+  if (!valid && (!Array.isArray(plan) || plan.length === 0)) {
+    return (
+      <Centered>
+        <p style={{ color: COLORS.muted }}>Loading the event…</p>
+      </Centered>
+    );
+  }
 
   // A player record from before this build, or a corrupted session.
   if (!valid) {
@@ -248,7 +294,7 @@ export default function SoloSession({
   }
 
   if (waiting) {
-    const nextRoundIndex = stage === STAGES.ROUND_DONE ? index + 1 : index;
+    const { justFinished, next: nextRoundIndex } = waitingRounds(plan, session);
     return (
       <RoundWaiting
         me={me}
@@ -258,7 +304,7 @@ export default function SoloSession({
         roundIndex={Math.min(nextRoundIndex, roundCount - 1)}
         plan={plan}
         roundCount={roundCount}
-        justFinishedRound={stage === STAGES.ROUND_DONE ? index : null}
+        justFinishedRound={justFinished}
         onExit={onExit}
       />
     );
@@ -313,13 +359,42 @@ export default function SoloSession({
             <p style={{ color: COLORS.muted, textAlign: "center" }}>Preparing the next question…</p>
           )}
 
-          {question && !showReveal && (
+          {question && isPicture && !showReveal && (
+            <HazardQuestion
+              key={itemIndex}
+              question={question}
+              remainingSeconds={remainingSeconds}
+              totalSeconds={HAZARD_SECONDS}
+              onSubmit={submitPicture}
+            />
+          )}
+
+          {question && isPicture && showReveal && revealData && (
+            <HazardReveal
+              question={question}
+              result={revealData}
+              onNext={next}
+              nextLabel={itemIndex >= plan.length - 1 ? "SEE MY RESULT" : "NEXT"}
+            />
+          )}
+
+          {question && !isPicture && !showReveal && (
             <>
+              {/* The host's own questions can carry a picture or a video
+                  link (admin panel); they were stored and never shown. */}
+              {question.imageData && (
+                <img src={question.imageData} alt="" style={{ display: "block", width: "100%", maxHeight: 220, objectFit: "contain", borderRadius: 10, marginBottom: 12, background: COLORS.surface }} />
+              )}
+              {question.videoUrl && /^https?:\/\//i.test(question.videoUrl) && (
+                <a href={question.videoUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", color: COLORS.yellow, fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
+                  Watch the video for this question ↗
+                </a>
+              )}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 10 }}>
                 <span style={{ fontSize: 12, color: isFinale ? COLORS.purple : COLORS.muted, fontWeight: 800, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                   {isFinale ? <Gem size={14} /> : <Target size={14} />}
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {isFinale ? question.tier : question.topic}
+                    {isFinale ? question.tier : (question.topic || question.category)}
                   </span>
                 </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 900, fontSize: 15, color: remainingSeconds <= 5 ? COLORS.red : COLORS.yellow, flexShrink: 0 }}>
@@ -425,7 +500,7 @@ export default function SoloSession({
             </>
           )}
 
-          {question && showReveal && revealData && (
+          {question && !isPicture && showReveal && revealData && (
             <QuestionReveal
               question={question}
               result={revealData}
@@ -637,14 +712,31 @@ function RoundWaiting({ me, game, connected, session, plan = [], roundCount = 1,
 
 function EmbeddedGame({ gameId, roundNumber, me, onComplete, onSkip }) {
   const [arenaGame, setArenaGame] = useState(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     import("./arena/arenaConstants.js")
       .then((mod) => { if (!cancelled) setArenaGame(mod.getGame(gameId) || mod.GAMES[0]); })
-      .catch(() => { if (!cancelled) setArenaGame(null); });
+      .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
   }, [gameId]);
+
+  // Usually the site was updated while this page was open, so its files
+  // have new names; reloading picks them up, and the session resumes
+  // exactly where it was.
+  if (failed) {
+    return (
+      <Centered>
+        <Panel title="The 3D mission did not load" icon={<Gamepad2 size={18} color={COLORS.orange} />}>
+          <p style={{ color: COLORS.muted, fontSize: 13, lineHeight: 1.6, marginBottom: 12 }}>
+            Reload the page — your place and your score are kept.
+          </p>
+          <button style={btnStyle(COLORS.yellow)} onClick={() => window.location.reload()}>Reload</button>
+        </Panel>
+      </Centered>
+    );
+  }
 
   if (!arenaGame) {
     return (
@@ -720,10 +812,7 @@ function QuestionReveal({ question, result, lang, isFinale, onNext, isLast, ends
 
 function SessionResult({ me, plan = [], players, onExit, closedByHost = false }) {
   const summary = runSummary(plan, me.session);
-  const sorted = useMemo(
-    () => [...(players || [])].sort((a, b) => (b.score || 0) - (a.score || 0)),
-    [players]
-  );
+  const sorted = useMemo(() => [...(players || [])].sort(compareStanding), [players]);
   const rank = sorted.findIndex((p) => p.id === me.id) + 1;
   const { totals } = summary;
 

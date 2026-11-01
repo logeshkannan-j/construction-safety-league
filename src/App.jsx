@@ -35,13 +35,14 @@ const MissionDemo = lazy(() => import("./MissionDemo.jsx"));
  * ------------------------------------------------------------------ */
 
 import { GAME_KEY, Q_KEY, PLAYER_PREFIX, MY_ID_KEY, POLL_MS } from "./constants";
-import { safeGet, safeSet, safeDelete, safeList, getServerTimeOffset, getDbError } from "./storage";
+import { safeGet, safeSet, safeDelete, safeList, safeGetPlayers, watchConnected, getServerTimeOffset, getDbError } from "./storage";
 import {
   buildEventPlan, renumberPlan, planSummary, createRun, clampQuizPerRound,
   ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS, NOT_RELEASED,
   QUIZ_PER_ROUND, QUIZ_PER_ROUND_OPTIONS, MQ_PER_ROUND,
   ITEM_GAME3D, ITEM_QUIZ, ITEM_MILLIONAIRE,
   STAGES, runProgress, runSummary, runPlayingMs, planRoundCount,
+  compareStanding, waitingRounds, runRoundIndex,
 } from "./session.js";
 import {
   LANGUAGES, MISSION_BRIEFS, emptyMissionVideos, missionBrief,
@@ -51,6 +52,7 @@ import {
 // integrated session screens can reuse them verbatim. Same values.
 import { COLORS, inputStyle, btnStyle, linkBtnStyle } from "./theme.js";
 import { useTvSpotlight, SpotlightStage, TvSpotlightPanel } from "./TvSpotlight.jsx";
+import { HazardImage } from "./HazardRound.jsx";
 
 
 // Local (per-browser, NOT synced to Firebase) flag that remembers this
@@ -426,7 +428,12 @@ function shuffleQuestionOptions(q) {
   const order = shuffleArray(q.options.map((_, i) => i));
   const options = order.map((i) => q.options[i]);
   const correct = order.indexOf(q.correct);
-  return { ...q, options, correct };
+  // The Tamil options are parallel to the English: they move together,
+  // or the Tamil answer would be on a different button.
+  const ta = q.ta?.options?.length === q.options.length
+    ? { ...q.ta, options: order.map((i) => q.ta.options[i]) }
+    : q.ta;
+  return { ...q, options, correct, ...(ta ? { ta } : {}) };
 }
 
 function enforceFixedGameTimer(question) {
@@ -524,14 +531,8 @@ function computeTeamScores(players, teams, mode) {
  * A missing or zero `playingMs` means they have not finished a round
  * yet, so it loses the tie-break rather than winning it.
  */
-function byScoreThenSpeed(a, b) {
-  const byScore = (b.score || 0) - (a.score || 0);
-  if (byScore) return byScore;
-  const at = Number(a.playingMs) || Infinity;
-  const bt = Number(b.playingMs) || Infinity;
-  if (at !== bt) return at - bt;
-  return String(a.name || "").localeCompare(String(b.name || ""));
-}
+// The one order every standings list uses (session.js).
+const byScoreThenSpeed = compareStanding;
 
 /* ============================== APP =============================== */
 
@@ -640,17 +641,46 @@ function useGamePoll() {
   const [dbError, setDbError] = useState(null);
   const mounted = useRef(true);
 
+  // One read at a time. Offline, a read does not fail — it waits for the
+  // connection — so without this a new one was started every 1.4 s and
+  // they all fired at once on reconnect. A refresh asked for while one is
+  // running (after an admin action) runs straight after it.
+  const inFlight = useRef(false);
+  const again = useRef(false);
   const refresh = useCallback(async () => {
-    const g = await safeGet(GAME_KEY, true);
-    const q = await safeGet(Q_KEY, true);
-    const keys = await safeList(PLAYER_PREFIX, true);
-    const vals = await Promise.all((keys || []).map((k) => safeGet(k, true)));
-    if (!mounted.current) return;
-    setDbError(getDbError());
-    setConnected(true);
-    if (g) { try { setGame(JSON.parse(g)); } catch {} } else { setGame(null); }
-    if (q) { try { setQuestions(JSON.parse(q)); } catch {} } else { setQuestions([]); }
-    setPlayers(vals.filter(Boolean).map((v) => { try { return JSON.parse(v); } catch { return null; } }).filter(Boolean));
+    if (inFlight.current) { again.current = true; return; }
+    inFlight.current = true;
+    try {
+      // Each read is checked as it lands: a failed read returns null,
+      // exactly like a missing record, and must not be taken for one —
+      // an empty plan on the phones used to offer a reset button.
+      const g = await safeGet(GAME_KEY, true);
+      const gameFailed = getDbError();
+      const q = await safeGet(Q_KEY, true);
+      const planFailed = getDbError();
+      const vals = await safeGetPlayers();
+      const playersFailed = getDbError();
+      if (!mounted.current) return;
+      setDbError(gameFailed || planFailed || playersFailed);
+      if (!gameFailed) {
+        if (g) { try { setGame(JSON.parse(g)); } catch {} } else { setGame(null); }
+      }
+      if (!planFailed) {
+        if (q) { try { setQuestions(JSON.parse(q)); } catch {} } else { setQuestions([]); }
+      }
+      if (!playersFailed && vals) {
+        setPlayers(vals.filter(Boolean).map((v) => {
+          if (typeof v !== "string") return v && typeof v === "object" ? v : null;
+          try { return JSON.parse(v); } catch { return null; }
+        }).filter(Boolean));
+      }
+    } finally {
+      inFlight.current = false;
+      if (again.current && mounted.current) {
+        again.current = false;
+        refresh();
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -659,6 +689,9 @@ function useGamePoll() {
     const id = setInterval(refresh, POLL_MS);
     return () => { mounted.current = false; clearInterval(id); };
   }, [refresh]);
+
+  // "Live" or "Reconnecting…", from the database's own view of the link.
+  useEffect(() => watchConnected(setConnected), []);
 
   return { game, setGame, questions, setQuestions, players, connected, dbError, refresh };
 }
@@ -723,44 +756,7 @@ function ConnBadge({ connected }) {
 
 // Renders the hazard scene (inline SVG or an uploaded photo) with optional
 // markers overlaid, and reports normalized (0-100) tap coordinates.
-function HazardImage({ question, markers = [], onTap, aspectRatio = "4 / 3", maxWidth = 480 }) {
-  const ref = useRef(null);
-  function handleClick(e) {
-    if (!onTap || !ref.current) return;
-    const rect = ref.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    onTap(Math.max(0, Math.min(100, x)), Math.max(0, Math.min(100, y)));
-  }
-  return (
-    <div
-      ref={ref}
-      onClick={handleClick}
-      style={{
-        position: "relative", width: "100%", maxWidth, aspectRatio, margin: "0 auto",
-        borderRadius: 10, overflow: "hidden", background: "#0000", cursor: onTap ? "crosshair" : "default",
-        border: `1px solid ${COLORS.line}`,
-      }}
-    >
-      {question.imageType === "raster" && question.imageData && (
-        <img src={question.imageData} alt="Site scene" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none" }} />
-      )}
-      {question.imageType !== "raster" && question.imageSvg && (
-        <div style={{ width: "100%", height: "100%" }} dangerouslySetInnerHTML={{ __html: question.imageSvg }} />
-      )}
-      {markers.map((m) => (
-        <div key={m.key || m.id} style={{
-          position: "absolute", left: `${m.xPct}%`, top: `${m.yPct}%`, transform: "translate(-50%, -50%)",
-          width: m.size || 26, height: m.size || 26, borderRadius: "50%",
-          background: m.color, border: "2px solid #fff", display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: "0 1px 4px rgba(0,0,0,.4)", pointerEvents: "none", fontSize: 12, fontWeight: 800, color: "#14171A",
-        }}>
-          {m.label}
-        </div>
-      ))}
-    </div>
-  );
-}
+// HazardImage now lives in HazardRound.jsx, shared with the session screen.
 
 function hazardDistancePct(ax, ay, bx, by) {
   return Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2);
@@ -790,6 +786,13 @@ function AdminView({ onExit }) {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ name: "", team: "", score: 0 });
   const [kickConfirmId, setKickConfirmId] = useState(null);
+  // Reset removes every participant, so like Kick it takes two taps.
+  const [resetArmed, setResetArmed] = useState(false);
+  useEffect(() => {
+    if (!resetArmed) return undefined;
+    const id = setTimeout(() => setResetArmed(false), 5000);
+    return () => clearTimeout(id);
+  }, [resetArmed]);
   // Lets the host PLAY any mission from the panel to check it before an
   // event. Must live above the early returns below — see soloStats.
   const [previewGameId, setPreviewGameId] = useState(null);
@@ -857,11 +860,17 @@ function AdminView({ onExit }) {
   const soloStats = useMemo(() => {
     const stageOf = (p) => p?.session?.stage || null;
     const scores = players.map((p) => p.score || 0);
+    const released = Number.isFinite(game?.releasedRound) ? game.releasedRound : NOT_RELEASED;
     // How many have finished everything the host has released so far —
     // this is what tells the host it is safe to release the next round.
+    // Waiting is only "caught up" when what they wait for is the round
+    // NOT yet released: straight after a release, everybody is still
+    // waiting to step into it, and that is not finishing it.
     const waiting = players.filter((p) => {
       const stage = stageOf(p);
-      return stage === "roundDone" || stage === "locked" || stage === "done";
+      if (stage === "done") return true;
+      if (stage !== "roundDone" && stage !== "locked") return false;
+      return waitingRounds(questions, p.session).next > released;
     }).length;
     return {
       finished: players.filter((p) => stageOf(p) === "done").length,
@@ -872,7 +881,7 @@ function AdminView({ onExit }) {
       allCaughtUp: players.length > 0 && waiting === players.length,
       avgScore: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0,
     };
-  }, [players]);
+  }, [players, questions, game?.releasedRound]);
 
   // Previewing a mission replaces the panel, so the host sees exactly
   // what a participant sees. Nothing is scored or submitted.
@@ -923,25 +932,29 @@ function AdminView({ onExit }) {
     );
   }
 
-  async function createGame() {
+  async function createGame(keep = null) {
     setBusy(true);
     // clear old players
     const keys = await safeList(PLAYER_PREFIX, true);
     await Promise.all((keys || []).map((k) => safeDelete(k, true)));
-    const g = defaultGame();
+    const g = { ...defaultGame(), ...(keep || {}) };
     await safeSet(GAME_KEY, JSON.stringify(g), true);
     // ONE plan for the whole event: the 3D missions and the questions
     // in a single ordered list that the admin can see and reorder.
-    const plan = buildEventPlan({ quizPerRound: QUIZ_PER_ROUND });
+    const plan = buildEventPlan({ quizPerRound: clampQuizPerRound(g.quizPerRound ?? QUIZ_PER_ROUND) });
     await safeSet(Q_KEY, JSON.stringify(plan), true);
     await refresh();
     setBusy(false);
   }
 
   async function patchGame(patch) {
-    const base = game || defaultGame();
-    const next = { ...base, ...patch };
-    await safeSet(GAME_KEY, JSON.stringify(next), true);
+    // Built on the record as it is in the database NOW, not as it was at
+    // the last poll: two actions close together (Release, then Show the
+    // demo) otherwise put the first one back.
+    let base = game || defaultGame();
+    const latest = await safeGet(GAME_KEY, true);
+    if (latest) { try { base = JSON.parse(latest); } catch { /* keep the poll's copy */ } }
+    await safeSet(GAME_KEY, JSON.stringify({ ...base, ...patch }), true);
     await refresh();
   }
 
@@ -982,26 +995,49 @@ function AdminView({ onExit }) {
   async function showLeaderboard() { await patchGame({ status: "leaderboard" }); }
   async function backToLobby() { await patchGame({ status: "lobby" }); }
   async function endGame() { await patchGame({ status: "ended" }); }
-  async function resetGame() { await createGame(); }
+  // A new game for the same event: every participant goes, the host's
+  // own settings (videos, media, teams, round shape) stay.
+  async function resetGame() {
+    if (!resetArmed) { setResetArmed(true); return; }
+    setResetArmed(false);
+    const keep = {};
+    ["missionVideos", "leaderboardMediaUrl", "leaderboardTop1MediaUrl", "leaderboardTop2MediaUrl",
+      "leaderboardTop3MediaUrl", "leaderboardBottom1MediaUrl", "leaderboardBottom2MediaUrl",
+      "teamModeEnabled", "teams", "teamScoringMode", "quizPerRound", "gameName"]
+      .forEach((k) => { if (game && game[k] !== undefined) keep[k] = game[k]; });
+    await createGame(keep);
+  }
 
   // ---- player management: edit / kick ----
   function startEditPlayer(p) {
     setKickConfirmId(null);
     setEditingId(p.id);
-    setEditForm({ name: p.name || "", team: p.team || "", score: p.score ?? 0 });
+    setEditForm({ name: p.name || "", team: p.team || "", score: p.score ?? 0, openedAt: p.score ?? 0 });
   }
   function cancelEditPlayer() {
     setEditingId(null);
   }
   async function saveEditPlayer(id) {
-    const orig = players.find((p) => p.id === id);
+    // The record as it is now: the participant may have answered since
+    // the editor opened, and writing the old copy back undid that.
+    let orig = players.find((p) => p.id === id);
+    const latest = await safeGet(PLAYER_PREFIX + id, true);
+    if (latest) { try { orig = JSON.parse(latest); } catch { /* keep the poll's copy */ } }
     if (!orig) { setEditingId(null); return; }
     const updated = {
       ...orig,
       name: editForm.name.trim() || orig.name,
       team: editForm.team || null,
-      score: Number.isFinite(Number(editForm.score)) ? Number(editForm.score) : (orig.score || 0),
     };
+    // Only a score the host actually changed is touched, and it is kept
+    // as an adjustment the session adds to its own totals — the
+    // participant's next answer used to recompute the score and undo it.
+    const wanted = Number(editForm.score);
+    const delta = Number.isFinite(wanted) ? wanted - (Number(editForm.openedAt) || 0) : 0;
+    if (delta) {
+      updated.scoreAdjust = (Number(orig.scoreAdjust) || 0) + delta;
+      updated.score = Math.max(0, (Number(orig.score) || 0) + delta);
+    }
     await safeSet(PLAYER_PREFIX + id, JSON.stringify(updated), true);
     setEditingId(null);
     await refresh();
@@ -1044,7 +1080,7 @@ function AdminView({ onExit }) {
   }
 
   async function addHazardRoundToGame() {
-    if (!hz.image || hz.hazards.length < 1) return;
+    if (planLocked || !hz.image || hz.hazards.length < 1) return;
     const newQuestion = {
       round: "hazard", category: hz.category.trim() || "Spot the Hazard", difficulty: "Custom",
       question: hz.question.trim() || "MATCH THE HAZARDS IN THE PICTURE",
@@ -1054,14 +1090,17 @@ function AdminView({ onExit }) {
     const current = questionsRef || [];
     const millionaireIndex = current.findIndex((question) => question.round === "millionaire");
     const insertAt = millionaireIndex === -1 ? current.length : millionaireIndex;
-    const next = [...current.slice(0, insertAt), newQuestion, ...current.slice(insertAt)];
-    await safeSet(Q_KEY, JSON.stringify(normalizeQuestionSet(next)), true);
+    // Only the new row is touched: re-normalising the whole plan
+    // reshuffled the options of every question already in it.
+    const next = [...current.slice(0, insertAt), { ...newQuestion, custom: true }, ...current.slice(insertAt)];
+    await safeSet(Q_KEY, JSON.stringify(next), true);
     await refresh();
     setHz({ category: "Spot the Hazard", question: "", explanation: "", image: null, hazards: [], draftName: "", draftDesc: "", pendingPoint: null, placing: false });
   }
 
   // ---- Add one of the built-in Spot the Hazard scenes ----
   async function addBuiltInHazardRound() {
+    if (planLocked) return;
     const current = questionsRef || [];
     const round = pickBuiltInHazardRound(current);
     const millionaireIndex = current.findIndex((question) => question.round === "millionaire");
@@ -1073,21 +1112,25 @@ function AdminView({ onExit }) {
 
   // ---- Custom question builder (quiz / true-false) ----
   async function addCustomQuestion(q) {
+    if (planLocked) return;
     setAqBusy(true);
-    const shuffled = shuffleQuestionOptions(q);
+    // Only the new row is shuffled and marked as the host's own, so a
+    // reshuffle keeps it; the rows already in the plan are left alone.
+    const shuffled = { ...enforceFixedGameTimer(shuffleQuestionOptions(q)), custom: true };
     const current = questionsRef || [];
     // Insert before the Safety Millionaire finale (if present) so the
     // finale always stays the last round played.
     const millionaireIdx = current.findIndex((x) => x.round === "millionaire");
     const insertAt = millionaireIdx === -1 ? current.length : millionaireIdx;
     const next = [...current.slice(0, insertAt), shuffled, ...current.slice(insertAt)];
-    await safeSet(Q_KEY, JSON.stringify(normalizeQuestionSet(next)), true);
+    await safeSet(Q_KEY, JSON.stringify(next), true);
     await refresh();
     setAqBusy(false);
   }
 
   // ---- Remove a question (any round type, including hazard rounds) ----
   async function removeQuestionAt(idx) {
+    if (planLocked) return;
     const next = (questionsRef || []).filter((_, i) => i !== idx);
     await safeSet(Q_KEY, JSON.stringify(renumberPlan(next)), true);
     await refresh();
@@ -1100,6 +1143,11 @@ function AdminView({ onExit }) {
   // One event, one plan. `questions` IS the plan.
   const plan = planSummary(questions);
   const planRounds = plan.rounds;
+  // Runs keep their answers by row number, so adding, removing or moving
+  // a row under somebody part-way through scrambles their session. Until
+  // anybody has started, the plan is the host's to change.
+  const planLocked = players.some((p) => p.session
+    && ((Number(p.session.itemIndex) || 0) > 0 || (p.session.stage && p.session.stage !== STAGES.LOCKED)));
   const releasedRound = Number.isFinite(game?.releasedRound) ? game.releasedRound : NOT_RELEASED;
   const adminQuizPerRound = clampQuizPerRound(game?.quizPerRound ?? QUIZ_PER_ROUND);
 
@@ -1115,7 +1163,8 @@ function AdminView({ onExit }) {
   // The mission the next round will open with — what the TV should be
   // briefing while the room waits.
   const nextRoundIndex = Math.min(ROUND_COUNT - 1, releasedRound + 1);
-  const nextMissionId = ROUND_GAMES[nextRoundIndex] || ROUND_GAMES[0];
+  const nextMissionId = questions.find((r) => r.round === "game3d" && (r.roundIndex ?? 0) === nextRoundIndex)?.gameId
+    || ROUND_GAMES[nextRoundIndex] || ROUND_GAMES[0];
 
   /** Puts the instruction screen for one mission up on the TV. */
   async function showDemo(gameId) {
@@ -1131,7 +1180,7 @@ function AdminView({ onExit }) {
       {!game && (
         <Panel title="No active game" icon={<Play size={18} color={COLORS.yellow} />}>
           <p style={{ color: COLORS.muted, fontSize: 14, marginBottom: 14 }}>Create a game to generate a join code. Participants get five rounds — a 3D mission, a quiz question and a finale question each — and you release the rounds one at a time.</p>
-          <button disabled={busy} style={btnStyle(COLORS.yellow, "#1A1200")} onClick={createGame}>{busy ? "Creating…" : "Create Game"}</button>
+          <button disabled={busy} style={btnStyle(COLORS.yellow, "#1A1200")} onClick={() => createGame()}>{busy ? "Creating…" : "Create Game"}</button>
         </Panel>
       )}
 
@@ -1193,9 +1242,14 @@ function AdminView({ onExit }) {
                     onClick={() => showDemo(nextMissionId)}
                   />
                   <ActionBtn icon={<Trophy size={15} />} label="Show live race on TV" color={COLORS.yellow} dark onClick={showLeaderboard} />
+                  {/* Back to the live board after the race, a demo or the join
+                      code — without releasing another round to get there. */}
+                  {releasedRound >= 0 && game.status !== "question" && (
+                    <ActionBtn icon={<Monitor size={15} />} label="Show live board on TV" color={COLORS.surfaceRaised} onClick={() => patchGame({ status: "question" })} />
+                  )}
                   <ActionBtn icon={<QrCode size={15} />} label="Show join code on TV" color={COLORS.surfaceRaised} onClick={backToLobby} />
                   <ActionBtn icon={<Flag size={15} />} label="Show final results on TV" color={COLORS.orange} onClick={endGame} />
-                  <ActionBtn icon={<RotateCcw size={15} />} label="Reset Game" color={COLORS.red} onClick={resetGame} />
+                  <ActionBtn icon={<RotateCcw size={15} />} label={resetArmed ? "Tap again: remove everybody and start a new game" : "Reset Game"} color={COLORS.red} onClick={resetGame} />
                 </div>
 
                 <p style={{ color: COLORS.muted, fontSize: 12, lineHeight: 1.5, marginTop: 10 }}>
@@ -1412,23 +1466,28 @@ function AdminView({ onExit }) {
                 </div>
 
                 <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, letterSpacing: 0.6, marginBottom: 7 }}>
-                  THE {ROUND_COUNT} MISSIONS — DEALT IN A DIFFERENT ORDER TO EACH PARTICIPANT
+                  THE {planRounds} ROUNDS, IN THE ORDER EVERYBODY PLAYS THEM
                 </div>
                 <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
-                  {ROUND_GAMES.map((gameId) => (
-                    <div key={gameId} style={{ display: "flex", alignItems: "center", gap: 10, background: COLORS.surfaceRaised, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "9px 11px" }}>
+                  {questions.filter((r) => r.round === "game3d").map((r) => r.gameId).map((gameId, roundNo) => (
+                    <div key={`${gameId}-${roundNo}`} style={{ display: "flex", alignItems: "center", gap: 10, background: COLORS.surfaceRaised, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "9px 11px" }}>
                       <span style={{ width: 22, height: 22, borderRadius: "50%", background: COLORS.green + "22", border: `1px solid ${COLORS.green}66`, color: COLORS.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <Gamepad2 size={12} />
                       </span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink }}>{ROUND_MISSION_NAMES[gameId]}</span>
-                      <span style={{ fontSize: 12, color: COLORS.muted, marginLeft: "auto" }}>+ 1 quiz + 1 finale</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink }}>Round {roundNo + 1} · {ROUND_MISSION_NAMES[gameId]}</span>
+                      <span style={{ fontSize: 12, color: COLORS.muted, marginLeft: "auto" }}>
+                        + {questions.filter((r) => r.round !== "game3d" && r.round !== "millionaire" && (r.roundIndex ?? 0) === roundNo).length} quiz
+                        {" "}+ {questions.filter((r) => r.round === "millionaire" && (r.roundIndex ?? 0) === roundNo).length} finale
+                      </span>
                     </div>
                   ))}
                 </div>
                 <p style={{ color: COLORS.muted, fontSize: 12, lineHeight: 1.55, margin: 0 }}>
-                  Every participant plays all five, but in their own order, with their own
-                  questions. Changing the mode affects participants who join from now on — anyone
-                  already part-way through keeps the session they started.
+                  Everybody plays the same rounds in the same order, with the same questions;
+                  only the order of each question's answers is different on every phone.
+                  {planLocked
+                    ? " The plan is locked now that people are playing it — changing it would scramble their sessions. Reset the game to change it."
+                    : " You can change the plan until the first participant starts; after that it is locked."}
                 </p>
               </>
             )}
@@ -1486,7 +1545,7 @@ function AdminView({ onExit }) {
             </div>
           </Panel>
 
-          {game.status === "question" && curQ && (
+          {releasedRound < 0 && game.status === "question" && curQ && (
             <Panel title={`Live: ${curQ.category}`} icon={curQ.round === "millionaire" ? <Gem size={18} color={COLORS.purple} /> : <Clock size={18} color={COLORS.orange} />}>
               <p style={{ fontSize: 15, marginBottom: 10 }}>{curQ.question}</p>
               {curQ.round === "millionaire" && <p style={{ fontSize: 12, color: COLORS.purple, marginBottom: 6, fontWeight: 700 }}>{curQ.tier} · worth {curQ.points} pts</p>}
@@ -1494,7 +1553,7 @@ function AdminView({ onExit }) {
             </Panel>
           )}
 
-          {(game.status === "question" || game.status === "reveal") && curQ && (
+          {releasedRound < 0 && (game.status === "question" || game.status === "reveal") && curQ && (
             <PlayerAnswersPanel curQ={curQ} qIndex={game.qIndex} players={players} />
           )}
 
@@ -1531,7 +1590,8 @@ function AdminView({ onExit }) {
             <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12 }}>
               Build your own quiz or true/false question. It's inserted right before the Safety Millionaire finale so the finale always stays last, and its answer order gets shuffled automatically just like the seeded questions.
             </p>
-            <AddQuestionForm busy={aqBusy} onAdd={addCustomQuestion} />
+            {planLocked && <p style={{ color: COLORS.yellow, fontSize: 13, fontWeight: 700, margin: "0 0 10px" }}>The event plan is locked while participants are playing it.</p>}
+            <AddQuestionForm busy={aqBusy} locked={planLocked} onAdd={addCustomQuestion} />
           </Panel>
 
           <Panel title="Add a picture hazard matching question" icon={<Target size={18} color={COLORS.orange} />}>
@@ -1544,6 +1604,7 @@ function AdminView({ onExit }) {
               <button
                 style={{ ...btnStyle(COLORS.orange), marginTop: 0 }}
                 onClick={addBuiltInHazardRound}
+                disabled={planLocked}
               >
                 <Target size={15} style={{ verticalAlign: -3, marginRight: 6 }} />
                 Add a built-in Spot the Hazard round
@@ -1566,7 +1627,7 @@ function AdminView({ onExit }) {
                 <button style={btnStyle(COLORS.green)} onClick={confirmHazardMarker}>Add numbered hazard</button>
               </div>}
               <textarea style={{ ...inputStyle, minHeight: 60 }} placeholder="Explanation (optional)" value={hz.explanation} onChange={(e) => setHz({ ...hz, explanation: e.target.value })} />
-              <button disabled={hz.hazards.length === 0} style={btnStyle(COLORS.orange)} onClick={addHazardRoundToGame}>Add matching hazard question ({hz.hazards.length} hazards)</button>
+              <button disabled={planLocked || hz.hazards.length === 0} style={btnStyle(COLORS.orange)} onClick={addHazardRoundToGame}>Add matching hazard question ({hz.hazards.length} hazards)</button>
             </>}
           </Panel>
 
@@ -1576,6 +1637,7 @@ function AdminView({ onExit }) {
             await safeSet(Q_KEY, JSON.stringify(next), true);
             await refresh();
           }} onReorder={async (fromIndex, toIndex) => {
+            if (planLocked) return;
             const next = [...questionsRef];
             const [moved] = next.splice(fromIndex, 1);
             next.splice(toIndex, 0, moved);
@@ -1584,11 +1646,14 @@ function AdminView({ onExit }) {
             await refresh();
           }}
           plan={plan}
+          locked={planLocked}
           onReshuffle={async () => {
+            if (planLocked) return;
             // Deals a whole new event plan: a different mission order,
             // different questions, different option order. Custom rows
             // the admin added by hand are kept and appended.
-            const custom = (questionsRef || []).filter((q) => q.custom || q.round === "hazard");
+            const custom = (questionsRef || []).filter((q) => q.custom || q.round === "hazard"
+              || (q.round !== "game3d" && !q.bankId));
             const fresh = buildEventPlan({ quizPerRound: adminQuizPerRound });
             await safeSet(Q_KEY, JSON.stringify(renumberPlan([...fresh, ...custom])), true);
             await refresh();
@@ -1602,6 +1667,7 @@ function AdminView({ onExit }) {
                 key={p.id}
                 rank={i + 1}
                 player={p}
+                plan={questions}
                 teams={game.teams || []}
                 editing={editingId === p.id}
                 editForm={editForm}
@@ -1631,7 +1697,7 @@ function AdminView({ onExit }) {
 // Lets the admin delete any question — MCQ, True/False, custom, or a
 // hazard round (default or admin-uploaded). Delete needs a second tap
 // on the same row to confirm.
-function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder, plan, onReshuffle }) {
+function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder, plan, onReshuffle, locked = false }) {
   const [confirmIdx, setConfirmIdx] = useState(null);
   const [editingIdx, setEditingIdx] = useState(null);
   const [draggedIndex, setDraggedIndex] = useState(null);
@@ -1662,6 +1728,12 @@ function ManageQuestionsPanel({ questions, onRemove, onSave, onReorder, plan, on
             {plan.rounds} rounds · {plan.missions} missions · {plan.quiz} quiz · {plan.millionaire} finale
           </div>
         ) : null}
+        {locked && (
+          <div style={{ marginTop: 7, color: COLORS.yellow, fontWeight: 700 }}>
+            Locked: participants are playing this plan. Adding, removing, moving or reshuffling
+            rows now would scramble their sessions. Reset the game to change it.
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
@@ -1854,7 +1926,7 @@ function PlayerAnswersPanel({ curQ, qIndex, players }) {
 }
 
 // Lets the admin author their own quiz or true/false question on the fly.
-function AddQuestionForm({ onAdd, busy }) {
+function AddQuestionForm({ onAdd, busy, locked = false }) {
   const [round, setRound] = useState("quiz");
   const [category, setCategory] = useState("");
   const [question, setQuestion] = useState("");
@@ -1936,7 +2008,7 @@ function AddQuestionForm({ onAdd, busy }) {
       }} /></label>
       {imageData && <img src={imageData} alt="Question preview" style={{ display: "block", width: "100%", maxWidth: 520, maxHeight: 220, objectFit: "contain", borderRadius: 8, marginBottom: 10, background: COLORS.surfaceRaised }} />}
 
-      <button disabled={busy || !canSubmit} style={btnStyle(COLORS.green)} onClick={submit}>
+      <button disabled={busy || locked || !canSubmit} style={btnStyle(COLORS.green)} onClick={submit}>
         {busy ? "Adding…" : "Add Question"}
       </button>
     </div>
@@ -1987,7 +2059,14 @@ function PlayerView({ onExit }) {
   const [me, setMe] = useState(null);
   const [form, setForm] = useState({ name: "", employeeId: "", company: "", team: "" });
   const [scannerOpen, setScannerOpen] = useState(false);
-  const [code, setCode] = useState("");
+  // A phone that came in through the QR code has the game code in its link.
+  const [code, setCode] = useState(() => {
+    try {
+      return (new URLSearchParams(window.location.search).get("join") || "").replace(/\D/g, "").slice(0, 6);
+    } catch {
+      return "";
+    }
+  });
   const [codeVerified, setCodeVerified] = useState(false);
   const [codeError, setCodeError] = useState("");
   const [serverOffset, setServerOffset] = useState(0);
@@ -1999,6 +2078,8 @@ function PlayerView({ onExit }) {
       const u = new URL(text);
       scannedValue = u.searchParams.get("join") || "";
     } catch {}
+    // A code printed or shown as plain digits works too.
+    if (!/\d{6}/.test(scannedValue)) scannedValue = (text.match(/\d{6}/) || [""])[0];
     setCode(scannedValue.replace(/\D/g, "").slice(0, 6));
     setCodeError("");
     setScannerOpen(false);
@@ -2015,7 +2096,6 @@ function PlayerView({ onExit }) {
   }
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState("");
-  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     let mounted = true;
@@ -2047,26 +2127,35 @@ function PlayerView({ onExit }) {
     })();
   }, [codeVerified, game?.gameCode]);
 
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now() + serverOffset), 250);
-    return () => clearInterval(id);
-  }, [serverOffset]);
-
   // Keep `me` fresh from the shared players list — but never let a
   // stale poll overwrite progress we just saved. The poll runs every
   // 1.4s, so a read that started before our last write would otherwise
   // roll the participant's answer back for a moment, which is very
   // visible mid-session. Each write stamps `revision`, and an older
   // revision is ignored.
+  const seenRef = useRef(false);
+  const [removed, setRemoved] = useState(false);
   useEffect(() => {
-    if (!me) return;
+    if (!me) { seenRef.current = false; return; }
     const fresh = players.find((p) => p.id === me.id);
+    const otherGame = game?.gameCode && me.gameCode && String(game.gameCode) !== String(me.gameCode);
+    // Gone from a list that had them (the poll keeps the last good list
+    // when a read fails, so this is a real removal), or a new game.
+    if ((!fresh && seenRef.current) || otherGame) {
+      seenRef.current = false;
+      setMe(null);
+      setCodeVerified(false);
+      setRemoved(true);
+      safeDelete(MY_ID_KEY, false);
+      return;
+    }
     if (!fresh) return;
+    seenRef.current = true;
     const mine = Number(me.revision) || 0;
     const theirs = Number(fresh.revision) || 0;
     if (theirs < mine) return;
     setMe(fresh);
-  }, [players]); // eslint-disable-line
+  }, [players, game?.gameCode]); // eslint-disable-line
 
   async function join() {
     const name = form.name.trim();
@@ -2096,6 +2185,7 @@ function PlayerView({ onExit }) {
     await safeSet(PLAYER_PREFIX + id, JSON.stringify(player), true);
     await safeSet(MY_ID_KEY, id, false);
     setMe(player);
+    setRemoved(false);
     setJoining(false);
   }
 
@@ -2200,7 +2290,12 @@ function PlayerView({ onExit }) {
 
   // Writes the participant's whole record, which is how this app already
   // persists a player. Used by the integrated session on every answer.
+  const gameCodeRef = useRef(null);
+  gameCodeRef.current = game?.gameCode ?? null;
   const persistMe = useCallback(async (updated) => {
+    // A record for a game that is no longer running is never written:
+    // after a reset or a kick it would put the participant back.
+    if (gameCodeRef.current && updated?.gameCode && String(updated.gameCode) !== String(gameCodeRef.current)) return;
     // `revision` makes our own writes win over an in-flight poll read.
     const stamped = { ...updated, revision: (Number(updated.revision) || 0) + 1, updatedAt: Date.now() };
     setMe(stamped);
@@ -2230,6 +2325,11 @@ function PlayerView({ onExit }) {
             onKeyDown={(e) => e.key === "Enter" && verifyCode()}
           />
           {codeError && <p style={{ color: COLORS.red, fontSize: 13, margin: "-4px 0 10px" }}>{codeError}</p>}
+          {removed && (
+            <p style={{ color: COLORS.yellow, fontSize: 13, lineHeight: 1.5, margin: "0 0 10px" }}>
+              You were taken out of the game, or the host started a new one. Enter the code to join again.
+            </p>
+          )}
           <button style={btnStyle(COLORS.green)} disabled={code.length !== 6} onClick={verifyCode}>ENTER GAME</button>
           <button style={btnStyle(COLORS.surfaceRaised)} onClick={() => setScannerOpen(true)}><QrCode size={16} /> Scan QR</button>
           <button style={linkBtnStyle} onClick={onExit}>← Back</button>
@@ -2763,9 +2863,9 @@ function TVView({ onExit }) {
 
   // Which round the mission on screen belongs to, for the demo header.
   const demoRoundLabel = useMemo(() => {
-    const i = ROUND_GAMES.indexOf(game?.demoGameId);
-    return i >= 0 ? `ROUND ${i + 1} OF ${ROUND_COUNT} · BRIEFING` : "MISSION BRIEFING";
-  }, [game?.demoGameId]);
+    const row = questions.find((r) => r.round === "game3d" && r.gameId === game?.demoGameId);
+    return row ? `ROUND ${(row.roundIndex ?? 0) + 1} OF ${planRoundCount(questions)} · BRIEFING` : "MISSION BRIEFING";
+  }, [game?.demoGameId, questions]);
 
   if (!game) {
     return (
@@ -2872,7 +2972,9 @@ function describeParticipant(player, plan) {
     return { label: "Waiting to start", tone: COLORS.muted, active: false, roundNumber, progress };
   }
   if (stage === STAGES.ROUND_DONE) {
-    return { label: `Round ${roundNumber} done — waiting for the next`, tone: COLORS.muted, active: false, roundNumber, progress };
+    // The run already points into the NEXT round here (see waitingRounds).
+    const finished = (waitingRounds(plan, run).justFinished ?? 0) + 1;
+    return { label: `Round ${finished} done — waiting for the next`, tone: COLORS.muted, active: false, roundNumber: finished, progress };
   }
   if (stage === STAGES.GAME3D) {
     return {
@@ -2899,8 +3001,7 @@ export function LiveSessionDisplay({ game, players, plan, releasedRound }) {
 
   const rows = useMemo(() => players
     .map((p) => ({ player: p, where: describeParticipant(p, plan) }))
-    .sort((a, b) => (b.player.score || 0) - (a.player.score || 0)
-      || (a.player.playingMs || 0) - (b.player.playingMs || 0)),
+    .sort((a, b) => compareStanding(a.player, b.player)),
   [players, plan]);
 
   const playing = rows.filter((r) => r.where.active);
@@ -3062,9 +3163,13 @@ export function SessionResultsDisplay({ players, plan }) {
       missions: summary.gamesCompleted,
       missionTotal: summary.gameTotal,
       playingMs: p.playingMs || runPlayingMs(p.session),
+      // The host's correction, if any, counts here too.
+      adjust: Number(p.scoreAdjust) || 0,
     };
-  }).sort((a, b) => (b.totals.total || 0) - (a.totals.total || 0)
-    || (a.playingMs || 0) - (b.playingMs || 0)), [players, plan]);
+  }).map((r) => ({ ...r, totals: { ...r.totals, total: (r.totals.total || 0) + r.adjust } }))
+    .sort((a, b) => compareStanding(
+      { score: a.totals.total, playingMs: a.playingMs, name: a.player.name },
+      { score: b.totals.total, playingMs: b.playingMs, name: b.player.name })), [players, plan]);
 
   const podium = rows.slice(0, 3);
   const PODIUM_COLORS = [COLORS.yellow, "#C9CED4", "#CD7F32"];
@@ -3180,6 +3285,8 @@ function QRBlock({ value }) {
   const joinUrl = useMemo(() => {
     const u = new URL(HOSTED_APP_URL);
     u.searchParams.set("role", "player");
+    // The game code, so a phone that scans it does not have to type it.
+    if (value) u.searchParams.set("join", String(value));
     return u.toString();
   }, [value]);
   useEffect(() => {
@@ -3216,22 +3323,34 @@ function QRScanner({ onDetected, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const detectorRef = useRef(null);
+  // The latest handlers, read through refs: the effect below runs once.
+  // With the handlers as dependencies it restarted the camera on every
+  // re-render of the page around it.
+  const detectedRef = useRef(onDetected);
+  const closeRef = useRef(onClose);
+  detectedRef.current = onDetected;
+  closeRef.current = onClose;
 
   useEffect(() => {
     let mounted = true;
     let stream = null;
+    const onDetected = (v) => detectedRef.current?.(v);
+    const onClose = () => closeRef.current?.();
     (async () => {
       try {
         if (!('BarcodeDetector' in window) && !window.jsQR) {
           await new Promise((resolve) => {
             const s = document.createElement('script');
-            s.src = 'https://unpkg.com/jsqr/dist/jsQR.js';
+            // A fixed version: an unpinned link runs whatever is newest.
+            s.src = 'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js';
             s.onload = resolve;
             document.body.appendChild(s);
           });
         }
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        if (!mounted) return;
+        const got = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        // Closed while the camera was starting: switch it straight off.
+        if (!mounted) { got.getTracks().forEach((t) => t.stop()); return; }
+        stream = got;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           try { await videoRef.current.play(); } catch {}
@@ -3274,7 +3393,7 @@ function QRScanner({ onDetected, onClose }) {
       }
     })();
     return () => { mounted = false; try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch {} };
-  }, [onDetected, onClose]);
+  }, []);
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
@@ -3737,7 +3856,7 @@ const RoundTimeline = React.memo(function RoundTimeline({ releasedRound }) {
   );
 });
 
-const AdminPlayerRow = React.memo(function AdminPlayerRow({ rank, player, teams, editing, editForm, setEditForm, onStartEdit, onCancelEdit, onSaveEdit, kickConfirming, onKick }) {
+const AdminPlayerRow = React.memo(function AdminPlayerRow({ rank, player, plan = null, teams, editing, editForm, setEditForm, onStartEdit, onCancelEdit, onSaveEdit, kickConfirming, onKick }) {
   if (editing) {
     return (
       <div style={{ background: COLORS.surfaceRaised, border: `1px solid ${COLORS.yellow}`, borderRadius: 8, padding: 10, marginBottom: 6 }}>
@@ -3791,7 +3910,7 @@ const AdminPlayerRow = React.memo(function AdminPlayerRow({ rank, player, teams,
             <span>Finale <b style={{ color: COLORS.purple }}>{player.scores.millionaire || 0}</b></span>
             {player.session?.stage && (
               <span style={{ color: COLORS.muted }}>
-                · R{(player.session.roundIndex ?? 0) + 1} {{
+                · R{(plan ? runRoundIndex(plan, player.session) : (player.session.roundIndex ?? 0)) + 1} {{
                   locked: "waiting to start", game3d: "in the 3D mission",
                   quiz: "on the quiz", millionaire: "on the finale",
                   roundDone: "round done, waiting", done: "finished",

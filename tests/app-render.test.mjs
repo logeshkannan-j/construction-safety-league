@@ -1596,6 +1596,103 @@ section("The TV shows the live session and the final result");
   probe.remove();
 }
 
+section("The session screen: nothing strands a participant, nothing wipes them");
+
+/* From the audit: a True/False question or a picture round added by the
+ * host left every participant stuck on it for the rest of the event; a
+ * plan read that failed showed a button that reset them to zero; the
+ * break screen named the wrong round. */
+{
+  const sessionMod = await server.ssrLoadModule("/src/session.js");
+  const { default: SoloSession } = await server.ssrLoadModule("/src/SoloSession.jsx");
+  const probe = document.createElement("div");
+  document.body.appendChild(probe);
+  const probeRoot = ReactDOMClient.createRoot(probe);
+  const probeText = () => (probe.textContent || "").replace(/\s+/g, " ").trim();
+  const errorsBefore = reactErrors.length;
+  const waitFor = async (test, ms = 4000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (test()) return true; await settle(40); }
+    return test();
+  };
+  const click = (el) => el?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  const buttonWith = (text) => [...probe.querySelectorAll("button, [role=button]")].find((b) => (b.textContent || "").includes(text));
+
+  const tf = { round: "truefalse", roundIndex: 0, category: "Site rules", question: "A harness is needed above 2 m.", options: ["TRUE", "FALSE"], correct: 0, points: 100 };
+  const hz = {
+    round: "hazard", roundIndex: 0, category: "Spot the Hazard", question: "FIND THE HAZARDS!", bonusAll: 100, imageType: "svg", imageSvg: "<svg></svg>",
+    hazards: [{ id: "h1", name: "No hard hat", xPct: 20, yPct: 40 }, { id: "h2", name: "Open edge", xPct: 70, yPct: 30 }],
+  };
+  const plan = [{ round: "game3d", roundIndex: 0, gameId: "safety-mission" }, tf, hz];
+  const game = { gameCode: "123456", releasedRound: 0, status: "question" };
+  let me = null;
+  // Renders the record as the app would after each save.
+  const mount = (record) => {
+    me = record;
+    probeRoot.render(React.createElement(SoloSession, {
+      me, game, plan, players: [me], connected: true, serverOffset: 0,
+      onPersist: (updated) => mount(updated), onExit: () => {},
+    }));
+  };
+
+  // True/False.
+  const now = Date.now();
+  mount({ id: "p1", name: "Test", score: 0, gameCode: "123456",
+    session: { ...sessionMod.createRun(plan, { now }), itemIndex: 1, stage: "quiz", stageStartedAt: now } });
+  check("a True/False question shows its two answers", await waitFor(() => !!buttonWith("TRUE") && !!buttonWith("FALSE")), probeText().slice(0, 160));
+  check("with its category where the topic goes", probeText().includes("Site rules"));
+  const shown = sessionMod.currentItem(plan, me.session);
+  click(buttonWith(shown.options[shown.correct]));
+  check("and answering it counts — it used to do nothing, for ever",
+    await waitFor(() => me.session.answers?.[1]?.correct === true && me.score > 0), JSON.stringify(me.session.answers));
+
+  // A picture round, through its own screen.
+  mount({ ...me, session: { ...me.session, itemIndex: 2, stage: "quiz", stageStartedAt: Date.now() } });
+  check("a picture round shows the picture and the numbered boxes",
+    await waitFor(() => probeText().includes("FIND THE HAZARDS!") && probeText().includes("Tap, then pick a hazard")), probeText().slice(0, 200));
+  const boxes = () => [...probe.querySelectorAll("[role=button]")];
+  // One tap at a time, as a person does, with the screen updating between.
+  for (const tap of [() => boxes()[0], () => buttonWith("No hard hat"), () => buttonWith("Open edge"),
+    () => buttonWith("CHECK MATCHES"), () => buttonWith("CONFIRM MATCHES")]) {
+    click(tap());
+    await settle(60);
+  }
+  check("matching every hazard right is marked, with the bonus",
+    await waitFor(() => me.session.answers?.[2]?.correctCount === 2 && me.session.answers[2].points === 2 * 62 + 100),
+    JSON.stringify(me.session.answers?.[2]));
+  check("and the participant sees what each number was", await waitFor(() => probeText().includes("2 of 2 matched")), probeText().slice(0, 200));
+
+  // A plan read that fails comes back empty: no reset button, just wait.
+  probeRoot.render(React.createElement(SoloSession, {
+    me, game, plan: [], players: [me], connected: true, serverOffset: 0, onPersist: () => {}, onExit: () => {},
+  }));
+  check("while the plan is missing, the participant is told to wait — no reset button",
+    await waitFor(() => probeText().includes("Loading the event")) && !buttonWith("Deal my questions"), probeText().slice(0, 160));
+
+  // The break between rounds names the round just finished.
+  const full = sessionMod.buildEventPlan({});
+  let run = sessionMod.releaseRun(full, sessionMod.createRun(full, { now: 0 }), { releasedRound: 0, now: 0 }).run;
+  let guard = 0;
+  while (run.stage !== "roundDone" && guard++ < 60) {
+    const item = sessionMod.currentItem(full, run);
+    run = item.round === "game3d"
+      ? sessionMod.completeItemGame(full, run, { score: 5000, performance: 60, completed: true }, { now: 1 }).run
+      : sessionMod.answerItem(full, run, { pickedIndex: item.correct, now: 1 }).run;
+    run = sessionMod.advanceRun(full, run, { now: 2 });
+  }
+  probeRoot.render(React.createElement(SoloSession, {
+    me: { id: "p1", name: "Test", score: 0, gameCode: "123456", session: run }, game: { ...game, releasedRound: 0 },
+    plan: full, players: [], connected: true, serverOffset: 0, onPersist: () => {}, onExit: () => {},
+  }));
+  check("after Round 1 the break says Round 1 complete and Round 2 next (it said 2 and 3)",
+    await waitFor(() => probeText().includes("Round 1 complete") && probeText().includes("ROUND 2 OF")) && !probeText().includes("Round 2 complete"),
+    probeText().slice(0, 240));
+
+  check("no React errors on the session screens", reactErrors.length === errorsBefore, reactErrors.slice(errorsBefore).join(" | "));
+  probeRoot.unmount();
+  probe.remove();
+}
+
 section("Live on the TV: the host picks a participant, the TV shows them");
 
 /* "Host the live players' gaming to the TV: whoever joined to play, the

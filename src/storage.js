@@ -135,6 +135,32 @@ export async function safeList(prefix, shared) {
   return [];
 }
 
+/**
+ * Every player record in one read (the poll used to list the keys, then
+ * fetch each player again — every player downloaded twice). Returns the
+ * stored values, or null when the read failed.
+ */
+export async function safeGetPlayers() {
+  try {
+    const snap = await get(ref(db, "players"));
+    noteSuccess();
+    return snap.exists() ? Object.values(snap.val() || {}) : [];
+  } catch (e) {
+    noteFailure("safeGetPlayers", "players", e);
+    return null;
+  }
+}
+
+/** Calls `fn(true|false)` as this device's link to the database comes and
+ *  goes. Returns an unsubscribe. */
+export function watchConnected(fn) {
+  try {
+    return onValue(ref(db, ".info/connected"), (snap) => fn(snap.val() === true), () => fn(false));
+  } catch {
+    return () => {};
+  }
+}
+
 // Firebase publishes the difference between its server clock and this
 // browser's clock at .info/serverTimeOffset. Use it for synchronized game
 // timing so phones with incorrect device clocks still see the same countdown.

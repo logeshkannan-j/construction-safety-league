@@ -473,8 +473,16 @@ section("The participant record end to end");
   // rather than half-read.
   check("a run from an older build is rejected",
     !isRunValid(plan, { ...joined.session, v: SESSION_VERSION - 1 }));
-  check("a run against a different plan is rejected",
-    !isRunValid(buildEventPlan({ quizPerRound: 1 }), joined.session));
+  // A plan that changed under a run (a row added mid-event) keeps the
+  // run. Rejecting it sent the participant to "Deal my questions", which
+  // threw their whole score away.
+  const changedPlan = buildEventPlan({ quizPerRound: 1 });
+  check("a run against a changed plan is kept, not thrown away", isRunValid(changedPlan, joined.session));
+  check("and still reads: the right answer follows its option",
+    (() => {
+      const q = currentItem(changedPlan, { ...joined.session, itemIndex: 1 });
+      return q && q.options[q.correct] === changedPlan[1].options[changedPlan[1].correct];
+    })());
   check("garbage is rejected",
     !isRunValid(plan, null) && !isRunValid(null, joined.session) && !isRunValid([], joined.session));
 }
@@ -705,6 +713,111 @@ section("Every quiz and finale question is available in Tamil");
     check("a question with no Tamil still permutes",
       applied.options[applied.correct] === "b" && applied.ta === undefined);
   }
+}
+
+/* ===================================================================== *
+ *  The audit: rows nobody can get stuck on, Tamil that reaches the
+ *  phone, progress that survives, fair mission points, one order.
+ * ===================================================================== */
+{
+  const {
+    withTamil, isHazardItem, isPlayableItem, answerHazard, scoreHazard, settleRun,
+    waitingRounds, compareStanding, ITEM_TRUEFALSE, ITEM_HAZARD, HAZARD_SECONDS,
+  } = session;
+  console.log("\n== Audit: Tamil reaches the event's questions ==");
+  const plan = buildEventPlan({});
+  const quizRow = plan.find((r) => r.round === "quiz");
+  const finaleRow = plan.find((r) => r.round === "millionaire");
+  check("every quiz row is dealt with its Tamil", plan.filter((r) => r.round === "quiz").every((r) => r.ta?.question && r.ta.options?.length === r.options.length));
+  check("and every finale row", plan.filter((r) => r.round === "millionaire").every((r) => r.ta?.question && r.ta.options?.length === r.options.length));
+  const fromBank = bank.quizQuestionById(quizRow.bankId);
+  check("the Tamil is the bank's, option for option",
+    quizRow.ta.options.every((o, i) => o === fromBank.ta.options[fromBank.options.indexOf(quizRow.options[i])]));
+  // A plan dealt before this fix has no Tamil on its rows, and the admin
+  // panel may have reordered a row's options since.
+  const old = { ...finaleRow, options: [...finaleRow.options].reverse(), correct: finaleRow.options.length - 1 - finaleRow.correct };
+  delete old.ta;
+  const filled = withTamil(old);
+  const bankFinale = bank.millionaireQuestionById(old.bankId);
+  check("a plan dealt before the fix gets its Tamil from the bank", !!filled.ta?.question && filled.ta.question === bankFinale.ta.question);
+  check("matched by option, even when the options were reordered",
+    filled.ta.options.every((o, i) => o === bankFinale.ta.options[bankFinale.options.indexOf(old.options[i])]));
+  check("so the Tamil answer is the right answer",
+    filled.ta.options[filled.correct] === bankFinale.ta.options[bankFinale.correct]);
+  const oneRun = createRun([old], { now: 0 });
+  const shown = currentItem([old], { ...oneRun, itemIndex: 0 });
+  check("and the phone shows it, shuffled with the English",
+    shown.ta.options[shown.correct] === bankFinale.ta.options[bankFinale.correct] && shown.options[shown.correct] === bankFinale.options[bankFinale.correct]);
+  check("a custom row with no bank question is left as it is", withTamil({ round: "quiz", question: "q", options: ["a", "b"], correct: 0 }).ta === undefined);
+
+  console.log("\n== Audit: True/False and picture rows can be played ==");
+  const tf = { round: ITEM_TRUEFALSE, roundIndex: 0, category: "Custom", question: "Is a harness needed above 2 m?", options: ["TRUE", "FALSE"], correct: 0, points: 100 };
+  const hz = {
+    round: ITEM_HAZARD, roundIndex: 0, category: "Spot the Hazard", question: "FIND THE HAZARDS!", bonusAll: 100,
+    hazards: [{ id: "h1", name: "No hard hat" }, { id: "h2", name: "Open edge" }, { id: "h3", name: "Frayed cable" }],
+  };
+  const mixed = [{ round: "game3d", roundIndex: 0, gameId: "safety-mission" }, tf, hz, { ...quizRow, roundIndex: 0 }];
+  check("a True/False row is a question", isQuestionItem(tf) && isPlayableItem(tf));
+  check("a picture round is playable", isHazardItem(hz) && isPlayableItem(hz));
+  let r = { ...createRun(mixed, { now: 0 }), itemIndex: 1, stage: STAGES.QUIZ, stageStartedAt: 0 };
+  check("a True/False row is dealt its own option order", Array.isArray(r.perms[1]) && r.perms[1].length === 2);
+  const tfShown = currentItem(mixed, r);
+  const step = answerItem(mixed, r, { pickedIndex: tfShown.correct, now: 5000 });
+  check("answering it counts (it used to do nothing, for ever)", step.changed && step.result.correct && step.result.points > 0);
+  r = advanceRun(mixed, step.run, { now: 6000 });
+  check("then on to the picture round", r.itemIndex === 2 && r.stage === STAGES.QUIZ);
+  check("which has a hundred seconds", itemRemainingMs(mixed, r, 6000) === HAZARD_SECONDS * 1000);
+  const marked = answerHazard(mixed, r, { matches: { 0: "h1", 1: "h3", 2: "h2" }, now: 30000 });
+  check("matching marks each hazard: 62 a right one", marked.changed && marked.result.correctCount === 1 && marked.result.points === 62 && !marked.result.correct);
+  check("and it is answered once only", !answerHazard(mixed, marked.run, { matches: { 0: "h1", 1: "h2", 2: "h3" }, now: 31000 }).changed);
+  const perfect = scoreHazard({ question: hz, matches: { 0: "h1", 1: "h2", 2: "h3" } });
+  check("all right earns the round's bonus too", perfect.correct && perfect.points === 3 * 62 + 100);
+  check("running out of time with nothing matched scores 0", scoreHazard({ question: hz, matches: {} }).points === 0);
+  check("picture points count in the quiz total", runTotals(mixed, marked.run).quiz === step.result.points + 62);
+  const summary = runSummary(mixed, marked.run);
+  check("accuracy is out of every question asked, so never above 100%",
+    planSummary(mixed).quiz === 3 && summary.accuracy <= 100, `${planSummary(mixed).quiz} questions, ${summary.accuracy}%`);
+
+  console.log("\n== Audit: nobody is ever left standing on nothing ==");
+  const weird = [{ round: "game3d", roundIndex: 0, gameId: "crane-master" }, { round: "poll", roundIndex: 0 }, { ...quizRow, roundIndex: 0 }];
+  const w = advanceRun(weird, { ...createRun(weird, { now: 0 }), itemIndex: 0, stage: STAGES.GAME3D }, { now: 1 });
+  check("a row this build cannot show is stepped over", w.itemIndex === 2 && w.stage === STAGES.QUIZ);
+  const stuck = settleRun(weird, { ...createRun(weird, { now: 0 }), itemIndex: 1, stage: STAGES.QUIZ }, { now: 2 });
+  check("and anybody already standing on one is moved on", stuck.changed && stuck.run.itemIndex === 2);
+  const past = settleRun(weird, { ...createRun(weird, { now: 0 }), itemIndex: 9, stage: STAGES.QUIZ }, { now: 3 });
+  check("a run left past the end of the plan (rows deleted) is finished, not stuck", past.changed && past.run.stage === STAGES.DONE);
+  check("a run that is fine is left alone", !settleRun(weird, { ...createRun(weird, { now: 0 }), itemIndex: 2, stage: STAGES.QUIZ }).changed);
+  check("an empty plan (a read that failed) is not a reason to read a run",
+    !isRunValid([], createRun(plan, { now: 0 })) && isRunValid(plan, createRun(plan, { now: 0 })));
+
+  console.log("\n== Audit: the round just finished is the round just finished ==");
+  let wr = releaseRun(plan, createRun(plan, { now: 0 }), { releasedRound: 0, now: 0 }).run;
+  check("before anything starts: waiting for Round 1, nothing finished",
+    (() => { const x = waitingRounds(plan, createRun(plan, { now: 0 })); return x.justFinished === null && x.next === 0; })());
+  let guard = 0;
+  while (wr.stage !== STAGES.ROUND_DONE && guard++ < 50) wr = advanceRun(plan, wr, { now: 1 });
+  const after1 = waitingRounds(plan, wr);
+  check("after Round 1 it says Round 1 is done and Round 2 is next (it said 2 and 3)",
+    after1.justFinished === 0 && after1.next === 1, JSON.stringify(after1));
+
+  console.log("\n== Audit: every mission is worth the same 1,000 ==");
+  check("a perfect mission is worth 1,000, whatever its raw score", game3dPoints({ score: 2800, performance: 100 }) === 1000);
+  check("a half-good one 500", game3dPoints({ score: 11000, performance: 50 }) === 500);
+  check("a skipped one nothing", game3dPoints({ score: 0, performance: 90, skipped: true }) === 0);
+  check("a result with no performance still scores from the raw score", game3dPoints({ score: 6000 }) === 500);
+  check("and never outside 0..1,000", game3dPoints({ performance: 140 }) === 1000 && game3dPoints({ performance: -5 }) === 0);
+
+  console.log("\n== Audit: one order for every standings list ==");
+  const people = [
+    { name: "Cara", score: 900, playingMs: 0 },
+    { name: "Ben", score: 900, playingMs: 500000 },
+    { name: "Asha", score: 900, playingMs: 400000 },
+    { name: "Dev", score: 1200, playingMs: 900000 },
+    { name: "Eli", score: 900, playingMs: 400000 },
+  ];
+  check("most points first; on equal points the quicker; no time yet after some; then by name",
+    [...people].sort(compareStanding).map((p) => p.name).join(",") === "Dev,Asha,Eli,Ben,Cara",
+    [...people].sort(compareStanding).map((p) => p.name).join(","));
 }
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {

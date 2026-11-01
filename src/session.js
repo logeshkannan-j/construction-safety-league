@@ -287,6 +287,12 @@ export function clampQuizPerRound(n) {
 export const ITEM_GAME3D = "game3d";
 export const ITEM_QUIZ = "quiz";
 export const ITEM_MILLIONAIRE = "millionaire";
+// Rows the host can add by hand: a True/False question (a quiz question
+// with two options) and a picture round, answered by matching each
+// numbered hazard in the picture to its name.
+export const ITEM_TRUEFALSE = "truefalse";
+export const ITEM_HAZARD = "hazard";
+export const HAZARD_SECONDS = 100;
 
 /**
  * Builds the default plan: five rounds, each a 3D mission then
@@ -307,6 +313,7 @@ export function buildEventPlan({ quizPerRound = QUIZ_PER_ROUND } = {}) {
         round: ITEM_QUIZ, roundIndex, bankId: q.id, topic: q.topic,
         question: q.question, options: [...q.options], correct: q.correct,
         points: q.points, explanation: q.explanation,
+        ...(q.ta ? { ta: JSON.parse(JSON.stringify(q.ta)) } : {}),
       });
     });
     const f = mq[roundIndex];
@@ -315,15 +322,47 @@ export function buildEventPlan({ quizPerRound = QUIZ_PER_ROUND } = {}) {
         round: ITEM_MILLIONAIRE, roundIndex, bankId: f.id, tier: f.tier,
         question: f.question, options: [...f.options], correct: f.correct,
         points: f.points, explanation: f.explanation,
+        ...(f.ta ? { ta: JSON.parse(JSON.stringify(f.ta)) } : {}),
       });
     }
   });
   return plan;
 }
 
-/** True for a plan row that is a question rather than a mission. */
+/** True for a plan row answered by picking one of its options. */
 export function isQuestionItem(item) {
-  return item?.round === ITEM_QUIZ || item?.round === ITEM_MILLIONAIRE;
+  if (item?.round === ITEM_QUIZ || item?.round === ITEM_MILLIONAIRE) return true;
+  return item?.round === ITEM_TRUEFALSE && Array.isArray(item.options) && item.options.length >= 2;
+}
+
+/** True for a picture round: match each numbered hazard to its name. */
+export function isHazardItem(item) {
+  return item?.round === ITEM_HAZARD && Array.isArray(item.hazards) && item.hazards.length > 0;
+}
+
+/** True for anything a participant can actually play. A row this build
+ *  does not know how to show is stepped over, never stood on. */
+export function isPlayableItem(item) {
+  return item?.round === ITEM_GAME3D || isQuestionItem(item) || isHazardItem(item);
+}
+
+/**
+ * The Tamil for a question row, from the bank, when the row does not
+ * carry it: event plans dealt before the Tamil was copied in have none.
+ * The options are matched by their English text, so a row whose options
+ * were reordered still gets each translation against the right option.
+ */
+export function withTamil(item) {
+  if (!item || item.ta || !item.bankId) return item;
+  const bank = item.round === ITEM_MILLIONAIRE ? millionaireQuestionById(item.bankId) : quizQuestionById(item.bankId);
+  if (!bank?.ta) return item;
+  const ta = { ...bank.ta };
+  if (Array.isArray(bank.ta.options) && Array.isArray(item.options)) {
+    const options = item.options.map((text) => bank.ta.options[bank.options.indexOf(text)]);
+    if (options.some((o) => typeof o !== "string")) delete ta.options;
+    else ta.options = options;
+  }
+  return { ...item, ta };
 }
 
 /**
@@ -351,7 +390,9 @@ export function planSummary(plan) {
   return {
     items: list.length,
     missions: list.filter((i) => i.round === ITEM_GAME3D).length,
-    quiz: list.filter((i) => i.round === ITEM_QUIZ).length,
+    // Every question that is not the finale: quiz, True/False and picture
+    // rounds alike, so accuracy is always out of what was really asked.
+    quiz: list.filter((i) => (isQuestionItem(i) || isHazardItem(i)) && i.round !== ITEM_MILLIONAIRE).length,
     millionaire: list.filter((i) => i.round === ITEM_MILLIONAIRE).length,
     rounds: planRoundCount(list),
   };
@@ -379,10 +420,21 @@ export function scoreAnswer({ question, pickedIndex, elapsedMs, limitSeconds }) 
 }
 
 /**
- * Scales one mission's raw Arena score (out of 12,000) into its value
- * inside an event, so the 3D half cannot swamp the written half.
+ * One mission's value inside an event: its performance (0-100, each
+ * game's own measure of how well it was done) out of 1,000, so every
+ * mission is worth the same. Dividing the raw score by the Arena's
+ * 12,000 ceiling made a flawless crane lift worth about 230 and a good
+ * hazard hunt about 1,000 — and skipping a mission could pay better
+ * than playing it. A result with no performance (an older build) falls
+ * back to the raw score against `maxScore`.
  */
 export function game3dPoints(result) {
+  if (result?.skipped) return 0;
+  const performance = Number(result?.performance);
+  if (Number.isFinite(performance)) {
+    return Math.max(0, Math.min(GAME_POINTS_PER_ROUND,
+      Math.round((performance / 100) * GAME_POINTS_PER_ROUND)));
+  }
   const max = Math.max(1, Number(result?.maxScore) || 12000);
   const raw = Math.max(0, Number(result?.score) || 0);
   return Math.max(0, Math.min(GAME_POINTS_PER_ROUND,
@@ -421,24 +473,63 @@ export function currentItem(plan, run) {
   const item = (plan || [])[index];
   if (!item) return null;
   if (!isQuestionItem(item)) return { ...item, index };
-  return { ...applyPermutation(item, run?.perms?.[index]), round: item.round, roundIndex: item.roundIndex, index };
+  return { ...applyPermutation(withTamil(item), run?.perms?.[index]), round: item.round, roundIndex: item.roundIndex, index };
 }
 
 export function runRoundIndex(plan, run) {
   return (plan || [])[run?.itemIndex ?? 0]?.roundIndex ?? 0;
 }
 
-/** True when this run can be read by this build against this plan. */
+/**
+ * For a participant who is waiting: the round they have just finished
+ * (null before Round 1) and the round they are waiting for. At
+ * ROUND_DONE the run already points at the first row of the NEXT round,
+ * so the round just finished is the round of the row before it — read
+ * straight off the run, every screen said one round too many.
+ */
+export function waitingRounds(plan, run) {
+  const list = plan || [];
+  const index = run?.itemIndex ?? 0;
+  const next = list[index]?.roundIndex ?? 0;
+  if (run?.stage === STAGES.ROUND_DONE) {
+    const before = list[index - 1];
+    return { justFinished: before?.roundIndex ?? Math.max(0, next - 1), next };
+  }
+  return { justFinished: null, next };
+}
+
+/**
+ * True when this run can be read by this build against this plan.
+ *
+ * It used to demand a stored option order for every question row, so a
+ * row added mid-event — or a plan read that failed and came back empty —
+ * made every participant's run "invalid", and the only way on was a
+ * button that dealt a new run: score 0, back to Round 1. A missing or
+ * mismatched order now just means the options in their stored order
+ * (applyPermutation falls back), and progress is never thrown away.
+ */
 export function isRunValid(plan, run) {
   if (!run || run.v !== SESSION_VERSION) return false;
   if (!Array.isArray(plan) || plan.length === 0) return false;
-  if (!Number.isFinite(run.itemIndex)) return false;
-  // Every question row must have a stored permutation of the right size.
-  return plan.every((item, i) => {
-    if (!isQuestionItem(item)) return true;
-    const perm = run.perms?.[i];
-    return Array.isArray(perm) && perm.length === item.options.length;
-  });
+  return Number.isFinite(run.itemIndex) && run.itemIndex >= 0;
+}
+
+/**
+ * Puts a run that is standing somewhere it cannot play back on its feet:
+ * past the end of the plan (rows were deleted) it is finished; on a row
+ * this build cannot show, it moves on. Returns { run, changed }.
+ */
+export function settleRun(plan, run, { now = Date.now() } = {}) {
+  if (!run || run.stage === STAGES.DONE || run.stage === STAGES.LOCKED || run.stage === STAGES.ROUND_DONE) {
+    return { run, changed: false };
+  }
+  const list = plan || [];
+  if (!list.length) return { run, changed: false };
+  if (run.itemIndex >= list.length) {
+    return { run: { ...run, stage: STAGES.DONE, finishedAt: run.finishedAt || now, stageStartedAt: now }, changed: true };
+  }
+  if (!isPlayableItem(list[run.itemIndex])) return { run: advanceRun(list, run, { now }), changed: true };
+  return { run, changed: false };
 }
 
 /* ----------------------- moving through the plan ----------------------- */
@@ -448,6 +539,7 @@ function stageForItem(item) {
   if (!item) return STAGES.DONE;
   if (item.round === ITEM_GAME3D) return STAGES.GAME3D;
   if (item.round === ITEM_MILLIONAIRE) return STAGES.MILLIONAIRE;
+  // Quiz, True/False and picture rounds.
   return STAGES.QUIZ;
 }
 
@@ -487,7 +579,9 @@ export function releaseRun(plan, run, { releasedRound, now = Date.now() } = {}) 
  */
 export function advanceRun(plan, run, { now = Date.now() } = {}) {
   const here = plan[run.itemIndex];
-  const nextIndex = run.itemIndex + 1;
+  // Steps over any row this build cannot show, so nobody stands on one.
+  let nextIndex = run.itemIndex + 1;
+  while (plan[nextIndex] && !isPlayableItem(plan[nextIndex])) nextIndex += 1;
   const next = plan[nextIndex];
   const crossesRound = !next || (next.roundIndex ?? 0) !== (here?.roundIndex ?? 0);
 
@@ -552,6 +646,40 @@ export function answerItem(plan, run, { pickedIndex, now = Date.now() } = {}) {
   };
 }
 
+/**
+ * Marks one picture round: 62 points for each hazard matched to its
+ * right name, and the round's bonus when every one is right — the same
+ * marking the picture rounds have always had.
+ */
+export function scoreHazard({ question, matches = {} }) {
+  const hazards = question?.hazards || [];
+  const picked = {};
+  hazards.forEach((_, i) => {
+    if (typeof matches?.[i] === "string") picked[i] = matches[i];
+  });
+  const correctCount = hazards.reduce((n, h, i) => n + (picked[i] === h.id ? 1 : 0), 0);
+  const all = hazards.length > 0 && correctCount === hazards.length;
+  return {
+    correct: all,
+    correctCount,
+    total: hazards.length,
+    matches: picked,
+    points: correctCount * 62 + (all ? Number(question?.bonusAll) || 0 : 0),
+  };
+}
+
+/** Records the matches for a picture round. Idempotent, like answerItem. */
+export function answerHazard(plan, run, { matches, now = Date.now() } = {}) {
+  const index = run.itemIndex;
+  const item = (plan || [])[index];
+  if (!isHazardItem(item)) return { run, result: null, changed: false };
+  const existing = run.answers?.[index];
+  if (existing !== undefined) return { run, result: existing, changed: false };
+  const startedAt = run.stageStartedAt ?? now;
+  const result = { ...scoreHazard({ question: item, matches }), elapsedMs: Math.max(0, Math.round(now - startedAt)) };
+  return { run: { ...run, answers: { ...(run.answers || {}), [index]: result } }, result, changed: true };
+}
+
 /** Banks a 3D mission result against its plan row. Idempotent. */
 export function completeItemGame(plan, run, result, { now = Date.now() } = {}) {
   const index = run.itemIndex;
@@ -576,6 +704,26 @@ export function completeItemGame(plan, run, result, { now = Date.now() } = {}) {
 
 export function skipItemGame(plan, run, { now = Date.now() } = {}) {
   return completeItemGame(plan, run, { score: 0, rating: "SKIPPED", skipped: true }, { now }).run;
+}
+
+/**
+ * The order of every standings list — the phone, the TV, the admin:
+ * most points first; on equal points, whoever got there in less playing
+ * time; a participant with no time yet after one who has some; then by
+ * name, so the order never depends on how the records happened to come
+ * back from the database.
+ */
+export function compareStanding(a, b) {
+  const byScore = (Number(b?.score) || 0) - (Number(a?.score) || 0);
+  if (byScore) return byScore;
+  const ta = Number(a?.playingMs) || 0;
+  const tb = Number(b?.playingMs) || 0;
+  if (ta !== tb) {
+    if (!ta) return 1;
+    if (!tb) return -1;
+    return ta - tb;
+  }
+  return String(a?.name || "").localeCompare(String(b?.name || ""));
 }
 
 /* ------------------------- totals over a run ------------------------- */
@@ -659,7 +807,8 @@ export function runSummary(plan, run) {
 /** Remaining milliseconds on the current question. */
 export function itemRemainingMs(plan, run, now = Date.now()) {
   const item = plan?.[run?.itemIndex ?? 0];
-  const limit = item?.round === ITEM_MILLIONAIRE ? MILLIONAIRE_SECONDS : QUIZ_SECONDS;
+  const limit = item?.round === ITEM_MILLIONAIRE ? MILLIONAIRE_SECONDS
+    : isHazardItem(item) ? HAZARD_SECONDS : QUIZ_SECONDS;
   const elapsed = now - (run?.stageStartedAt ?? now);
   return Math.max(0, limit * 1000 - elapsed);
 }
