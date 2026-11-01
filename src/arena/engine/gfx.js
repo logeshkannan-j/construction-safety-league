@@ -250,6 +250,7 @@ export function createStage(container, { quality = "medium", fov = 70, near = 0.
     const dt = Math.min(0.1, Math.max(0, nowSec - state.last));
     state.last = nowSec;
     if (state.paused) {
+      followSky();
       renderer.render(scene, camera);
       return;
     }
@@ -261,7 +262,18 @@ export function createStage(container, { quality = "medium", fov = 70, near = 0.
         console.error("[arena] frame error", err);
       }
     }
+    followSky();
     renderer.render(scene, camera);
+  }
+
+  /* The sky is a dome around the CAMERA, not around the site. It used
+   * to sit at the site origin, and the demo's wide establishing shots
+   * (150 m out and more) put the camera outside it, where its inward
+   * faces are culled — a black wedge in the corner of the TV. */
+  let sky = null;
+  function followSky() {
+    if (!sky || sky.parent !== scene) sky = scene.getObjectByName("sky") || null;
+    if (sky) sky.position.copy(camera.position);
   }
 
   const stage = {

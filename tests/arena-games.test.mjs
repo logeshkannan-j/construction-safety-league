@@ -1052,6 +1052,28 @@ section("A walking character faces the way it is going");
   }
 }
 
+section("The sky surrounds the camera, however far out it goes");
+
+/* The demo's wide shots fly the camera 150 m and more from the site.
+ * The sky dome sat at the site origin, so out there the camera was
+ * OUTSIDE it, and its inward-facing surface was culled: a black wedge
+ * in the corner of the TV. The dome now travels with the camera. */
+{
+  const { instance } = await boot("craneMaster");
+  instance.siteView.playTour([{ center: [0, 0, -10], yaw: 0.85, pitch: 0.92, distance: 160, seconds: 0.5 }], { loop: true });
+  runFrames(40);
+  const scene = lastRenderer.lastScene;
+  const camera = lastRenderer.lastCamera;
+  const sky = scene.getObjectByName("sky");
+  const radius = sky?.geometry?.parameters?.radius || 0;
+  check("the camera is a long way out on the demo's wide shot",
+    camera.position.length() > 120, `${camera.position.length().toFixed(0)} m from the site`);
+  check("and it is still inside the sky",
+    !!sky && sky.position.distanceTo(camera.position) < radius * 0.5,
+    sky ? `${sky.position.distanceTo(camera.position).toFixed(1)} m from the dome centre, radius ${radius.toFixed(0)}` : "no sky");
+  instance.dispose();
+}
+
 section("People on site walk about, and walk like people");
 
 /* "Make the game realistic with human movement." A site is people

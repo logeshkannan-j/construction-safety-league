@@ -1,121 +1,37 @@
 /* ------------------------------------------------------------------ *
  *  MISSION DEMO — the instruction screen shown before a round starts.
  *
- *  Three things in one screen, in English or Tamil:
+ *  Three things in one screen:
  *
- *    the demo video   if the host has pasted one for this mission in
- *                     this language (game.missionVideos), it plays at
- *                     the top. Until then the screen falls back to the
- *                     written brief, so it is useful with no video at
- *                     all.
- *    the brief        what the mission asks, how to play it, how it is
- *                     scored — from missionBriefs.js.
+ *    the demo         a STEP-BY-STEP walkthrough of the mission: one
+ *                     instruction at a time, in English and Tamil
+ *                     together, with the control it is about drawn as
+ *                     it looks in the game, over the mission's real 3D
+ *                     world (MissionDemoPlayer.jsx). It plays on its
+ *                     own or is stepped through with Back and Next, and
+ *                     can read each step aloud. If the host has pasted
+ *                     a demo video for the mission, the video plays and
+ *                     the steps still go one by one underneath it.
+ *    the brief        what the mission asks and how it is scored, in
+ *                     the language chosen — from missionBriefs.js.
  *    the rules        the event's rules and regulations.
- *
- *  "with voice": the brief can be READ ALOUD through the browser's own
- *  speech synthesiser, in English or Tamil, so a crew that would rather
- *  listen than read can. It needs no files and no network, but it does
- *  depend on the device having a voice installed for that language —
- *  Tamil is not present on every device, so the button says when it is
- *  not available rather than silently doing nothing.
  *
  *  Used on the TV (large, host-driven) and on a player's phone while
  *  they wait for the host to release the round (compact).
  * ------------------------------------------------------------------ */
 
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Play, Pause, Languages, ListChecks, ShieldAlert, Trophy, Gamepad2, Volume2, VolumeX,
-} from "lucide-react";
+import React, { lazy, Suspense, useMemo, useState } from "react";
+import { Languages, ShieldAlert, Trophy, Gamepad2 } from "lucide-react";
 import { COLORS } from "./theme.js";
 import {
-  LANGUAGES, DEFAULT_LANGUAGE, isLanguage, languageById,
-  missionBrief, eventRules, briefSpeech, missionVideoUrl,
+  LANGUAGES, DEFAULT_LANGUAGE, isLanguage,
+  missionBrief, eventRules, missionVideoUrl, missionSteps,
 } from "./missionBriefs.js";
 import { SITE_NAME } from "./arena/arenaConstants.js";
 
 // The live 3D demo mounts the real mission world, so it pulls in
 // three.js. Loaded only when somebody actually opens a briefing.
 const MissionDemoPlayer = lazy(() => import("./arena/ui/MissionDemoPlayer.jsx"));
-
-/* --------------------------- the voice-over --------------------------- */
-
-/**
- * Wraps window.speechSynthesis.
- *
- * Kept behind a hook because the API is a global with its own queue:
- * two components speaking at once would talk over each other, and a
- * component that unmounts mid-sentence leaves the device still talking.
- */
-function useSpeech(text, speechLang) {
-  const [speaking, setSpeaking] = useState(false);
-  const [voiceReady, setVoiceReady] = useState(null); // null = still looking
-  const utteranceRef = useRef(null);
-
-  const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
-
-  // Voices load asynchronously, and on some browsers the first call
-  // returns an empty list.
-  useEffect(() => {
-    if (!synth) { setVoiceReady(false); return undefined; }
-    let cancelled = false;
-    const look = () => {
-      if (cancelled) return;
-      const voices = synth.getVoices() || [];
-      if (!voices.length) return;              // try again on the event
-      const base = String(speechLang).split("-")[0].toLowerCase();
-      setVoiceReady(voices.some((v) => String(v.lang || "").toLowerCase().startsWith(base)));
-    };
-    look();
-    synth.addEventListener?.("voiceschanged", look);
-    // Some browsers never fire the event if voices were already loaded.
-    const id = setTimeout(() => { if (!cancelled) setVoiceReady((v) => (v === null ? false : v)); }, 1500);
-    return () => {
-      cancelled = true;
-      clearTimeout(id);
-      synth.removeEventListener?.("voiceschanged", look);
-    };
-  }, [synth, speechLang]);
-
-  const stop = useCallback(() => {
-    try { synth?.cancel(); } catch { /* not supported */ }
-    setSpeaking(false);
-  }, [synth]);
-
-  // Never leave a device talking after the screen has gone.
-  useEffect(() => stop, [stop]);
-  // Changing language or mission stops whatever is being said.
-  useEffect(() => { stop(); }, [text, speechLang, stop]);
-
-  const start = useCallback(() => {
-    if (!synth || !text) return;
-    try {
-      synth.cancel();
-      const u = new window.SpeechSynthesisUtterance(text);
-      u.lang = speechLang;
-      u.rate = 0.95;
-      const base = String(speechLang).split("-")[0].toLowerCase();
-      const match = (synth.getVoices() || [])
-        .find((v) => String(v.lang || "").toLowerCase().startsWith(base));
-      if (match) u.voice = match;
-      u.onend = () => setSpeaking(false);
-      u.onerror = () => setSpeaking(false);
-      utteranceRef.current = u;
-      synth.speak(u);
-      setSpeaking(true);
-    } catch {
-      setSpeaking(false);
-    }
-  }, [synth, text, speechLang]);
-
-  return {
-    speaking,
-    supported: !!synth,
-    voiceReady,
-    toggle: () => (speaking ? stop() : start()),
-    stop,
-  };
-}
 
 /* ----------------------------- the video ----------------------------- */
 
@@ -242,11 +158,8 @@ export default function MissionDemo({
   const brief = missionBrief(gameId, active);
   const rules = eventRules(active);
   const videoUrl = missionVideoUrl(game, gameId, active);
-  const speechText = useMemo(
-    () => briefSpeech(gameId, active, { includeRules: false }),
-    [gameId, active]
-  );
-  const speech = useSpeech(speechText, languageById(active).speechLang);
+  // Both languages, step by step, whichever one is chosen to lead.
+  const steps = useMemo(() => missionSteps(gameId), [gameId]);
 
   if (!brief) return null;
   const tv = size === "tv";
@@ -259,7 +172,7 @@ export default function MissionDemo({
       display: "grid",
       gap: tv ? 16 : 11,
     }}>
-      {/* ---- header: mission, site, language, voice ---- */}
+      {/* ---- header: mission, site, which language leads ---- */}
       <div style={{
         display: "flex", flexWrap: "wrap", gap: 12,
         alignItems: "center", justifyContent: "space-between",
@@ -312,62 +225,33 @@ export default function MissionDemo({
               </button>
             ))}
           </div>
-
-          {/* voice-over */}
-          {speech.supported && (
-            <button
-              type="button"
-              onClick={speech.toggle}
-              disabled={speech.voiceReady === false}
-              title={speech.voiceReady === false
-                ? `This device has no ${languageById(active).label} voice installed`
-                : "Read the briefing aloud"}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                border: `1px solid ${COLORS.line}`, borderRadius: 8,
-                padding: tv ? "10px 16px" : "7px 12px",
-                fontWeight: 800, fontSize: tv ? 16 : 12.5,
-                cursor: speech.voiceReady === false ? "not-allowed" : "pointer",
-                opacity: speech.voiceReady === false ? 0.45 : 1,
-                background: speech.speaking ? COLORS.purple : COLORS.surface,
-                color: speech.speaking ? "#fff" : COLORS.ink,
-              }}
-            >
-              {speech.voiceReady === false
-                ? <VolumeX size={tv ? 18 : 14} />
-                : speech.speaking ? <Pause size={tv ? 18 : 14} /> : <Volume2 size={tv ? 18 : 14} />}
-              {speech.voiceReady === false
-                ? "No voice"
-                : speech.speaking ? "Stop" : "Listen"}
-            </button>
-          )}
         </div>
       </div>
 
-{/* ---- the demo ----
-          The host's own video if they have pasted one, otherwise the
-          built-in demo, which flies the mission's real 3D world. */}
-      {videoUrl ? (
-        <DemoVideo url={videoUrl} compact={!tv} />
-      ) : (
-        <Suspense fallback={(
-          <div style={{
-            height: tv ? 420 : 240, borderRadius: 10,
-            background: COLORS.surface, border: `1px solid ${COLORS.line}`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: COLORS.muted, fontSize: 13,
-          }}>
-            Loading the 3D demo…
-          </div>
-        )}>
-          <MissionDemoPlayer
-            gameId={gameId}
-            captions={brief.steps}
-            speak={speech}
-            height={tv ? 440 : 240}
-          />
-        </Suspense>
-      )}
+      {/* ---- the demo ----
+          The host's own video if they have pasted one; otherwise the
+          mission's real 3D world. Either way the instructions underneath
+          go one step at a time, in English and Tamil together. */}
+      {videoUrl && <DemoVideo url={videoUrl} compact={!tv} />}
+      <Suspense fallback={(
+        <div style={{
+          height: tv ? 420 : 230, borderRadius: 10,
+          background: COLORS.surface, border: `1px solid ${COLORS.line}`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: COLORS.muted, fontSize: 13,
+        }}>
+          Loading the 3D demo…
+        </div>
+      )}>
+        <MissionDemoPlayer
+          gameId={gameId}
+          steps={steps}
+          lang={active}
+          with3d={!videoUrl}
+          size={size}
+          height={tv ? 440 : 230}
+        />
+      </Suspense>
 
       {/* ---- one screen: what it is, what to do, how it scores ----
           The briefing used to run to three panels and a rules list,
@@ -382,13 +266,6 @@ export default function MissionDemo({
         }}>
           {brief.goal}
         </p>
-      </Section>
-
-      <Section icon={<ListChecks size={tv ? 18 : 14} color={COLORS.green} />}
-        title="HOW TO PLAY" color={COLORS.green} size={size}>
-        {/* The first three steps only. The rest are discoverable in
-            the game and were pushing the video off the screen. */}
-        <Bullets items={brief.steps.slice(0, 3)} color={COLORS.green} numbered size={size} />
       </Section>
 
       <div style={{

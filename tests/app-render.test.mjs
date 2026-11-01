@@ -537,6 +537,111 @@ section("The mission briefing renders in both languages");
   check("a non-http video link is refused, not embedded",
     !rootEl.querySelector("video") && !rootEl.querySelector("iframe"));
 
+  /* ---- the demo goes one step at a time, in both languages ----
+   *
+   * "The demo — make it proper, with instructions one by one of what
+   * they have to do, in two languages, Tamil and English." It was a
+   * camera fly-through with a caption in ONE language, and a list of
+   * the first three steps. Now each step is on screen on its own, in
+   * English and Tamil together, with the control it is about. */
+  {
+    const firstId = ROUND_GAMES.includes("safety-mission") ? "safety-mission" : ROUND_GAMES[0];
+    const steps = briefs.missionSteps(firstId);
+    demoRoot.render(React.createElement(MissionDemo, {
+      gameId: firstId, game: emptyGame, size: "compact", lang: "en",
+    }));
+    for (let i = 0; i < 40 && !visibleText().includes("STEP 1 OF"); i++) await settle(100);
+    let text = visibleText();
+    check("the demo shows one numbered step at a time, in both numberings",
+      text.includes(`STEP 1 OF ${steps.length}`) && text.includes(`படி 1 / ${steps.length}`),
+      text.slice(0, 160));
+    check("the step is on screen in English AND Tamil together",
+      text.includes(steps[0].en) && text.includes(steps[0].ta));
+    check("only that step is showing, not the whole list",
+      !text.includes(steps[1].en) && !text.includes(steps[2].en));
+    check("the step shows the control it is about, with its Tamil",
+      steps[0].controls.every((c) => text.includes(c.en) && text.includes(c.ta)),
+      steps[0].controls.map((c) => c.en).join(", "));
+
+    const press = (label) => {
+      const b = [...rootEl.querySelectorAll("button")].find((x) => x.getAttribute("aria-label") === label);
+      if (b) b.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      return !!b;
+    };
+    press("Pause");
+    await settle(80);
+    check("Next moves on to the next step", press("Next step") && (await settle(120), visibleText().includes(steps[1].en)));
+    text = visibleText();
+    check("the next step brings its own control", steps[1].controls.every((c) => text.includes(c.en)),
+      steps[1].controls.map((c) => c.en).join(", "));
+    check("Back goes back", press("Previous step") && (await settle(120), visibleText().includes(steps[0].en)));
+    check("any step can be jumped to", press(`Step ${steps.length}`) && (await settle(120), visibleText().includes(steps[steps.length - 1].en)));
+    const nextAtEnd = [...rootEl.querySelectorAll("button")].find((x) => x.getAttribute("aria-label") === "Next step");
+    check("there is no step after the last one", !!nextAtEnd?.disabled);
+
+    // Tamil can lead, with the English underneath — and switching
+    // language keeps your place rather than starting the steps again.
+    const stepOnScreen = () => {
+      const m = visibleText().match(/STEP (\d+) OF/);
+      return m ? Number(m[1]) - 1 : -1;
+    };
+    const before = stepOnScreen();
+    demoRoot.render(React.createElement(MissionDemo, {
+      gameId: firstId, game: emptyGame, size: "compact", lang: "ta",
+    }));
+    await settle(200);
+    const shown = stepOnScreen();
+    check("switching language keeps your place in the steps", shown === before && shown >= 0,
+      `step ${before + 1} before, ${shown + 1} after`);
+    const region = rootEl.querySelector('section[aria-label="How to play, one step at a time"]');
+    const paras = region ? [...region.querySelectorAll("p")].map((p) => p.textContent) : [];
+    check("with Tamil chosen, the Tamil leads and the English follows",
+      shown >= 0 && paras[0] === steps[shown].ta && paras[1] === steps[shown].en,
+      paras.join(" | ").slice(0, 160));
+
+    // With the host's video playing, the steps still go one by one.
+    demoRoot.render(React.createElement(MissionDemo, {
+      gameId: firstId,
+      game: { missionVideos: { ...briefs.emptyMissionVideos(), [firstId]: { en: "https://example.com/demo.mp4", ta: "" } } },
+      size: "compact", lang: "en",
+    }));
+    for (let i = 0; i < 20 && !rootEl.querySelector("video"); i++) await settle(100);
+    const withVideoStep = stepOnScreen();
+    check("a host video still gets the step-by-step instructions under it",
+      !!rootEl.querySelector("video") && withVideoStep >= 0
+        && visibleText().includes(steps[withVideoStep].ta)
+        && visibleText().includes(steps[withVideoStep].en));
+
+    // It plays itself through, step by step, to the end.
+    const { default: Player } = await server.ssrLoadModule("/src/arena/ui/MissionDemoPlayer.jsx");
+    demoRoot.render(React.createElement(Player, {
+      gameId: firstId, steps, lang: "en", with3d: false, autoPlay: true, secondsPerStep: 0.15,
+    }));
+    await settle(80);
+    const seen = new Set();
+    for (let i = 0; i < 60; i++) {
+      const t = visibleText();
+      steps.forEach((st, k) => { if (t.includes(st.en)) seen.add(k); });
+      if (t.includes("Again")) break;
+      await settle(60);
+    }
+    check("left alone it plays every step in turn", seen.size === steps.length,
+      `${seen.size} of ${steps.length} steps shown`);
+    check("at the end it offers to go again", visibleText().includes("Again"));
+  }
+
+  // Every step of every mission is written in both languages and names
+  // the control it is about.
+  const gaps = [];
+  ROUND_GAMES.forEach((id) => {
+    briefs.missionSteps(id).forEach((st, i) => {
+      if (!st.translated) gaps.push(`${id} step ${i + 1}: no Tamil`);
+      if (!st.controls.length) gaps.push(`${id} step ${i + 1}: no control`);
+    });
+  });
+  check("every step of every mission is in both languages and shows its control",
+    gaps.length === 0, gaps.join("; "));
+
   check("no React errors rendering any briefing",
     reactErrors.length === before, reactErrors.slice(before, before + 2).join(" | "));
 

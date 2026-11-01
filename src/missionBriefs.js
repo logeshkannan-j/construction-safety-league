@@ -290,6 +290,88 @@ export const MISSION_BRIEFS = {
 
 export const BRIEF_GAME_IDS = Object.keys(MISSION_BRIEFS);
 
+/* ------------------------- the step-by-step demo -------------------------
+ *
+ * The demo goes through a mission ONE STEP AT A TIME, and every step is
+ * shown in English and Tamil together, so nobody has to switch language
+ * to follow it — a crew watching the TV is a mix of both.
+ *
+ * Each step also shows the control it is about, drawn the way it looks
+ * in the game. The game's buttons are labelled in English (INSPECT, TOP
+ * VIEW), so the chip carries that exact label, with a Tamil gloss
+ * underneath saying what it does.
+ */
+export const CONTROL_INFO = {
+  joystick: { en: "Joystick, left side", ta: "இடதுபுற ஜாய்ஸ்டிக்", color: "#FFC629", icon: "joystick" },
+  drag: { en: "Drag on the right to look", ta: "வலதுபுறம் இழுத்துப் பார்க்கவும்", color: "#59B7FF", icon: "drag" },
+  inspect: { en: "INSPECT", ta: "ஆய்வு செய்", color: "#FFC629", icon: "inspect", button: true },
+  topview: { en: "TOP VIEW", ta: "மேலிருந்து பார்", color: "#33C481", icon: "topview", button: true },
+  planview: { en: "PLAN VIEW", ta: "வரைபடப் பார்வை", color: "#33C481", icon: "topview", button: true },
+  zoom: { en: "ZOOM", ta: "பெரிதாக்கு", color: "#9B7CF2", icon: "zoom", button: true },
+  use: { en: "USE", ta: "பயன்படுத்து", color: "#9B7CF2", icon: "use", button: true },
+  next: { en: "NEXT", ta: "அடுத்தது", color: "#59B7FF", icon: "next", button: true },
+  brief: { en: "BRIEF", ta: "விளக்கம்", color: "#59B7FF", icon: "brief", button: true },
+  attach: { en: "ATTACH", ta: "கொக்கியை இணை", color: "#33C481", icon: "attach", button: true },
+  release: { en: "RELEASE", ta: "சுமையை விடு", color: "#59B7FF", icon: "release", button: true },
+  estop: { en: "E-STOP", ta: "அவசர நிறுத்தம்", color: "#EA4F4F", icon: "estop", button: true },
+  slew: { en: "SLEW", ta: "ஜிப்பைச் சுழற்று", color: "#FFC629", icon: "slew", button: true },
+  trolley: { en: "TROLLEY", ta: "கொக்கி முன் / பின்", color: "#FFC629", icon: "trolley", button: true },
+  hoist: { en: "HOIST", ta: "தூக்கு / இறக்கு", color: "#33C481", icon: "hoist", button: true },
+  tap: { en: "Tap it", ta: "அதைத் தொடுங்கள்", color: "#FFC629", icon: "tap" },
+  choice: { en: "Pick the answer", ta: "விடையைத் தேர்ந்தெடுங்கள்", color: "#33C481", icon: "choice" },
+  timer: { en: "Beat the clock", ta: "நேரத்திற்குள் முடியுங்கள்", color: "#FFC629", icon: "timer" },
+  wind: { en: "Wind meter", ta: "காற்று அளவு", color: "#59B7FF", icon: "wind" },
+  zone: { en: "Exclusion zone", ta: "தடை மண்டலம்", color: "#EA4F4F", icon: "zone" },
+  fire: { en: "The right extinguisher", ta: "சரியான தீயணைப்பான்", color: "#EA4F4F", icon: "fire" },
+  muster: { en: "Muster point", ta: "கூடும் இடம்", color: "#33C481", icon: "muster" },
+  command: { en: "Take command", ta: "பொறுப்பேற்கவும்", color: "#FFC629", icon: "command" },
+  stations: { en: "Stations", ta: "நிலையங்கள்", color: "#59B7FF", icon: "stations" },
+  order: { en: "In the right order", ta: "சரியான வரிசையில்", color: "#9B7CF2", icon: "order" },
+  noentry: { en: "Never go in", ta: "உள்ளே செல்லாதீர்கள்", color: "#EA4F4F", icon: "noentry" },
+  sign: { en: "A sign is not a fix", ta: "பலகை தீர்வு அல்ல", color: "#EA4F4F", icon: "zone" },
+};
+
+/** Which controls each step of each mission is about, by step. */
+export const STEP_CONTROLS = {
+  "safety-mission": [
+    ["joystick", "drag"], ["inspect"], ["choice"], ["sign"], ["topview"], ["timer"],
+  ],
+  "crane-master": [
+    ["attach"], ["slew", "trolley", "hoist"], ["slew", "hoist"], ["trolley"],
+    ["zone"], ["wind"], ["estop"], ["release"],
+  ],
+  "safest-tower": [
+    ["drag", "zoom"], ["tap"], ["choice"], ["sign"], ["next"], ["topview"],
+  ],
+  "escape-challenge": [
+    ["joystick", "drag", "use"], ["choice"], ["fire", "use"], ["muster"], ["planview"],
+  ],
+  "emergency-commander": [
+    ["tap"], ["command"], ["stations"], ["order"], ["noentry"], ["topview"], ["brief"],
+  ],
+};
+
+/**
+ * A mission's steps, each in both languages with the controls it is
+ * about: [{ en, ta, controls: [{ id, en, ta, color, icon, button }] }].
+ * A step missing in Tamil falls back to its English, and is marked so.
+ */
+export function missionSteps(gameId) {
+  const entry = MISSION_BRIEFS[gameId];
+  if (!entry) return [];
+  const en = entry.en?.steps || [];
+  const ta = entry.ta?.steps || [];
+  const controls = STEP_CONTROLS[gameId] || [];
+  return en.map((text, i) => ({
+    en: text,
+    ta: ta[i] || text,
+    translated: !!ta[i],
+    controls: (controls[i] || [])
+      .map((id) => (CONTROL_INFO[id] ? { id, ...CONTROL_INFO[id] } : null))
+      .filter(Boolean),
+  }));
+}
+
 /** The brief for one mission in one language, falling back to English. */
 export function missionBrief(gameId, lang = DEFAULT_LANGUAGE) {
   const entry = MISSION_BRIEFS[gameId];
