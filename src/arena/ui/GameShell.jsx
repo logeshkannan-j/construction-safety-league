@@ -9,7 +9,7 @@ import {
 } from "../arenaConstants.js";
 import { supportsWebGL, resolveQuality, isMobileLayout, isTouchDevice } from "../engine/gfx.js";
 import { submitRun, fetchAllProfiles, buildLeaderboard } from "../arenaDb.js";
-import { loadSettings, saveSettings, CAMERA_DISTANCES, AVATARS } from "../identity.js";
+import { loadSettings, saveSettings, CAMERA_DISTANCES, AVATARS, BUTTON_POSITIONS, buttonPositionFor } from "../identity.js";
 import { sfx, setSoundEnabled, setVolume, unlockAudio, disposeAudio } from "../audio.js";
 import { ArenaButton, Overlay, Pill, panelStyle } from "./primitives.jsx";
 import {
@@ -68,6 +68,19 @@ function genRunId() {
  * the results screen offers "continue" instead of "play again".
  */
 /**
+ * Where the action buttons sit on the right of the screen, measured up
+ * from the bottom so the room left under them is the same on any phone.
+ * Raised (the default) and middle leave the bottom-right corner free,
+ * which is where a thumb rests to drag the view; bottom is the old place,
+ * in the corner.
+ */
+export function actionButtonPlacement(position = "raised") {
+  if (position === "bottom") return { bottom: "max(22px, calc(env(safe-area-inset-bottom, 0px) + 16px))" };
+  if (position === "middle") return { bottom: "max(150px, calc(env(safe-area-inset-bottom, 0px) + 40vh))" };
+  return { bottom: "max(104px, calc(env(safe-area-inset-bottom, 0px) + 26vh))" };
+}
+
+/**
  * Which parts of the HUD are on screen. While a scene plays — the ERT's
  * response — only its subtitles are: the top bar with the objective,
  * clock and score, the toasts, the side panels and the crosshair all go,
@@ -105,6 +118,7 @@ export function controlLayoutFor({ scheme, touch, joystickStyle = "fixed" } = {}
 export default function GameShell({
   game, identity, onExit, onOpenLeaderboard,
   embedded = false, onEmbeddedComplete, roundLabel = "",
+  config = null,
 }) {
   /* ------------------------------ state ------------------------------ */
 
@@ -567,6 +581,7 @@ export default function GameShell({
   // away until it is over.
   const cutscene = hud.cutscene || null;
   const layers = hudLayersFor({ cutscene });
+  const buttonPosition = buttonPositionFor(settings, config);
   const interactive = phase === "playing" && !paused && !dialog && !portraitBlock && !cutscene;
   const showMobileControls = mobile && interactive;
 
@@ -637,7 +652,7 @@ export default function GameShell({
 
       {/* ---------------- touch look pad (sits under the HUD) ---------------- */}
       {needsTouchLook && (
-        <TouchLook input={input} sensitivity={settings.lookSensitivity} />
+        <TouchLook input={input} sensitivity={settings.lookSensitivity} hintLow={buttonPosition !== "bottom"} />
       )}
 
       {/* ---------------- HUD ---------------- */}
@@ -794,7 +809,7 @@ export default function GameShell({
                 style={{
                   position: "absolute",
                   right: "max(14px, env(safe-area-inset-right, 0px))",
-                  bottom: "max(22px, calc(env(safe-area-inset-bottom, 0px) + 16px))",
+                  ...actionButtonPlacement(buttonPosition),
                   pointerEvents: "none",
                 }}
               >
@@ -861,6 +876,7 @@ export default function GameShell({
           error={loadError}
           quality={quality}
           settings={settings}
+          buttonPosition={buttonPosition}
           updateSettings={updateSettings}
         />
       )}
@@ -870,6 +886,7 @@ export default function GameShell({
         <PauseMenu
           game={game}
           settings={settings}
+          buttonPosition={buttonPosition}
           updateSettings={updateSettings}
           quality={quality}
           showSettings={showSettings}
@@ -917,7 +934,7 @@ export default function GameShell({
 
 function BriefingScreen({
   game, ready, difficultyId, setDifficultyId, onStart, onExit, mobile, error,
-  quality, settings, updateSettings, embedded = false, roundLabel = "",
+  quality, settings, updateSettings, embedded = false, roundLabel = "", buttonPosition = "raised",
 }) {
   const [tab, setTab] = useState("brief");
   // Skipping inside a session costs the participant their 3D score, so
@@ -1029,6 +1046,7 @@ function BriefingScreen({
               setDifficultyId={setDifficultyId}
               quality={quality}
               settings={settings}
+          buttonPosition={buttonPosition}
               updateSettings={updateSettings}
               mobile={mobile}
             />
@@ -1192,7 +1210,7 @@ function ControlsTab({ game, mobile }) {
   );
 }
 
-function DifficultyTab({ difficultyId, setDifficultyId, quality, settings, updateSettings, mobile }) {
+function DifficultyTab({ difficultyId, setDifficultyId, quality, settings, updateSettings, mobile, buttonPosition }) {
   return (
     <div>
       <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
@@ -1227,7 +1245,7 @@ function DifficultyTab({ difficultyId, setDifficultyId, quality, settings, updat
         })}
       </div>
 
-      <GraphicsAndSound quality={quality} settings={settings} updateSettings={updateSettings} mobile={mobile} />
+      <GraphicsAndSound quality={quality} settings={settings} updateSettings={updateSettings} mobile={mobile} buttonPosition={buttonPosition} />
     </div>
   );
 }
@@ -1278,7 +1296,7 @@ function SettingChoice({ title, options, value, onPick, accent = C.yellow }) {
   );
 }
 
-function GraphicsAndSound({ quality, settings, updateSettings, mobile }) {
+function GraphicsAndSound({ quality, settings, updateSettings, mobile, buttonPosition = "raised" }) {
   return (
     <div>
       <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1, color: C.muted, marginBottom: 8 }}>
@@ -1317,6 +1335,15 @@ function GraphicsAndSound({ quality, settings, updateSettings, mobile }) {
         value={settings.joystickStyle}
         onPick={(id) => updateSettings({ joystickStyle: id })}
         accent={C.green}
+      />
+      {/* Where the buttons sit. A thumb dragging the view kept landing on
+          them in the corner, so they sit raised unless chosen otherwise. */}
+      <SettingChoice
+        title="BUTTON POSITION · பொத்தான் நிலை"
+        options={BUTTON_POSITIONS}
+        value={buttonPosition}
+        onPick={(id) => updateSettings({ buttonPosition: id })}
+        accent={C.orange || C.yellow}
       />
       <SettingChoice
         title="CAMERA DISTANCE — OVER THE SHOULDER"
@@ -1440,7 +1467,7 @@ function LoadingScreen({ game, difficulty }) {
 
 function PauseMenu({
   game, settings, updateSettings, quality, showSettings, setShowSettings,
-  onResume, onRestart, onQuit, mobile,
+  onResume, onRestart, onQuit, mobile, buttonPosition,
 }) {
   return (
     <Overlay onBackdrop={onResume}>
@@ -1488,7 +1515,7 @@ function PauseMenu({
           </div>
         ) : (
           <div>
-            <GraphicsAndSound quality={quality} settings={settings} updateSettings={updateSettings} mobile={mobile} />
+            <GraphicsAndSound quality={quality} settings={settings} updateSettings={updateSettings} mobile={mobile} buttonPosition={buttonPosition} />
             <div style={{ fontSize: 11, color: C.muted, margin: "14px 0" }}>
               Changing graphics quality applies when you restart the mission.
             </div>

@@ -154,6 +154,10 @@
       "config": {
         ".write": true,
         "updatedAt": { ".validate": "newData.isNumber()" },
+        "controls": {
+          "buttonPosition": { ".validate": "newData.isString() && (newData.val() === 'raised' || newData.val() === 'middle' || newData.val() === 'bottom')" },
+          "$other": { ".validate": false }
+        },
         "games": {
           "$gameId": {
             ".validate": "$gameId === 'safety-mission' || $gameId === 'crane-master' || $gameId === 'safest-tower' || $gameId === 'escape-challenge' || $gameId === 'emergency-commander'",

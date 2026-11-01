@@ -126,6 +126,10 @@ export const DEFAULT_SETTINGS = {
   cameraDistance: "close",
   // Who you play as. Women work on this site too, and play this game.
   avatar: "man",
+  // Where the action buttons sit on a phone. Null means the event's
+  // default, which the admin sets for everybody; a player's own choice
+  // here wins over it.
+  buttonPosition: null,
 };
 
 export const AVATARS = [
@@ -136,6 +140,26 @@ export const AVATARS = [
 /** The figure a game builds for the player, from their settings. */
 export function avatarGender(settings) {
   return settings?.avatar === "woman" ? "female" : "male";
+}
+
+/**
+ * Where the action buttons sit on the right of a phone screen. Raised is
+ * the default: the bottom-right corner is where a thumb rests to drag
+ * the view, and buttons down there were pressed every time somebody
+ * tried to look round.
+ */
+export const BUTTON_POSITIONS = [
+  { id: "raised", label: "Raised", desc: "Room below to drag the view" },
+  { id: "middle", label: "Middle", desc: "Halfway up the side" },
+  { id: "bottom", label: "Bottom", desc: "Down in the corner" },
+];
+
+/** The position in force: the player's own, else the event's, else raised. */
+export function buttonPositionFor(settings, config) {
+  const ids = BUTTON_POSITIONS.map((p) => p.id);
+  if (ids.includes(settings?.buttonPosition)) return settings.buttonPosition;
+  if (ids.includes(config?.controls?.buttonPosition)) return config.controls.buttonPosition;
+  return "raised";
 }
 
 export const CAMERA_DISTANCES = [

@@ -212,6 +212,7 @@ export default function ArenaView({ onExit }) {
         identity={identity}
         onExit={leaveGame}
         onOpenLeaderboard={openLeaderboard}
+        config={config}
       />
     );
   }

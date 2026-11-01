@@ -399,7 +399,7 @@ export function buildLeaderboard({ profiles = [], feed = [], period = "alltime",
 export function defaultArenaConfig() {
   const games = {};
   GAME_IDS.forEach((id) => { games[id] = { enabled: true }; });
-  return { games, updatedAt: Date.now() };
+  return { games, controls: {}, updatedAt: Date.now() };
 }
 
 export async function fetchArenaConfig() {
@@ -412,6 +412,7 @@ export async function fetchArenaConfig() {
       ...base,
       ...value,
       games: { ...base.games, ...(value.games || {}) },
+      controls: { ...base.controls, ...(value.controls || {}) },
     };
   } catch (e) {
     console.error("[arena] fetchArenaConfig failed", e);
@@ -427,6 +428,23 @@ export async function setGameEnabled(gameId, enabled) {
     return true;
   } catch (e) {
     console.error("[arena] setGameEnabled failed", e);
+    return false;
+  }
+}
+
+/**
+ * The event's default for where the action buttons sit on a phone. One
+ * key under arena/config, next to the game switches; a player's own
+ * choice in Settings still wins over it.
+ */
+export async function setControlDefaults({ buttonPosition }) {
+  if (!["raised", "middle", "bottom"].includes(buttonPosition)) return false;
+  try {
+    await update(ref(db(), `${ARENA}/config/controls`), { buttonPosition });
+    await update(ref(db(), `${ARENA}/config`), { updatedAt: Date.now() });
+    return true;
+  } catch (e) {
+    console.error("[arena] setControlDefaults failed", e);
     return false;
   }
 }

@@ -947,6 +947,40 @@ section("The stick says what it drives, and comes in three kinds");
   probe.remove();
 }
 
+/* --------------------- where the action buttons sit --------------------- */
+
+section("The action buttons sit where a thumb dragging the view does not");
+
+/* "The right side buttons need to be a little higher, with room below
+ * for dragging the view — it always goes to a mistouch. Add a control
+ * position setting so the admin can set it." */
+{
+  const { buttonPositionFor, BUTTON_POSITIONS, DEFAULT_SETTINGS } = await server.ssrLoadModule("/src/arena/identity.js");
+  const { actionButtonPlacement } = await server.ssrLoadModule("/src/arena/ui/GameShell.jsx");
+  check("they are raised by default, leaving the corner free for dragging",
+    buttonPositionFor(DEFAULT_SETTINGS, null) === "raised");
+  check("the event's default, set by the admin, applies to everybody",
+    buttonPositionFor(DEFAULT_SETTINGS, { controls: { buttonPosition: "middle" } }) === "middle");
+  check("and a player's own choice wins over it",
+    buttonPositionFor({ ...DEFAULT_SETTINGS, buttonPosition: "bottom" }, { controls: { buttonPosition: "middle" } }) === "bottom");
+  check("nonsense from either is ignored",
+    buttonPositionFor({ buttonPosition: "sideways" }, { controls: { buttonPosition: 3 } }) === "raised");
+  const raised = actionButtonPlacement("raised");
+  check("raised leaves at least 104 px under them for a thumb", /max\(104px/.test(raised.bottom || ""), JSON.stringify(raised));
+  check("middle is higher still, halfway up the side",
+    /max\(150px/.test(actionButtonPlacement("middle").bottom || ""), JSON.stringify(actionButtonPlacement("middle")));
+  check("bottom is the corner, as it was", /max\(22px/.test(actionButtonPlacement("bottom").bottom || ""));
+  check("there are three to choose from, each explained",
+    BUTTON_POSITIONS.length === 3 && BUTTON_POSITIONS.every((p) => p.label && p.desc));
+  const { setControlDefaults } = await server.ssrLoadModule("/src/arena/arenaDb.js");
+  check("the admin's setting takes nothing but those three, before it goes near the database",
+    (await setControlDefaults({ buttonPosition: "sideways" })) === false);
+  const rules = JSON.parse((await import("node:fs")).readFileSync(new URL("../rules.json", import.meta.url), "utf8"));
+  check("and the database rules hold it to them too",
+    /raised/.test(rules.rules.arena.config.controls?.buttonPosition?.[".validate"] || "")
+      && rules.rules.arena.config.controls?.$other?.[".validate"] === false);
+}
+
 /* ----------------------- the ERT's response overlay ----------------------- */
 
 section("The ERT's response shows nothing but its subtitles");

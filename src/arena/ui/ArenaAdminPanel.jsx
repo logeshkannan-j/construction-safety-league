@@ -5,9 +5,10 @@ import {
 } from "lucide-react";
 import { C, GAMES, GAME_IDS, getGame } from "../arenaConstants.js";
 import {
-  fetchAllProfiles, fetchFeed, fetchArenaConfig, setGameEnabled,
+  fetchAllProfiles, fetchFeed, fetchArenaConfig, setGameEnabled, setControlDefaults,
   findSuspiciousRuns, buildLeaderboard,
 } from "../arenaDb.js";
+import { BUTTON_POSITIONS } from "../identity.js";
 import { ARENA_KEYFRAMES, formatClock } from "./Hud.jsx";
 
 /* ------------------------------------------------------------------ *
@@ -31,6 +32,7 @@ export default function ArenaAdminPanel({ panelStyleOverride }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyGame, setBusyGame] = useState(null);
+  const [busyControls, setBusyControls] = useState(false);
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState("games");
 
@@ -107,6 +109,14 @@ export default function ArenaAdminPanel({ panelStyleOverride }) {
     if (!ok) setError("Could not write the game setting. Check that rules.json allows writes to arena/config.");
     await load();
     setBusyGame(null);
+  }
+
+  async function setButtonDefault(buttonPosition) {
+    setBusyControls(true);
+    const ok = await setControlDefaults({ buttonPosition });
+    if (!ok) setError("Could not save the control setting. Check that rules.json allows writes to arena/config.");
+    await load();
+    setBusyControls(false);
   }
 
   function copyReport() {
@@ -274,6 +284,39 @@ export default function ArenaAdminPanel({ panelStyleOverride }) {
             A disabled game still appears in the Gaming Arena, shown as locked, so players are not
             confused by a menu that changes shape. Existing scores are never deleted.
           </p>
+
+          {/* Where the action buttons sit on phones, for everybody. */}
+          <div style={{ background: C.surfaceRaised, borderRadius: 9, padding: "10px 12px", marginTop: 8 }}>
+            <div style={{ fontWeight: 800, fontSize: 13.5 }}>Phone controls — where the buttons sit</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2, lineHeight: 1.5 }}>
+              The default for every player. Raised keeps the bottom-right corner free for dragging the
+              view. A player can still change it for themselves in Settings.
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+              {BUTTON_POSITIONS.map((p) => {
+                const active = (config?.controls?.buttonPosition || "raised") === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={busyControls}
+                    aria-pressed={active}
+                    onClick={() => setButtonDefault(p.id)}
+                    style={{
+                      padding: "7px 12px", borderRadius: 8, textAlign: "left", minHeight: 40,
+                      border: `1px solid ${active ? C.yellow : C.line}`,
+                      background: active ? C.yellow + "1f" : "transparent",
+                      color: active ? C.yellow : C.muted,
+                      fontSize: 12, fontWeight: 800, cursor: busyControls ? "wait" : "pointer",
+                    }}
+                  >
+                    <span style={{ display: "block" }}>{p.label}</span>
+                    <span style={{ display: "block", fontSize: 10, fontWeight: 600, color: C.muted, marginTop: 2 }}>{p.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
 

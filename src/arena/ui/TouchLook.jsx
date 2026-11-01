@@ -18,7 +18,7 @@ import { C } from "../arenaConstants.js";
  *  stop propagation, so tapping INTERACT never jerks the camera.
  * ------------------------------------------------------------------ */
 
-export default function TouchLook({ input, sensitivity = 1, children, showHint = true }) {
+export default function TouchLook({ input, sensitivity = 1, children, showHint = true, hintLow = false }) {
   const pointerIdRef = useRef(null);
   const lastRef = useRef({ x: 0, y: 0 });
   const movedRef = useRef(0);
@@ -132,7 +132,9 @@ export default function TouchLook({ input, sensitivity = 1, children, showHint =
           style={{
             position: "absolute",
             right: "9%",
-            top: "46%",
+            // Under raised buttons the hint sits in the free corner, which
+            // is where the drag is meant to happen.
+            ...(hintLow ? { bottom: "max(30px, 7vh)" } : { top: "46%" }),
             padding: "8px 12px",
             borderRadius: 20,
             background: C.bg + "aa",
