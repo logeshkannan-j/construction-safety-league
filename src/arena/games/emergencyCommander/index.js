@@ -42,7 +42,7 @@ import {
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PHASES, SCORING, pickScenario } from "./scenarios.js";
-import { createERT, ERT_DONE } from "./ert.js";
+import { createERT } from "./ert.js";
 import {
   STATIONS, STATION_COUNT, STATION_SCORING, HAZARD_ENTRY, stationById,
 } from "./stations.js";
@@ -245,6 +245,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     stationMarkers.set(station.id, {
       station, object, halo, beacon, hit, plate,
       anchor: new THREE.Vector3(anchor.x, 1, anchor.z),
+    });
+  }
+
+  /**
+   * The rings, cones and name signs are for the player finding their way;
+   * while the ERT's response plays they are taken down, so the scene is
+   * the team at work and nothing else.
+   */
+  function showMarkers(show) {
+    stationMarkers.forEach((m) => {
+      m.halo.visible = show;
+      if (m.plate) m.plate.visible = show;
+      m.beacon.visible = show && !state.doneStations.has(m.station.id);
     });
   }
 
@@ -588,6 +601,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     fire: fireGroup, smoke: smokeGroup, smokeMat, sparks: sparkGroup,
     stair: { top: frame.stairs[0]?.exit ?? { x: -10.8, y: 3.4, z: 0.6 } },
     gate: GATE,
+    firstAid: FIRSTAID,
+    muster: MUSTER,
     shot: (s) => siteView.playTour([{ ...s, seconds: 1.6, step: null }], { loop: true }),
   });
 
@@ -958,9 +973,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   function startERTResponse() {
     const started = ert.play(() => {
       state.cutscene = false;
+      showMarkers(true);
       siteView.stopTour();
       input.setEnabled(!state.paused);
-      api.toast(`${ERT_DONE.en} · ${ERT_DONE.ta}`, "good");
+      api.toast(`${ert.done.en} · ${ert.done.ta}`, "good");
       pushHud();
       if (state.doneStations.size >= STATION_COUNT) {
         later(() => { if (!state.finished) finish(true); }, 1600);
@@ -968,6 +984,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
     if (!started) return;
     state.cutscene = true;
+    showMarkers(false);
     input.setEnabled(false);
   }
 

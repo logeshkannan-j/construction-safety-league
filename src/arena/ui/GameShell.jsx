@@ -68,6 +68,17 @@ function genRunId() {
  * the results screen offers "continue" instead of "play again".
  */
 /**
+ * Which parts of the HUD are on screen. While a scene plays — the ERT's
+ * response — only its subtitles are: the top bar with the objective,
+ * clock and score, the toasts, the side panels and the crosshair all go,
+ * so the player watches the response instead of reading the screen.
+ */
+export function hudLayersFor({ cutscene = null } = {}) {
+  const watching = !!cutscene;
+  return { topBar: !watching, toasts: !watching, panels: !watching, crosshair: !watching };
+}
+
+/**
  * Which on-screen controls a mission gets.
  *
  * Worth naming, because the rule is one a screenshot can break: ONE
@@ -555,6 +566,7 @@ export default function GameShell({
   // A scene the player watches (the ERT's response) takes the controls
   // away until it is over.
   const cutscene = hud.cutscene || null;
+  const layers = hudLayersFor({ cutscene });
   const interactive = phase === "playing" && !paused && !dialog && !portraitBlock && !cutscene;
   const showMobileControls = mobile && interactive;
 
@@ -645,11 +657,11 @@ export default function GameShell({
               pointerEvents: "none",
             }}
           >
-            {hud.flashDanger && (
+            {layers.topBar && hud.flashDanger && (
               <div style={{ position: "absolute", inset: 0, animation: "cslArenaFlashRed 1.1s ease-in-out infinite", pointerEvents: "none" }} />
             )}
 
-            <HudTopBar
+            {layers.topBar && <HudTopBar
               objective={hud.objective || game.title}
               score={hud.score || 0}
               timeMs={hud.timeMs ?? null}
@@ -663,12 +675,12 @@ export default function GameShell({
               fullscreen={fullscreen}
               onLanguage={() => setLang(otherLang())}
               languageShort={(LANGS.find((l) => l.id === lang) || LANGS[0]).short}
-            />
+            />}
 
             {/* The crosshair marks where the CAMERA is pointing, so it
                 belongs to the screen rather than to the space under the
                 top bar. It stays outside the box below. */}
-            {hud.crosshair && (
+            {layers.crosshair && hud.crosshair && (
               <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                 <Crosshair state={hud.crosshair} accent={game.accent} />
               </div>
@@ -686,12 +698,12 @@ export default function GameShell({
               mobile={mobile}
             />
 
-            <ToastStack toasts={toasts} mobile={mobile} />
+            {layers.toasts && <ToastStack toasts={toasts} mobile={mobile} />}
 
             <CutsceneOverlay cutscene={cutscene} mobile={mobile} lang={lang} />
 
             {/* Meters, readouts and objective list, top-left. */}
-            {!cutscene && (hud.meters?.length > 0 || hud.tasks?.length > 0 || hud.readouts?.length > 0) && (
+            {layers.panels && (hud.meters?.length > 0 || hud.tasks?.length > 0 || hud.readouts?.length > 0) && (
               <div
                 style={{
                   position: "absolute",

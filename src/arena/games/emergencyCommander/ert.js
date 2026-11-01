@@ -14,12 +14,16 @@
  *
  *    fall         nobody climbs up to him: the rescue kit on the lift
  *                 lowers him, the first aider treats him for suspension
- *                 trauma, and he goes out on the spinal board
+ *                 trauma, and he is carried on the spinal board to the
+ *                 first-aid post, where they wait with him for the
+ *                 ambulance
  *    fire         the fire wardens fight it from OUTSIDE, upwind, with
- *                 CO2 from the fire point, keep the LPG clear, and hold
- *                 for the fire service
+ *                 CO2 from the fire point, keep the LPG clear, hand over
+ *                 to the fire service and report to the assembly point
  *    electrical   nobody touches him until the supply is proved dead,
- *                 then CPR and the AED
+ *                 then CPR and the AED; once he is breathing he goes on
+ *                 the board to the first-aid post to wait for the
+ *                 ambulance
  *
  *  This module owns the team, its kit and the beats of each response.
  *  The game owns the clock, the camera and the HUD; it hands this a
@@ -47,8 +51,12 @@ export const ERT_CAPTIONS = {
       ta: "முதலுதவியாளர் அவரது சுவாசப் பாதையையும் மூச்சையும் சோதித்து, தொங்கியதால் ஏற்பட்ட பாதிப்புக்குச் சிகிச்சை அளிக்கிறார்.",
     },
     {
-      en: "He is strapped to the spinal board and carried out to meet the ambulance at the gate.",
-      ta: "அவர் முதுகெலும்புப் பலகையில் கட்டப்பட்டு, வாயிலில் ஆம்புலன்ஸைச் சந்திக்கத் தூக்கிச் செல்லப்படுகிறார்.",
+      en: "He is strapped to the spinal board, and the rescuers carry him to the first-aid post, the first aider walking beside him.",
+      ta: "அவர் முதுகெலும்புப் பலகையில் கட்டப்பட்டு, மீட்பாளர்கள் அவரை முதலுதவி நிலையத்துக்குத் தூக்கிச் செல்கிறார்கள்; முதலுதவியாளர் அருகிலேயே நடந்து வருகிறார்.",
+    },
+    {
+      en: "At the first-aid post they set him down and keep him still and warm. The first aider stays with him and the team leader radios the gate. They wait there for the ambulance.",
+      ta: "முதலுதவி நிலையத்தில் அவரை மெதுவாகக் கீழே வைத்து, அசையாமலும் கதகதப்பாகவும் வைத்திருக்கிறார்கள். முதலுதவியாளர் அவருடனேயே இருக்கிறார்; குழுத் தலைவர் வாயிலுக்கு ரேடியோவில் தகவல் தருகிறார். ஆம்புலன்ஸ் வரும் வரை அங்கேயே காத்திருக்கிறார்கள்.",
     },
   ],
   fire: [
@@ -68,6 +76,10 @@ export const ERT_CAPTIONS = {
       en: "The fire is knocked down. They keep the LPG cylinders clear and hold until the fire service takes over.",
       ta: "தீ கட்டுக்குள் வருகிறது. LPG சிலிண்டர்களைப் பாதுகாத்து, தீயணைப்புத் துறை பொறுப்பேற்கும் வரை காத்திருக்கிறார்கள்.",
     },
+    {
+      en: "With the fire handed over to the fire service, the ERT reports to the assembly point for the roll call.",
+      ta: "தீயைத் தீயணைப்புத் துறையிடம் ஒப்படைத்ததும், அவசர மீட்புக் குழு பெயர் சரிபார்ப்புக்காகக் கூடும் இடத்துக்குச் செல்கிறது.",
+    },
   ],
   electrical: [
     {
@@ -83,19 +95,31 @@ export const ERT_CAPTIONS = {
       ta: "அவர் சரியாக மூச்சு விடவில்லை. முதலுதவியாளர் CPR தொடங்கி AED பட்டைகளைப் பொருத்துகிறார்.",
     },
     {
-      en: "The AED advises a shock. Everybody stands clear, then CPR carries on until the ambulance crew takes over.",
-      ta: "AED ஷாக் கொடுக்கச் சொல்கிறது. அனைவரும் விலகி நிற்கிறார்கள், பிறகு ஆம்புலன்ஸ் குழு பொறுப்பேற்கும் வரை CPR தொடர்கிறது.",
+      en: "The AED advises a shock. Everybody stands clear; then CPR again, until his breathing comes back.",
+      ta: "AED ஷாக் கொடுக்கச் சொல்கிறது. அனைவரும் விலகி நிற்கிறார்கள்; பிறகு அவரது மூச்சு திரும்பும் வரை மீண்டும் CPR.",
+    },
+    {
+      en: "On the spinal board they bring him down to the first-aid post, where the ambulance can reach him. The first aider stays with him, the AED still on, and they wait for the ambulance.",
+      ta: "முதுகெலும்புப் பலகையில் வைத்து, ஆம்புலன்ஸ் வந்து சேரக்கூடிய முதலுதவி நிலையத்துக்கு அவரைக் கீழே கொண்டு வருகிறார்கள். AED பொருத்தப்பட்ட நிலையில் முதலுதவியாளர் அவருடனேயே இருக்கிறார்; ஆம்புலன்ஸுக்காகக் காத்திருக்கிறார்கள்.",
     },
   ],
 };
 
 export const ERT_DONE = {
-  en: "The ERT has the casualty. The clock is running again — carry on with the response.",
-  ta: "அவசரக் குழு பாதிக்கப்பட்டவரைக் கவனித்துக் கொள்கிறது. நேரம் மீண்டும் ஓடுகிறது — மீதிப் பணிகளைத் தொடருங்கள்.",
+  en: "The ERT has the casualty at the first-aid post, waiting for the ambulance. The clock is running again — carry on with the response.",
+  ta: "அவசரக் குழு பாதிக்கப்பட்டவருடன் முதலுதவி நிலையத்தில் ஆம்புலன்ஸுக்காகக் காத்திருக்கிறது. நேரம் மீண்டும் ஓடுகிறது — மீதிப் பணிகளைத் தொடருங்கள்.",
+};
+
+/** What the player is told when the response is over, by scenario. */
+const ERT_DONE_BY_KIND = {
+  fire: {
+    en: "The ERT has handed the fire over and is at the assembly point. The clock is running again — carry on with the response.",
+    ta: "அவசரக் குழு தீயை ஒப்படைத்துவிட்டு கூடும் இடத்தில் உள்ளது. நேரம் மீண்டும் ஓடுகிறது — மீதிப் பணிகளைத் தொடருங்கள்.",
+  },
 };
 
 /** How long each beat is on screen, in seconds. */
-const BEAT_SECONDS = [6, 7, 7, 7];
+const BEAT_SECONDS = [6, 7, 7, 7, 8];
 
 /* ------------------------------ the kit ------------------------------ */
 
@@ -145,6 +169,8 @@ function buildAED(geo, mat) {
  * @param ctx.stair               { foot: {x, z}, top: {x, y, z} } of the flight
  * @param ctx.firePoint           {x, z} of the fire point
  * @param ctx.gate                {x, z} of the emergency vehicle gate
+ * @param ctx.firstAid            {x, z} of the first-aid post
+ * @param ctx.muster              {x, z} of the assembly point
  * @param ctx.shot(shot)          point the camera at a shot
  */
 export function createERT(ctx) {
@@ -254,6 +280,33 @@ export function createERT(ctx) {
   // open ground north of the building, head away from the face.
   const ground = { x: inc.x, z: inc.z - 1.6 };
 
+  // Where the board is set down at the first-aid post, and the assembly
+  // point the team reports to after a fire.
+  const firstAid = ctx.firstAid || { x: P.x - 3.4, z: P.z + 1.8 };
+  const aid = new THREE.Vector3(firstAid.x + 2.2, 0, firstAid.z - 3.2);
+  const muster = ctx.muster || { x: P.x + 50, z: P.z + 10 };
+
+  // The last beat for a casualty: cut to the first-aid post as they come
+  // in with him, the first aider and the team leader with them. The
+  // board goes down when the bearers get there (see during()).
+  const toFirstAid = () => {
+    casualtyOnBoard = true;
+    boardCarried = true;
+    if (ctx.casualty) ctx.casualty.userData.pose = "stand";
+    place(bearerA, [aid.x + 3.6, 0, aid.z]);
+    place(bearerB, [aid.x + 5.5, 0, aid.z]);
+    send(bearerA, [[aid.x - 0.95, 0, aid.z]], { run: false, pose: "carry" });
+    send(bearerB, [[aid.x + 0.95, 0, aid.z]], { run: false, pose: "carry" });
+    place(medic, [aid.x + 4.6, 0, aid.z + 1.3]);
+    send(medic, [[aid.x - 0.1, 0, aid.z + 0.78]], { run: false, pose: "kneel", face: Math.PI });
+    place(leader, [aid.x + 6, 0, aid.z - 1.4]);
+    const gate = ctx.gate || { x: aid.x + 40, z: aid.z };
+    send(leader, [[aid.x + 2.4, 0, aid.z + 1.5]], {
+      run: false, pose: "stand", face: Math.atan2(gate.x - (aid.x + 2.4), gate.z - (aid.z + 1.5)),
+    });
+    ctx.shot({ center: [aid.x + 1, 0.7, aid.z + 0.3], yaw: -2.35, pitch: 0.36, distance: 9.5 });
+  };
+
   const beats = {
     fall: [
       () => {
@@ -277,18 +330,20 @@ export function createERT(ctx) {
         ctx.shot({ center: [ground.x, 0.5, ground.z - 0.9], yaw: Math.PI - 0.45, pitch: 0.42, distance: 7.5 });
       },
       () => {
-        // Strapped on and carried out across the yard towards the gate.
+        // Strapped on and carried off along the yard, round the building
+        // towards the first-aid post, the first aider beside him.
         casualtyOnBoard = true;
         boardCarried = true;
-        const out = [inc.x + 9, 0, inc.z - 7];
-        place(bearerA, [ground.x + 1.3, 0, ground.z - 1.85]);
-        place(bearerB, [ground.x + 1.3, 0, ground.z + 0.05]);
-        send(bearerA, [out], { run: false, pose: "carry" });
-        send(bearerB, [[out[0] - 0.4, 0, out[2] + 1.9]], { run: false, pose: "carry" });
-        send(medic, [[out[0] + 1.3, 0, out[2] + 1.2]], { run: false });
-        send(leader, [[out[0] - 1.8, 0, out[2] - 1]], { run: false });
-        ctx.shot({ center: [inc.x + 5, 0.8, inc.z - 5], yaw: Math.PI - 0.25, pitch: 0.34, distance: 15 });
+        place(bearerA, [ground.x - 0.95, 0, ground.z]);
+        place(bearerB, [ground.x + 0.95, 0, ground.z]);
+        const west = [ground.x - 11, 0, ground.z - 1.9];
+        send(bearerA, [west], { run: false, pose: "carry" });
+        send(bearerB, [[west[0] + 1.9, 0, west[2]]], { run: false, pose: "carry" });
+        send(medic, [[west[0] + 1, 0, west[2] + 1.1]], { run: false });
+        send(leader, [[west[0] - 2.2, 0, west[2] - 0.6]], { run: false });
+        ctx.shot({ center: [ground.x - 5, 0.8, ground.z - 2], yaw: Math.PI - 0.25, pitch: 0.34, distance: 14 });
       },
+      toFirstAid,
     ],
     fire: [
       () => {
@@ -313,6 +368,16 @@ export function createERT(ctx) {
         sprays.forEach((spray) => { spray.visible = false; });
         send(leader, [[inc.x + 6.5, 0, inc.z + 4.6]], { run: false, pose: "stand", face: -Math.PI / 2 });
         ctx.shot({ center: [inc.x + 1, 2, inc.z + 2], yaw: 0.3, pitch: 0.45, distance: 20 });
+      },
+      () => {
+        // Handed over to the fire service: the team reports to the
+        // assembly point and lines up for the roll call.
+        extinguishers.forEach((e) => { e.visible = false; });
+        team.forEach((w, i) => {
+          place(w, [muster.x - 5 + i * 0.9, 0, muster.z - 9 - i * 0.5]);
+          send(w, [[muster.x - 1.8 + i * 1.2, 0, muster.z - 2.6]], { run: false, pose: "stand", face: 0 });
+        });
+        ctx.shot({ center: [muster.x, 1, muster.z - 2.4], yaw: Math.PI - 0.35, pitch: 0.3, distance: 13 });
       },
     ],
     electrical: [
@@ -347,6 +412,12 @@ export function createERT(ctx) {
       },
       () => {
         ctx.shot({ center: [inc.x - 0.4, inc.y + 0.6, inc.z + 0.3], yaw: -0.2, pitch: 0.18, distance: 7.2 });
+      },
+      () => {
+        // Breathing again: on the board and down to the first-aid post,
+        // the AED still on him.
+        moves.get(medic).cpr = false;
+        toFirstAid();
       },
     ],
   };
@@ -414,6 +485,20 @@ export function createERT(ctx) {
     if (kind === "electrical" && b === 3) {
       // The shock: hands off for a moment, then back on the chest.
       moves.get(medic).cpr = run.t > 2.2;
+    }
+    if (kind !== "fire" && b === 4 && boardCarried
+      && !moves.get(bearerA).route.length && !moves.get(bearerB).route.length) {
+      // At the post: the board down on the ground, and the bearers stand
+      // back. The first aider is already on her knees beside him.
+      boardCarried = false;
+      board.position.set(aid.x, 0.04, aid.z);
+      board.rotation.set(0, Math.PI / 2, 0);
+      send(bearerA, [[aid.x - 1.6, 0, aid.z - 1.2]], { run: false, pose: "stand", face: 0.8 });
+      send(bearerB, [[aid.x + 1.5, 0, aid.z - 1.3]], { run: false, pose: "stand", face: -0.7 });
+      if (aed) {
+        aed.visible = true;
+        aed.position.set(aid.x + 0.25, 0.02, aid.z + 0.62);
+      }
     }
   }
 
@@ -495,6 +580,10 @@ export function createERT(ctx) {
     team,
     leader, medic, bearerA, bearerB,
     board,
+    // Where the casualty is taken, and where the team reports after a fire.
+    aid, muster,
+    // What the player is told when it is over.
+    done: ERT_DONE_BY_KIND[kind] || ERT_DONE,
     play,
     update,
     caption,

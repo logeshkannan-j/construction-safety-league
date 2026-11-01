@@ -1259,6 +1259,10 @@ section("The ERT responds, and the clock stops while it does");
       `${ertStation.action} / ${ertStation.ta.action}`);
     t.actOnStation(ertStation);
     check(`${scenarioId}: sending it starts the response`, t.state.cutscene === true && t.ert.active);
+    // "The screen is full of letters and unwanted things while it plays."
+    const markers = [...t.stationMarkers.values()];
+    check(`${scenarioId}: the rings, cones and name signs come down while it plays`,
+      markers.every((m) => !m.plate.visible && !m.halo.visible && !m.beacon.visible));
     const clock = t.state.remainingMs;
     runFrames(300);
     check(`${scenarioId}: the clock is frozen while it plays`, t.state.remainingMs === clock,
@@ -1271,9 +1275,20 @@ section("The ERT responds, and the clock stops while it does");
       team.some((w, i) => w.position.distanceTo(home[i]) > 6),
       team.map((w, i) => w.position.distanceTo(home[i]).toFixed(1)).join(", "));
 
-    // Through to the end.
-    for (let i = 0; i < 60 && t.state.cutscene; i++) runFrames(60);
+    // Through to the end, watching the CPR on the way.
+    let cpr = null;
+    for (let i = 0; i < 160 && t.state.cutscene; i++) {
+      runFrames(30);
+      if (scenarioId === "electrical" && t.ert.beat === 3 && !cpr) {
+        cpr = {
+          hips: t.ert.medic.userData.rig.hips.position.y,
+          near: t.ert.medic.position.distanceTo(t.casualty.position),
+        };
+      }
+    }
     check(`${scenarioId}: the response ends by itself`, t.state.cutscene === false && !t.ert.active);
+    check(`${scenarioId}: and the signs are back when it is over`,
+      markers.every((m) => m.plate.visible && m.halo.visible));
     check(`${scenarioId}: the HUD drops the captions`, !record.hud.cutscene);
     const after = t.state.remainingMs;
     runFrames(120);
@@ -1288,18 +1303,36 @@ section("The ERT responds, and the clock stops while it does");
       c.updateMatrixWorld(true);
       check("fall: he is brought down to the ground, not left hanging",
         new THREE.Box3().setFromObject(c).min.y < 1.2, `${new THREE.Box3().setFromObject(c).min.y.toFixed(2)} m`);
-      check("fall: he goes out on the spinal board",
-        t.ert.board.position.distanceTo(c.position) < 1.6 && t.ert.board.position.y > 0.5,
-        `board at ${t.ert.board.position.y.toFixed(2)} m, ${t.ert.board.position.distanceTo(c.position).toFixed(2)} m from him`);
+    }
+    // "After the response they have to take the victim on the stretcher to
+    // the first-aid area and wait for the ambulance — or go to the
+    // assembly point."
+    if (scenarioId === "fall" || scenarioId === "electrical") {
+      const c = t.casualty;
+      const board = t.ert.board.position;
+      const aid = t.ert.aid;
+      const medic = t.ert.medic;
+      check(`${scenarioId}: he is carried on the spinal board to the first-aid post, and set down there`,
+        Math.hypot(board.x - aid.x, board.z - aid.z) < 0.5 && board.y < 0.3 && c.position.distanceTo(board) < 1.2,
+        `board ${Math.hypot(board.x - aid.x, board.z - aid.z).toFixed(2)} m from the post, ${board.y.toFixed(2)} m up; him ${c.position.distanceTo(board).toFixed(2)} m from it`);
+      check(`${scenarioId}: the first aider is on her knees beside him`,
+        medic.userData.rig.hips.position.y < 0.75 && medic.position.distanceTo(c.position) < 1.6,
+        `hips at ${medic.userData.rig.hips.position.y.toFixed(2)}, ${medic.position.distanceTo(c.position).toFixed(2)} m away`);
+      runFrames(300);
+      check(`${scenarioId}: and they stay with him there, waiting for the ambulance`,
+        Math.hypot(t.ert.board.position.x - aid.x, t.ert.board.position.z - aid.z) < 0.5
+          && medic.position.distanceTo(c.position) < 1.6);
     }
     if (scenarioId === "fire") {
       check("fire: the fire is knocked down", t.fire.scale.x < 0.5, `fire at ${(t.fire.scale.x * 100).toFixed(0)}%`);
+      const far = team.map((w) => Math.hypot(w.position.x - t.ert.muster.x, w.position.z - t.ert.muster.z));
+      check("fire: then the team reports to the assembly point", far.every((d) => d < 6),
+        far.map((d) => d.toFixed(1)).join(", ") + " m from it");
     }
     if (scenarioId === "electrical") {
-      const medic = t.ert.medic;
-      check("electrical: the first aider is down on her knees beside him doing CPR",
-        medic.userData.rig.hips.position.y < 0.75 && medic.position.distanceTo(t.casualty.position) < 1.6,
-        `hips at ${medic.userData.rig.hips.position.y.toFixed(2)}, ${medic.position.distanceTo(t.casualty.position).toFixed(2)} m away`);
+      check("electrical: before that, the first aider was down on her knees beside him doing CPR",
+        !!cpr && cpr.hips < 0.75 && cpr.near < 1.6,
+        cpr ? `hips at ${cpr.hips.toFixed(2)}, ${cpr.near.toFixed(2)} m away` : "never saw the CPR beat");
     }
 
     // It plays once: sending a team that is already out does nothing.

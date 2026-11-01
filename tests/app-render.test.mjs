@@ -949,7 +949,7 @@ section("The stick says what it drives, and comes in three kinds");
 
 /* ----------------------- the ERT's response overlay ----------------------- */
 
-section("The ERT's response is captioned, and says the clock has stopped");
+section("The ERT's response shows nothing but its subtitles");
 
 {
   const { CutsceneOverlay } = await server.ssrLoadModule("/src/arena/ui/Hud.jsx");
@@ -966,8 +966,14 @@ section("The ERT's response is captioned, and says the clock has stopped");
   root.render(React.createElement(CutsceneOverlay, { cutscene: cut, lang: "en" }));
   await settle(120);
   const text = () => (probe.textContent || "").replace(/\s+/g, " ").trim();
-  check("it says the clock has stopped, in both languages",
-    /TIMER PAUSED/.test(text()) && /நேரம்/.test(text()), text().slice(0, 80));
+  // "The screen is full of letters and unwanted things — just the event,
+  // and the subtitles below." No banner, no black bars: one caption box.
+  check("it is the subtitles and nothing else: no banner, no bars",
+    !/TIMER PAUSED/.test(text()) && probe.firstChild?.children.length === 1,
+    `${probe.firstChild?.children.length} boxes: ${text().slice(0, 60)}`);
+  const pausedMark = probe.querySelector('[aria-label*="Timer paused"]');
+  check("the stopped clock is a small mark in the caption, named in both languages",
+    !!pausedMark && /நேரம்/.test(pausedMark.getAttribute("aria-label")));
   check("it captions what the team is doing, in English and Tamil",
     text().includes(cut.line) && text().includes(cut.lineAlt));
   check("it says which part of the response this is", text().includes("2 / 4"));
@@ -978,6 +984,15 @@ section("The ERT's response is captioned, and says the clock has stopped");
   root.render(React.createElement(CutsceneOverlay, { cutscene: null }));
   await settle(80);
   check("and it is gone when the response is over", text() === "");
+
+  // The rest of the HUD goes while it plays, and comes back after.
+  const { hudLayersFor } = await server.ssrLoadModule("/src/arena/ui/GameShell.jsx");
+  const watching = hudLayersFor({ cutscene: cut });
+  const playing = hudLayersFor({ cutscene: null });
+  check("while it plays, the top bar, toasts, panels and crosshair are all off",
+    !watching.topBar && !watching.toasts && !watching.panels && !watching.crosshair, JSON.stringify(watching));
+  check("and they are all back when it is over",
+    playing.topBar && playing.toasts && playing.panels && playing.crosshair, JSON.stringify(playing));
   check("no React errors drawing it", reactErrors.length === errorsBefore,
     reactErrors.slice(errorsBefore).join(" | "));
   root.unmount();
