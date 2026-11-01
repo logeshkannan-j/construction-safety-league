@@ -7,12 +7,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tests/arena-logic.test.mjs && node tests/arena-games.test.mjs && node tests/session.test.mjs && node tests/app-render.test.mjs",
+    "test": "node tests/arena-logic.test.mjs && node tests/arena-games.test.mjs && node tests/session.test.mjs && node tests/app-render.test.mjs && node tests/tv-link.test.mjs",
     "test:logic": "node tests/arena-logic.test.mjs",
     "test:games": "node tests/arena-games.test.mjs",
     "test:session": "node tests/session.test.mjs",
     "deploy": "gh-pages -d dist",
-    "test:render": "node tests/app-render.test.mjs"
+    "test:render": "node tests/app-render.test.mjs",
+    "test:tv": "node tests/tv-link.test.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^9.122.0",

@@ -20,6 +20,8 @@ import TouchLook from "./TouchLook.jsx";
 import ActionButtonCluster, { CraneControls } from "./ActionButtons.jsx";
 import { getLang, setLang, otherLang, LANGS, onLangChange } from "../language.js";
 import ResultsScreen from "./ResultsScreen.jsx";
+import { useTvSpotlight, OnTvBadge } from "../../TvSpotlight.jsx";
+import { createTvSender, getTvChannel } from "../../tvLink.js";
 
 /* ------------------------------------------------------------------ *
  *  GAME SHELL
@@ -469,6 +471,41 @@ export default function GameShell({
     instanceRef.current?.setPaused(paused);
   }, [paused, phase]);
 
+  /* --------------------------- live on the TV ---------------------------
+   *
+   * The host can put any participant on the TV from the admin panel.
+   * While this player is the one picked and a mission is running, the
+   * canvas goes to the TV live (tvLink.js); the rest of the time nothing
+   * is sent and nothing is written. One sender per mission: a retry is a
+   * new canvas, so it gets a new sender.
+   */
+  const { spotlight: tvSpotlight } = useTvSpotlight();
+  const onTv = !!(tvSpotlight && identity?.id && String(tvSpotlight.playerId) === String(identity.id));
+  const tvSenderRef = useRef(null);
+  useEffect(() => {
+    if (!onTv || phase !== "playing") return undefined;
+    const canvas = containerRef.current?.querySelector("canvas");
+    if (!canvas) return undefined;
+    const sender = createTvSender({
+      channel: getTvChannel(),
+      playerId: identity.id,
+      canvas,
+      info: { name: identity.name, team: identity.team || "", gameId: game.id, title: game.title, round: roundLabel },
+    });
+    tvSenderRef.current = sender;
+    return () => {
+      sender.dispose();
+      if (tvSenderRef.current === sender) tvSenderRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onTv, phase, identity?.id]);
+  useEffect(() => {
+    tvSenderRef.current?.follow(tvSpotlight);
+  }, [tvSpotlight, onTv, phase]);
+  useEffect(() => {
+    tvSenderRef.current?.publish({ score: hud.score, timeMs: hud.timeMs, objective: hud.objective, progress: hud.progress });
+  }, [hud, onTv, phase]);
+
   // While a decision dialog is open the player must not also be walking
   // around behind it, so input is muted (the clock keeps running).
   useEffect(() => {
@@ -705,6 +742,8 @@ export default function GameShell({
                 space that is actually left, so the panels inside it can
                 be measured from its own edges. */}
             <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+
+            {onTv && <OnTvBadge />}
 
             <InteractPrompt
               text={cutscene ? null : hud.prompt?.text}

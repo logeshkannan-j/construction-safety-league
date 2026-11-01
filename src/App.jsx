@@ -5,7 +5,7 @@ import {
   ChevronRight, Shield, Zap, Crown, QrCode, LogIn, Volume2, VolumeX,
   Target, Upload, Trash2, MapPin, ImagePlus, X, Percent, Phone, Gem, Ban,
   Pencil, UserMinus, Save, AlertTriangle, ListChecks, Lock, Gamepad2,
-  Projector, Languages, Copy, Monitor
+  Projector, Languages, Copy, Monitor, Tv
 } from "lucide-react";
 
 // The 3D Safety Gaming Arena is loaded on demand. Everything it needs
@@ -50,6 +50,7 @@ import {
 // The palette and the shared control styles now live in theme.js so the
 // integrated session screens can reuse them verbatim. Same values.
 import { COLORS, inputStyle, btnStyle, linkBtnStyle } from "./theme.js";
+import { useTvSpotlight, SpotlightStage, TvSpotlightPanel } from "./TvSpotlight.jsx";
 
 
 // Local (per-browser, NOT synced to Firebase) flag that remembers this
@@ -1253,6 +1254,17 @@ function AdminView({ onExit }) {
               as a player gives you a normal participant session — it will appear on the
               leaderboard like anybody else, so use a test employee number.
             </p>
+          </Panel>
+
+          {/* Puts one participant's 3D mission on the TV, live. This one
+              does write — the pick, to tv/spotlight — and nothing else. */}
+          <Panel title="Live on the TV" icon={<Tv size={18} color={COLORS.red} />}>
+            <p style={{ color: COLORS.muted, fontSize: 13, marginBottom: 12, lineHeight: 1.55 }}>
+              Put anybody&apos;s 3D mission on the TV, live, while a round is open. The TV shows
+              their game as they play it, with the race down the side. Pick someone else at any
+              time, or go back to the scoreboard.
+            </p>
+            <TvSpotlightPanel players={players} describe={(p) => describeParticipant(p, questions)} />
           </Panel>
 
           <Panel title="Mission demo videos" icon={<Projector size={18} color={COLORS.purple} />}>
@@ -2727,6 +2739,8 @@ export function tvScreenFor(game) {
 
 function TVView({ onExit }) {
   const { game, questions, players, connected, dbError } = useGamePoll();
+  // Whoever the host has put on the TV (TvSpotlight.jsx), live.
+  const { spotlight, live } = useTvSpotlight();
   const [now, setNow] = useState(Date.now());
   const [serverOffset, setServerOffset] = useState(0);
   useEffect(() => {
@@ -2799,7 +2813,7 @@ function TVView({ onExit }) {
           </Suspense>
         </div>
       )}
-      {screen === "live" && (
+      {screen === "live" && !spotlight && (
         <LiveSessionDisplay
           game={game}
           players={players}
@@ -2807,6 +2821,18 @@ function TVView({ onExit }) {
           releasedRound={releasedRound}
         />
       )}
+      {screen === "live" && spotlight && (() => {
+        const picked = players.find((p) => String(p.id) === String(spotlight.playerId)) || null;
+        return (
+          <SpotlightStage
+            spotlight={spotlight}
+            live={live}
+            player={picked}
+            where={picked ? describeParticipant(picked, questions) : null}
+            standings={sorted}
+          />
+        );
+      })()}
       {screen === "question" && curQ && curQ.round === "millionaire" && <MillionaireDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} ladder={millionaireQs} />}
       {screen === "question" && curQ && curQ.round !== "millionaire" && <QuestionDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} />}
       {screen === "reveal" && curQ && <RevealDisplay q={curQ} qIndex={game.qIndex} total={questions.length} players={players} />}

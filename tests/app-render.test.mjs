@@ -81,6 +81,13 @@ const ReactDOMClient = await import("react-dom/client");
 // Skip the PIN screen the way a returning admin device does.
 dom.window.localStorage.setItem("csl_admin_unlocked_v1", "1");
 
+// Live on the TV runs on an in-memory channel here, so nothing this suite
+// renders can write to the real database (the TV and the admin panel
+// would otherwise register with it).
+const tvLink = await server.ssrLoadModule("/src/tvLink.js");
+const tvChannel = tvLink.memoryChannel();
+tvLink.setTvChannel(tvChannel);
+
 const { default: App } = await server.ssrLoadModule("/src/App.jsx");
 const rootEl = document.getElementById("root");
 const root = ReactDOMClient.createRoot(rootEl);
@@ -1587,6 +1594,93 @@ section("The TV shows the live session and the final result");
 
   probeRoot.unmount();
   probe.remove();
+}
+
+section("Live on the TV: the host picks a participant, the TV shows them");
+
+/* "Host the live players' gaming to the TV: whoever joined to play, the
+ * admin can select the person and show it on the TV." */
+{
+  const { TvSpotlightPanel, SpotlightStage } = await server.ssrLoadModule("/src/TvSpotlight.jsx");
+  const probe = document.createElement("div");
+  document.body.appendChild(probe);
+  const probeRoot = ReactDOMClient.createRoot(probe);
+  const probeText = () => (probe.textContent || "").replace(/\s+/g, " ").trim();
+  const errorsBefore = reactErrors.length;
+  const waitFor = async (test, ms = 3000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (test()) return true; await settle(30); }
+    return test();
+  };
+
+  const people = [
+    { id: "p1", name: "Ravi Kumar", team: "Blue", score: 2400 },
+    { id: "p2", name: "Meena R", score: 1800 },
+  ];
+  const describe = (p) => (p.id === "p1"
+    ? { label: "Safety Mission", sub: "3D MISSION", tone: "#FF5A1F" }
+    : { label: "Working at height", sub: "QUIZ QUESTION", tone: "#33C481" });
+
+  probeRoot.render(React.createElement(TvSpotlightPanel, { players: people, describe }));
+  check("the host sees everybody who has joined, and where they are",
+    await waitFor(() => probeText().includes("Ravi Kumar") && probeText().includes("Meena R") && probeText().includes("3D MISSION")),
+    probeText().slice(0, 200));
+  check("with a button to put each one on the TV",
+    [...probe.querySelectorAll("button")].filter((b) => b.textContent.includes("Show on TV")).length === 2);
+  check("and nobody on it yet", probeText().includes("The TV shows the scoreboard"));
+  const firstRow = [...probe.querySelectorAll("button")].find((b) => b.textContent.includes("Show on TV"));
+  check("whoever is in a 3D mission is listed first", firstRow?.parentElement?.textContent.includes("Ravi Kumar"));
+  firstRow?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  check("picking them puts them on the TV", await waitFor(() => tvChannel.read("tv/spotlight")?.playerId === "p1"),
+    JSON.stringify(tvChannel.read("tv/spotlight")));
+  check("the panel says so, and that no TV screen is open yet",
+    await waitFor(() => probeText().includes("On the TV: Ravi Kumar") && probeText().includes("No TV screen is open")),
+    probeText().slice(0, 200));
+  check("their row is marked", probeText().includes("ON THE TV"));
+  const token = tvChannel.read("tv/spotlight").token;
+  await tvChannel.write("tv/viewers/screen1", { token, state: "video", at: Date.now() });
+  check("and the host can see when the TV has the live video",
+    await waitFor(() => probeText().includes("Live video on the TV.")));
+  await tvChannel.write("tv/viewers/screen1", { token, state: "snapshots", at: Date.now() });
+  check("or only snapshots, and why",
+    await waitFor(() => probeText().includes("snapshots") && probeText().includes("connect directly")));
+
+  // The TV itself. jsdom has no WebRTC, so this screen falls back to
+  // snapshots — which is also what proves the fallback is drawn.
+  probeRoot.render(React.createElement(SpotlightStage, {
+    spotlight: tvChannel.read("tv/spotlight"),
+    live: null,
+    player: people[0],
+    where: describe(people[0]),
+    standings: people,
+  }));
+  check("before their mission starts, the TV says they are on and what they are doing",
+    await waitFor(() => probeText().includes("LIVE") && probeText().includes("Ravi Kumar") && probeText().includes("will appear here")),
+    probeText().slice(0, 220));
+  check("with the race down the side, them highlighted", probeText().includes("THE RACE") && probeText().includes("Meena R"));
+  const live = { stream: "s1", name: "Ravi Kumar", title: "Safety Mission Simulator", round: "Round 2", score: 640, timeMs: 95000, objective: "Find and report site hazards (3/10)", progress: 30, at: Date.now() };
+  probeRoot.render(React.createElement(SpotlightStage, {
+    spotlight: tvChannel.read("tv/spotlight"), live, player: people[0], where: describe(people[0]), standings: people,
+  }));
+  check("once the mission is live, the TV shows its score, clock and objective",
+    await waitFor(() => probeText().includes("640") && probeText().includes("1:35") && probeText().includes("Find and report site hazards (3/10)")),
+    probeText().slice(0, 260));
+  check("and which round and mission it is", probeText().includes("Round 2 · Safety Mission Simulator"));
+  check("a screen without WebRTC asks for snapshots",
+    await waitFor(() => Object.values(tvChannel.read("tv/links") || {}).some((l) => l?.s1?.fallback === true)));
+  await tvChannel.write("tv/frames/p1", { stream: "s1", img: "data:image/jpeg;base64,AAAA", at: Date.now() });
+  check("and shows them", await waitFor(() => probe.querySelector("img")?.getAttribute("src") === "data:image/jpeg;base64,AAAA"));
+
+  // Back to the scoreboard.
+  probeRoot.render(React.createElement(TvSpotlightPanel, { players: people, describe }));
+  await waitFor(() => probeText().includes("Back to the scoreboard"));
+  [...probe.querySelectorAll("button")].find((b) => b.textContent.includes("Back to the scoreboard"))
+    ?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  check("the host can take them off again", await waitFor(() => tvChannel.read("tv/spotlight") === null));
+  check("no React errors on the TV screens", reactErrors.length === errorsBefore, reactErrors.slice(errorsBefore).join(" | "));
+  probeRoot.unmount();
+  probe.remove();
+  check("and the screen that closed leaves nothing behind", await waitFor(() => tvChannel.read("tv/links") === null));
 }
 
 /* ------------------------------- report ------------------------------- */
