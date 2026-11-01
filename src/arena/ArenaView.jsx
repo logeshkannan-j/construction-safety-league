@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { HardHat, Gamepad2, Loader2 } from "lucide-react";
 import { C, getGame } from "./arenaConstants.js";
 import { resolveIdentity, saveName, resolvePlayerId } from "./identity.js";
@@ -9,6 +9,19 @@ import ArenaHome from "./ui/ArenaHome.jsx";
 import ArenaLeaderboard from "./ui/ArenaLeaderboard.jsx";
 import GameShell from "./ui/GameShell.jsx";
 import { unlockAudio } from "./audio.js";
+
+// The model viewer brings @react-three/fiber, drei and the models with
+// it, so it is only fetched when somebody opens it.
+const ModelViewer = lazy(() => import("./ModelViewer.jsx"));
+
+/** ?role=arena&view=models opens the model viewer directly. */
+function wantsModelViewer() {
+  try {
+    return new URLSearchParams(window.location.search).get("view") === "models";
+  } catch {
+    return false;
+  }
+}
 
 /* ------------------------------------------------------------------ *
  *  ARENA ROOT
@@ -24,7 +37,8 @@ import { unlockAudio } from "./audio.js";
  * ------------------------------------------------------------------ */
 
 export default function ArenaView({ onExit }) {
-  const [screen, setScreen] = useState("loading"); // loading | name | home | game | leaderboard
+  // loading | name | home | game | leaderboard | models
+  const [screen, setScreen] = useState(() => (wantsModelViewer() ? "models" : "loading"));
   const [identity, setIdentity] = useState(null);
   const [profile, setProfile] = useState(null);
   const [config, setConfig] = useState(defaultArenaConfig);
@@ -54,7 +68,8 @@ export default function ArenaView({ onExit }) {
 
       if (!resolved.name) {
         setIdentity(resolved);
-        setScreen("name");
+        // Somebody who came straight to the model viewer stays there.
+        setScreen((s) => (s === "models" ? s : "name"));
         setLoading(false);
         return;
       }
@@ -75,13 +90,13 @@ export default function ArenaView({ onExit }) {
       if (!savedProfile) {
         setError("Connected, but your Arena profile could not be read. Scores may not save — check your connection.");
       }
-      setScreen("home");
+      setScreen((s) => (s === "models" ? s : "home"));
     } catch (e) {
       console.error("[arena] bootstrap failed", e);
       if (!mountedRef.current) return;
       setError("Could not reach the Construction League database. You can still play, but scores will not be saved.");
       setIdentity((current) => current || { id: resolvePlayerId(), name: "Player", source: "none" });
-      setScreen("home");
+      setScreen((s) => (s === "models" ? s : "home"));
     } finally {
       if (mountedRef.current) setLoading(false);
     }
@@ -153,6 +168,20 @@ export default function ArenaView({ onExit }) {
 
   /* ---------------------------- rendering ---------------------------- */
 
+  if (screen === "models") {
+    return (
+      <Suspense fallback={(
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: C.muted }}>
+          <Loader2 size={22} color={C.yellow} style={{ animation: "cslArenaSpin 1s linear infinite", marginRight: 10 }} />
+          Opening the model viewer…
+          <style>{ARENA_KEYFRAMES}</style>
+        </div>
+      )}>
+        <ModelViewer onBack={() => { setScreen("loading"); bootstrap(); }} />
+      </Suspense>
+    );
+  }
+
   if (screen === "loading") {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -210,6 +239,7 @@ export default function ArenaView({ onExit }) {
       onRefresh={refreshProfile}
       onExit={onExit}
       onChangeName={() => setScreen("name")}
+      onOpenModels={() => setScreen("models")}
     />
   );
 }

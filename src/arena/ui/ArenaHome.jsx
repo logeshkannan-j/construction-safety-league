@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Gamepad2, Trophy, Play, Clock, BarChart3, Award, Lock, RefreshCw,
-  ChevronLeft, User, Loader2, AlertTriangle, Target, CheckCircle2, Zap,
+  ChevronLeft, User, Loader2, AlertTriangle, Target, CheckCircle2, Zap, Box,
 } from "lucide-react";
 import { C, GAMES, ACHIEVEMENTS, GAME_IDS } from "../arenaConstants.js";
 import { ArenaButton, Pill, StatBox, panelStyle, Divider } from "./primitives.jsx";
@@ -21,7 +21,7 @@ import { sfx, unlockAudio } from "../audio.js";
 
 export default function ArenaHome({
   identity, profile, config, loading, error,
-  onPlay, onOpenLeaderboard, onRefresh, onExit, onChangeName,
+  onPlay, onOpenLeaderboard, onRefresh, onExit, onChangeName, onOpenModels,
 }) {
   const [showAchievements, setShowAchievements] = useState(false);
   const bestScores = profile?.bestScores || {};
@@ -201,6 +201,26 @@ export default function ArenaHome({
             />
           ))}
         </div>
+
+        {onOpenModels && (
+          <button
+            type="button"
+            onClick={onOpenModels}
+            style={{
+              ...panelStyle, width: "100%", marginTop: 16, cursor: "pointer", textAlign: "left",
+              display: "flex", alignItems: "center", gap: 12, color: C.ink,
+            }}
+          >
+            <Box size={22} color={C.purple} style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontWeight: 900, fontSize: 14.5 }}>3D model viewer</span>
+              <span style={{ display: "block", color: C.muted, fontSize: 12, lineHeight: 1.5, marginTop: 2 }}>
+                The worker scan, the Mixamo character with Walking, Fast Run, Angry and Snatch, the
+                rubble scan and the site props, in one scene you can walk the camera round.
+              </span>
+            </span>
+          </button>
+        )}
 
         <p style={{ color: C.muted, fontSize: 11.5, lineHeight: 1.6, marginTop: 26, textAlign: "center" }}>
           Your scores are saved to the Construction League leaderboard under the name above.

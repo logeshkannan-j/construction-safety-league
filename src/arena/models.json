@@ -1,0 +1,49 @@
+{
+  "about": "What the 3D model viewer loads. Paths are relative to public/models-web, which holds web-sized copies of the raw files in public/models (the raw files stay out of git: 176 MB). The copies keep the geometry and cap the textures (1024 px, 512 px for the city block, 2048 px for the rubble scan); the four Mixamo FBX files are merged into one GLB with all four clips on the one rig; the rubble OBJ is the same mesh with its numbers written to 0.1 mm instead of 17 digits.",
+  "base": "models-web/",
+  "worker": {
+    "id": "worker",
+    "label": "Worker scan",
+    "file": "worker.glb",
+    "source": "public/models/man-work/worker.glb",
+    "triangles": 346642,
+    "skeleton": false,
+    "bones": 0,
+    "mb": 7.4,
+    "fix": [
+      "It is a static scan: one mesh, no skeleton, no animations, so Walking, Fast Run, Angry and Snatch cannot drive it as it is.",
+      "Upload it to mixamo.com (as FBX or OBJ), place the chin, wrist, elbow, knee and groin markers, and download it rigged (FBX, with skin). Mixamo rigs use the same mixamorig bone names as the four animations, so they play on it without retargeting.",
+      "Before using it in a mission, reduce it to about 15,000 triangles (Blender: Decimate modifier) and model the hard hat and vest as separate parts, so a hazard can show a worker without them."
+    ]
+  },
+  "animated": {
+    "id": "mixamo",
+    "label": "Mixamo character",
+    "file": "mixamo-character.glb",
+    "sources": ["public/models/Walking.fbx", "public/models/Fast Run.fbx", "public/models/Angry.fbx", "public/models/Snatch.fbx"],
+    "clips": ["Walking", "Fast Run", "Angry", "Snatch"],
+    "mb": 8.7
+  },
+  "rubble": {
+    "id": "rubble",
+    "label": "Construction rubble (photogrammetry scan)",
+    "obj": "construction-rubble/model.obj",
+    "mtl": "construction-rubble/model.mtl",
+    "maps": {
+      "diffuse": "construction-rubble/tex_u1_v1_diffuse.jpg",
+      "normal": "construction-rubble/tex_u1_v1_normal.jpg",
+      "roughness": "construction-rubble/roughness.jpg",
+      "ao": "construction-rubble/ao.jpg"
+    },
+    "size": 14,
+    "at": [0, 0, -17],
+    "mb": 21.2
+  },
+  "props": [
+    { "id": "city-block", "label": "City block", "file": "city-block.glb", "size": 44, "at": [-38, 0, -46], "mb": 8.3 },
+    { "id": "planks", "label": "Wood planks and debris", "file": "planks.glb", "size": 3.2, "at": [5.5, 0, -6], "mb": 1.2 },
+    { "id": "stones", "label": "Stones", "file": "stones.glb", "size": 3, "at": [-5, 0, -5.5], "mb": 0.7 },
+    { "id": "grass", "label": "Grass", "file": "grass.glb", "size": 1.6, "at": [-2.6, 0, 2.2], "mb": 2.1,
+      "copies": [[3.4, 0, 2.6], [-5.5, 0, -1.5], [1.2, 0, 4.4], [7, 0, -1]] }
+  ]
+}

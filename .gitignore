@@ -2,3 +2,7 @@ node_modules
 dist
 .DS_Store
 *.local
+
+# Raw 3D model sources (176 MB): never committed. The app loads the
+# web-sized copies in public/models-web, listed in src/arena/models.json.
+public/models/

@@ -984,6 +984,75 @@ section("The ERT's response is captioned, and says the clock has stopped");
   probe.remove();
 }
 
+/* ---------------------------- the model viewer ---------------------------- */
+
+section("The 3D model viewer has every model it lists, at a size a phone can take");
+
+{
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const manifest = JSON.parse(fs.readFileSync(new URL("../src/arena/models.json", import.meta.url), "utf8"));
+  const root = fileURLToPath(new URL(`../public/${manifest.base}`, import.meta.url));
+  const files = [
+    manifest.worker.file, manifest.animated.file, manifest.rubble.obj, manifest.rubble.mtl,
+    ...Object.values(manifest.rubble.maps), ...manifest.props.map((p) => p.file),
+  ];
+  const missing = files.filter((f) => !fs.existsSync(path.join(root, f)));
+  check("every file the viewer loads is there", missing.length === 0, missing.join(", "));
+  const sizes = files.filter((f) => fs.existsSync(path.join(root, f)))
+    .map((f) => [f, fs.statSync(path.join(root, f)).size / 1048576]);
+  const total = sizes.reduce((a, [, mb]) => a + mb, 0);
+  check("no single file is a raw multi-megabyte original",
+    sizes.every(([, mb]) => mb < 20), sizes.filter(([, mb]) => mb >= 20).map(([f, mb]) => `${f} ${mb.toFixed(1)} MB`).join(", "));
+  check("the whole viewer stays well under the 176 MB of raw files",
+    total < 60, `${total.toFixed(1)} MB`);
+  check("the raw sources are kept out of git",
+    /^public\/models\/$/m.test(fs.readFileSync(new URL("../.gitignore", import.meta.url), "utf8")));
+  check("the four animations are the four clips of one rig",
+    manifest.animated.clips.join(",") === "Walking,Fast Run,Angry,Snatch");
+  check("the worker scan is recorded as having no skeleton, with the fix",
+    manifest.worker.skeleton === false && manifest.worker.fix.length >= 2);
+
+  // The helper every model is placed with: real size, on the ground.
+  const { fitTo } = await server.ssrLoadModule("/src/arena/ModelViewer.jsx");
+  const THREE = await import("three");
+  const thing = new THREE.Mesh(new THREE.BoxGeometry(2, 180, 1));
+  thing.position.set(40, -12, 9);
+  fitTo(thing, { size: 1.8, by: "height", at: [3, 0, -2] });
+  thing.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(thing);
+  const c = b.getCenter(new THREE.Vector3());
+  check("a model in centimetres is scaled to its real height",
+    Math.abs(b.max.y - b.min.y - 1.8) < 1e-6, `${(b.max.y - b.min.y).toFixed(3)} m`);
+  check("and stood on the ground where it was put",
+    Math.abs(b.min.y) < 1e-6 && Math.abs(c.x - 3) < 1e-6 && Math.abs(c.z + 2) < 1e-6,
+    `foot ${b.min.y.toFixed(3)}, centre ${c.x.toFixed(2)}, ${c.z.toFixed(2)}`);
+
+  // The way in, from the Arena home.
+  const { default: ArenaHome } = await server.ssrLoadModule("/src/arena/ui/ArenaHome.jsx");
+  const probe = document.createElement("div");
+  document.body.appendChild(probe);
+  const homeRoot = ReactDOMClient.createRoot(probe);
+  let opened = 0;
+  const errorsBefore = reactErrors.length;
+  homeRoot.render(React.createElement(ArenaHome, {
+    identity: { id: "p1", name: "Test" }, profile: null, config: {}, loading: false, error: "",
+    onPlay() {}, onOpenLeaderboard() {}, onRefresh() {}, onExit() {}, onChangeName() {},
+    onOpenModels() { opened += 1; },
+  }));
+  await settle(200);
+  const card = [...probe.querySelectorAll("button")].find((x) => /3D model viewer/.test(x.textContent));
+  check("the Arena home offers the model viewer", !!card);
+  card?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  await settle(60);
+  check("and opens it", opened === 1);
+  check("no React errors on the Arena home", reactErrors.length === errorsBefore,
+    reactErrors.slice(errorsBefore).join(" | "));
+  homeRoot.unmount();
+  probe.remove();
+}
+
 /* --------------------- no free variables anywhere --------------------- */
 
 section("Every identifier a component uses is one it actually has");
