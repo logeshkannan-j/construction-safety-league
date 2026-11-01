@@ -17,6 +17,7 @@ import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import { createFirstPerson, ladderVolume } from "../../engine/fpsController.js";
+import { avatarGender } from "../../identity.js";
 import {
   createMaterials, createGeometries, box, cylinder, collider,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail, buildScaffold,
@@ -472,7 +473,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       { speed: 1.25, load: buildCementBag(geo, mat) }
     ),
     createWalker(
-      buildWorker(geo, mat, { role: "officer", seed: 4022 }),
+      // The site's safety engineer doing her rounds.
+      buildWorker(geo, mat, { role: "officer", gender: "female", seed: 4022 }),
       [
         { x: -31, z: -21, pause: 3.5, pose: "stand" },
         { x: -20, z: -26 },
@@ -761,7 +763,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    * body. Walks when they walk.
    */
   const avatar = buildWorker(geo, mat, {
-    helmet: true, vest: true, boots: true, role: "officer",
+    helmet: true, vest: true, boots: true, role: "officer", gender: avatarGender(settings),
   });
   avatar.visible = false;
   // Posed from the controller every frame, so the crowd animator

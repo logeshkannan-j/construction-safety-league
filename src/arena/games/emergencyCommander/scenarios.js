@@ -935,6 +935,8 @@ export const SCORING = {
   timeBonusPerSecond: 2,
 };
 
-export function pickScenario() {
-  return SCENARIOS[Math.floor(Math.random() * SCENARIOS.length)];
+/** A scenario by id (the host or a test can name one), otherwise at random. */
+export function pickScenario(preferId = null) {
+  return SCENARIOS.find((s) => s.id === preferId)
+    || SCENARIOS[Math.floor(Math.random() * SCENARIOS.length)];
 }

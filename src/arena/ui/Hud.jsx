@@ -655,3 +655,67 @@ export const ARENA_KEYFRAMES = `
 @keyframes cslArenaFlashRed { 0%,100% { box-shadow: inset 0 0 0 0 #EA4F4F00; } 50% { box-shadow: inset 0 0 120px 0 #EA4F4F55; } }
 @keyframes cslArenaScan { from { background-position: 0 0; } to { background-position: 0 28px; } }
 `;
+
+/**
+ * A scene the player WATCHES rather than plays — the ERT's response in
+ * Emergency Response. Letterbox bars say "this is a scene, not the
+ * game", the badge says the clock has stopped, and the caption says
+ * what is happening, in the player's language first and the other one
+ * under it.
+ */
+export function CutsceneOverlay({ cutscene, mobile = false, lang = "en" }) {
+  if (!cutscene) return null;
+  const tamilFirst = lang === "ta";
+  const first = tamilFirst ? cutscene.lineAlt : cutscene.line;
+  const second = tamilFirst ? cutscene.line : cutscene.lineAlt;
+  const bar = mobile ? "7vh" : "9vh";
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 5 }}
+    >
+      <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: bar, background: "#000", opacity: 0.86 }} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: bar, background: "#000", opacity: 0.86 }} />
+
+      <div style={{
+        position: "absolute", top: `calc(${bar} + 8px)`, left: "50%", transform: "translateX(-50%)",
+        display: "flex", alignItems: "center", gap: 8,
+        background: "rgba(10,12,14,0.82)", border: `1px solid ${C.yellow}`,
+        borderRadius: 999, padding: mobile ? "5px 12px" : "7px 16px",
+        color: C.yellow, fontWeight: 900, letterSpacing: 1.1,
+        fontSize: mobile ? 10.5 : 12.5, whiteSpace: "nowrap",
+      }}>
+        <span style={{ display: "inline-flex", gap: 3 }} aria-hidden="true">
+          <span style={{ width: 4, height: 12, background: C.yellow, borderRadius: 1 }} />
+          <span style={{ width: 4, height: 12, background: C.yellow, borderRadius: 1 }} />
+        </span>
+        TIMER PAUSED · நேரம் நிறுத்தப்பட்டுள்ளது
+      </div>
+
+      <div style={{
+        position: "absolute", left: "50%", transform: "translateX(-50%)",
+        bottom: `calc(${bar} + ${mobile ? 8 : 14}px)`,
+        width: mobile ? "calc(100% - 24px)" : "min(880px, calc(100% - 48px))",
+        background: "rgba(10,12,14,0.84)", border: `1px solid ${C.line}`,
+        borderLeft: `4px solid ${C.red}`, borderRadius: 10,
+        padding: mobile ? "9px 12px" : "14px 18px",
+      }}>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+          fontWeight: 900, letterSpacing: 1.2, fontSize: mobile ? 10 : 12, color: C.red,
+          marginBottom: mobile ? 5 : 8,
+        }}>
+          <span>{cutscene.eyebrow}{cutscene.eyebrowAlt ? ` · ${cutscene.eyebrowAlt}` : ""}</span>
+          <span style={{ color: C.muted }}>{cutscene.step} / {cutscene.steps}</span>
+        </div>
+        <div style={{ color: C.ink, fontWeight: 700, fontSize: mobile ? 13.5 : 18, lineHeight: 1.4 }}>{first}</div>
+        {second && (
+          <div style={{ color: C.muted, fontSize: mobile ? 12 : 15.5, lineHeight: 1.45, marginTop: mobile ? 4 : 6 }}>
+            {second}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

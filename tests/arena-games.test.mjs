@@ -1085,6 +1085,166 @@ section("The sky surrounds the camera, however far out it goes");
   instance.dispose();
 }
 
+section("Women on site are built as women");
+
+/* "Add a female character too." Not a smaller man: narrower shoulders
+ * against wider hips, a shorter height, long hair worn up under the hat,
+ * no moustache — and every mission can put one on site, including as
+ * the player. */
+{
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium" });
+  const mat = kit.createMaterials(stage.cfg);
+  const geo = kit.createGeometries(stage.cfg);
+
+  const man = kit.buildWorker(geo, mat, { seed: 501, gender: "male" });
+  const woman = kit.buildWorker(geo, mat, { seed: 501, gender: "female" });
+  man.updateMatrixWorld(true);
+  woman.updateMatrixWorld(true);
+  const height = (o) => new THREE.Box3().setFromObject(o).max.y;
+  const span = (o, part) => {
+    const b = new THREE.Box3();
+    part(o.userData.rig).traverse((c) => { if (c.isMesh) b.expandByObject(c); });
+    return b.max.x - b.min.x;
+  };
+  const shoulders = (o) => {
+    const l = new THREE.Vector3().setFromMatrixPosition(o.userData.rig.armL.matrixWorld);
+    const r = new THREE.Vector3().setFromMatrixPosition(o.userData.rig.armR.matrixWorld);
+    return l.distanceTo(r);
+  };
+  check("she is reported as a woman", woman.userData.person.gender === "female");
+  // Heights over several people each, so it is the build being
+  // measured and not one lucky draw.
+  const avgHeight = (gender) => {
+    const hs = Array.from({ length: 8 }, (_, i) => {
+      const p = kit.buildWorker(geo, mat, { seed: 600 + i, gender, detail: "low" });
+      p.updateMatrixWorld(true);
+      return height(p);
+    });
+    return hs.reduce((a, b) => a + b, 0) / hs.length;
+  };
+  const womenH = avgHeight("female");
+  const menH = avgHeight("male");
+  check("women are shorter than men, on average", womenH < menH - 0.08,
+    `${womenH.toFixed(2)} m against ${menH.toFixed(2)} m`);
+  check("and of a woman's height", womenH > 1.5 && womenH < 1.75, `${womenH.toFixed(2)} m`);
+  check("her shoulders are narrower than his", shoulders(woman) < shoulders(man) * 0.95,
+    `${shoulders(woman).toFixed(3)} vs ${shoulders(man).toFixed(3)}`);
+  // Shoulder joints against hip joints: the skeleton, not the clothes.
+  const legSpread = (o) => {
+    const l = new THREE.Vector3().setFromMatrixPosition(o.userData.rig.legL.matrixWorld);
+    const r = new THREE.Vector3().setFromMatrixPosition(o.userData.rig.legR.matrixWorld);
+    return l.distanceTo(r);
+  };
+  const frame = (o) => shoulders(o) / legSpread(o);
+  check("her shoulders are narrow against her hips, as a woman's are",
+    frame(woman) < frame(man) * 0.92,
+    `shoulders/hips ${frame(woman).toFixed(2)} vs ${frame(man).toFixed(2)}`);
+  check("she has no moustache", woman.userData.person.moustache === false);
+  const braided = kit.buildWorker(geo, mat, { seed: 502, gender: "female", braid: true });
+  const bun = kit.buildWorker(geo, mat, { seed: 502, gender: "female", braid: false });
+  const headBox = (o) => {
+    o.updateMatrixWorld(true);
+    const b = new THREE.Box3();
+    o.userData.rig.head.traverse((c) => { if (c.isMesh && c.material.userData?.role === "hair") b.expandByObject(c); });
+    return b;
+  };
+  check("her hair is long, worn in a braid down her back",
+    headBox(braided).min.y < headBox(bun).min.y - 0.15,
+    `braid reaches ${headBox(braided).min.y.toFixed(2)} m, the bun ${headBox(bun).min.y.toFixed(2)} m`);
+  const crowd = Array.from({ length: 30 }, (_, i) => kit.buildWorker(geo, mat, { seed: 900 + i, gender: "any", detail: "low" }));
+  const women = crowd.filter((p) => p.userData.person.gender === "female").length;
+  check("a mixed crowd has women in it, and men", women >= 4 && women <= 20, `${women} of 30`);
+  stage.dispose();
+
+  // The player's own character.
+  const identity = await import(`${SRC}/identity.js`);
+  check("the player can choose to play as a woman",
+    identity.AVATARS.some((a) => a.id === "woman") && identity.avatarGender({ avatar: "woman" }) === "female",
+    identity.AVATARS.map((a) => a.id).join(", "));
+  check("and plays as a man unless they choose otherwise",
+    identity.DEFAULT_SETTINGS.avatar === "man" && identity.avatarGender({}) === "male");
+  for (const path of ["safetyMission", "escapeChallenge", "safestTower", "emergencyCommander"]) {
+    const { instance } = await boot(path, { settings: { ...SETTINGS, avatar: "woman" } });
+    check(`${path}: choosing "Woman" puts a woman in the player's boots`,
+      instance.__test.avatar.userData.person.gender === "female");
+    instance.dispose();
+  }
+}
+
+section("The ERT responds, and the clock stops while it does");
+
+/* "ERT team should be available in the emergency scenario game. Based
+ * on the scenario, show the ERT to the player: freeze the timer, show
+ * the activity, then start the game and the timer again." */
+{
+  for (const scenarioId of ["fall", "fire", "electrical"]) {
+    const { instance, record } = await boot("emergencyCommander", { settings: { ...SETTINGS, scenarioId } });
+    const t = instance.__test;
+    check(`${scenarioId}: the scenario can be named`, t.scenario.id === scenarioId, t.scenario.id);
+    const team = t.ert.team;
+    check(`${scenarioId}: the ERT is a team of four with ERT across their backs`,
+      team.length === 4 && team.every((w) => w.userData.person.badge === "ERT"));
+    check(`${scenarioId}: one of them is a woman`, team.some((w) => w.userData.person.gender === "female"));
+    runFrames(20);
+    const home = team.map((w) => w.position.clone());
+
+    const ertStation = t.STATIONS.find((st) => st.id === "casualty");
+    check(`${scenarioId}: the station sends the ERT`, /ERT/.test(ertStation.action) && /அவசர/.test(ertStation.ta.action),
+      `${ertStation.action} / ${ertStation.ta.action}`);
+    t.actOnStation(ertStation);
+    check(`${scenarioId}: sending it starts the response`, t.state.cutscene === true && t.ert.active);
+    const clock = t.state.remainingMs;
+    runFrames(300);
+    check(`${scenarioId}: the clock is frozen while it plays`, t.state.remainingMs === clock,
+      `${clock} → ${t.state.remainingMs}`);
+    const caption = record.hud.cutscene;
+    check(`${scenarioId}: the HUD captions it in English and Tamil`,
+      !!caption && caption.line.length > 20 && /[஀-௿]/.test(caption.lineAlt || ""),
+      caption ? `${caption.line.slice(0, 40)} / ${String(caption.lineAlt).slice(0, 20)}` : "no caption");
+    check(`${scenarioId}: the team goes to work`,
+      team.some((w, i) => w.position.distanceTo(home[i]) > 6),
+      team.map((w, i) => w.position.distanceTo(home[i]).toFixed(1)).join(", "));
+
+    // Through to the end.
+    for (let i = 0; i < 60 && t.state.cutscene; i++) runFrames(60);
+    check(`${scenarioId}: the response ends by itself`, t.state.cutscene === false && !t.ert.active);
+    check(`${scenarioId}: the HUD drops the captions`, !record.hud.cutscene);
+    const after = t.state.remainingMs;
+    runFrames(120);
+    check(`${scenarioId}: and the clock runs again`, t.state.remainingMs < after - 1000,
+      `${after} → ${t.state.remainingMs}`);
+    check(`${scenarioId}: the player is told, in both languages`,
+      record.toasts.some((x) => /clock is running again/.test(x.text) && /[஀-௿]/.test(x.text)));
+
+    // What the team did depends on what happened.
+    if (scenarioId === "fall") {
+      const c = t.casualty;
+      c.updateMatrixWorld(true);
+      check("fall: he is brought down to the ground, not left hanging",
+        new THREE.Box3().setFromObject(c).min.y < 1.2, `${new THREE.Box3().setFromObject(c).min.y.toFixed(2)} m`);
+      check("fall: he goes out on the spinal board",
+        t.ert.board.position.distanceTo(c.position) < 1.6 && t.ert.board.position.y > 0.5,
+        `board at ${t.ert.board.position.y.toFixed(2)} m, ${t.ert.board.position.distanceTo(c.position).toFixed(2)} m from him`);
+    }
+    if (scenarioId === "fire") {
+      check("fire: the fire is knocked down", t.fire.scale.x < 0.5, `fire at ${(t.fire.scale.x * 100).toFixed(0)}%`);
+    }
+    if (scenarioId === "electrical") {
+      const medic = t.ert.medic;
+      check("electrical: the first aider is down on her knees beside him doing CPR",
+        medic.userData.rig.hips.position.y < 0.75 && medic.position.distanceTo(t.casualty.position) < 1.6,
+        `hips at ${medic.userData.rig.hips.position.y.toFixed(2)}, ${medic.position.distanceTo(t.casualty.position).toFixed(2)} m away`);
+    }
+
+    // It plays once: sending a team that is already out does nothing.
+    t.actOnStation(ertStation);
+    check(`${scenarioId}: it does not replay`, t.state.cutscene === false);
+    instance.dispose();
+  }
+}
+
 section("People on site walk about, and walk like people");
 
 /* "Make the game realistic with human movement." A site is people
@@ -2437,17 +2597,70 @@ section("The Casagrand Aria development is visible in every mission");
   check("it stands about 68 m tall", box.max.y > 60 && box.max.y < 80, `${box.max.y.toFixed(1)} m`);
   check("the ARIA mark is real geometry, not a texture", !!dev.ariaRing);
 
-  // Three towers: each is a group with a shaft, fins, bands and a roof.
-  const towers = dev.group.children[0].children.filter((c) => c.isGroup && c.children.length > 8);
-  check("there are three towers", towers.length === 3, `${towers.length}`);
-  check("the towers are stepped, not in a row",
-    new Set(towers.map((t) => Math.round(t.position.z))).size === 3,
-    towers.map((t) => t.position.z).join(", "));
+  /* "See the Aria building — it should be like that. Inspect the photo
+   * properly: an L-shaped building, two of 19 floors and the middle one
+   * 9 floors." The old development was three near-identical towers set
+   * at angles on a lawn. This checks the layout of the renders. */
+  const buildings = [];
+  dev.group.traverse((o) => { if (o.userData?.ariaBuilding) buildings.push(o); });
+  const byName = Object.fromEntries(buildings.map((b) => [b.userData.ariaBuilding.name, b]));
+  check("there are three buildings", buildings.length === 3,
+    buildings.map((b) => b.userData.ariaBuilding.name).join(", "));
+  check("two of them are 19 floors and the middle one is 9",
+    buildings.map((b) => b.userData.ariaBuilding.floors).sort((a, b) => a - b).join(",") === "9,19,19",
+    buildings.map((b) => `${b.userData.ariaBuilding.name}:${b.userData.ariaBuilding.floors}`).join(", "));
+  const west = byName["west tower"];
+  const middle = byName["middle block"];
+  const lBlock = byName["L-shaped block"];
+  check("the 9-floor block stands between the two towers, in front of them",
+    !!west && !!middle && !!lBlock
+      && middle.position.x > west.position.x && middle.position.x < lBlock.position.x
+      && middle.position.z > west.position.z && middle.position.z > lBlock.position.z,
+    [west, middle, lBlock].map((b) => b && `${b.userData.ariaBuilding.name} (${b.position.x}, ${b.position.z})`).join("; "));
 
-  // The rooftop pool is what makes the overhead view recognisable.
+  // The L: two long, thin wings meeting at a corner. Sampled on a grid,
+  // the wings cover well under the whole of the box round them.
+  const parts = lBlock?.userData.ariaBuilding.parts || [];
+  // A wing is a long part of the plan, not one of the shallow bays
+  // that step the facade.
+  const wings = parts.filter((p) => Math.max(p.w, p.d) > 20 && Math.max(p.w, p.d) / Math.min(p.w, p.d) > 2);
+  check("the big block has two long wings", wings.length === 2
+    && wings.some((p) => p.w > p.d) && wings.some((p) => p.d > p.w),
+    wings.map((p) => `${p.w}x${p.d}`).join(", "));
+  if (wings.length === 2) {
+    const minX = Math.min(...wings.map((p) => p.x - p.w / 2));
+    const maxX = Math.max(...wings.map((p) => p.x + p.w / 2));
+    const minZ = Math.min(...wings.map((p) => p.z - p.d / 2));
+    const maxZ = Math.max(...wings.map((p) => p.z + p.d / 2));
+    let inside = 0;
+    let total = 0;
+    for (let gx = minX + 0.5; gx < maxX; gx += 1) {
+      for (let gz = minZ + 0.5; gz < maxZ; gz += 1) {
+        total += 1;
+        if (wings.some((p) => Math.abs(gx - p.x) <= p.w / 2 && Math.abs(gz - p.z) <= p.d / 2)) inside += 1;
+      }
+    }
+    check("and they make an L, not a slab", inside / total < 0.6,
+      `the wings cover ${Math.round((inside / total) * 100)}% of the box round them`);
+  }
+
+  // The rooftop pool is what makes the overhead view recognisable — on
+  // the L, where its two wings meet.
   const poolMats = [];
   dev.group.traverse((o) => { if (o.isMesh && o.material === mat.poolWater) poolMats.push(o); });
-  check("one tower has the rooftop pool", poolMats.length === 1, `${poolMats.length}`);
+  check("there is one rooftop pool", poolMats.length === 1, `${poolMats.length}`);
+  if (poolMats[0] && wings.length === 2) {
+    const p = poolMats[0].position;
+    const onBoth = wings.every((w) => Math.abs(p.x - w.x) <= w.w / 2 && Math.abs(p.z - w.z) <= w.d / 2);
+    check("the pool is on the L, where its two wings meet",
+      poolMats[0].parent === lBlock && onBoth, `pool at (${p.x}, ${p.z})`);
+  }
+
+  // Planted like the renders: trees all round, palms among them.
+  check("it is planted the way the renders are", dev.trees > 100, `${dev.trees} trees`);
+  const roadMarks = [];
+  dev.group.traverse((o) => { if (o.isMesh && o.material === mat.asphalt) roadMarks.push(o); });
+  check("the main road runs along the front", roadMarks.length >= 1);
 
   // The sports courts from the aerial render.
   const courts = [];
@@ -2482,9 +2695,10 @@ section("The Casagrand Aria development is visible in every mission");
     // Real world distances — the towers hang off an offset site group,
     // so their local .position.z is NOT their distance from the player.
     d.group.updateWorldMatrix(true, true);
-    const towerZ = d.group.children[0].children
-      .filter((c) => c.isGroup && c.children.length > 8)
-      .map((c) => Math.abs(c.getWorldPosition(new THREE.Vector3()).z));
+    const towerZ = [];
+    d.group.traverse((c) => {
+      if (c.userData?.ariaBuilding) towerZ.push(Math.abs(c.getWorldPosition(new THREE.Vector3()).z));
+    });
     const furthest = Math.max(...towerZ);
     const nearest = Math.min(...towerZ);
 

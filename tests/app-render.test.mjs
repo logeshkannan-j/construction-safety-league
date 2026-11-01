@@ -947,6 +947,43 @@ section("The stick says what it drives, and comes in three kinds");
   probe.remove();
 }
 
+/* ----------------------- the ERT's response overlay ----------------------- */
+
+section("The ERT's response is captioned, and says the clock has stopped");
+
+{
+  const { CutsceneOverlay } = await server.ssrLoadModule("/src/arena/ui/Hud.jsx");
+  const probe = document.createElement("div");
+  document.body.appendChild(probe);
+  const root = ReactDOMClient.createRoot(probe);
+  const errorsBefore = reactErrors.length;
+  const cut = {
+    eyebrow: "ERT RESPONSE", eyebrowAlt: "அவசர மீட்புக் குழு",
+    line: "Nobody climbs up to him. The rescue kit on the lift above lowers him slowly to the ground.",
+    lineAlt: "யாரும் அவரை நோக்கி ஏறுவதில்லை.",
+    step: 2, steps: 4,
+  };
+  root.render(React.createElement(CutsceneOverlay, { cutscene: cut, lang: "en" }));
+  await settle(120);
+  const text = () => (probe.textContent || "").replace(/\s+/g, " ").trim();
+  check("it says the clock has stopped, in both languages",
+    /TIMER PAUSED/.test(text()) && /நேரம்/.test(text()), text().slice(0, 80));
+  check("it captions what the team is doing, in English and Tamil",
+    text().includes(cut.line) && text().includes(cut.lineAlt));
+  check("it says which part of the response this is", text().includes("2 / 4"));
+  check("English leads for an English player", text().indexOf(cut.line) < text().indexOf(cut.lineAlt));
+  root.render(React.createElement(CutsceneOverlay, { cutscene: cut, lang: "ta" }));
+  await settle(120);
+  check("Tamil leads for a Tamil player", text().indexOf(cut.lineAlt) < text().indexOf(cut.line));
+  root.render(React.createElement(CutsceneOverlay, { cutscene: null }));
+  await settle(80);
+  check("and it is gone when the response is over", text() === "");
+  check("no React errors drawing it", reactErrors.length === errorsBefore,
+    reactErrors.slice(errorsBefore).join(" | "));
+  root.unmount();
+  probe.remove();
+}
+
 /* --------------------- no free variables anywhere --------------------- */
 
 section("Every identifier a component uses is one it actually has");

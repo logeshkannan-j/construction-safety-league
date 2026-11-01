@@ -9,13 +9,12 @@ import {
 } from "../arenaConstants.js";
 import { supportsWebGL, resolveQuality, isMobileLayout, isTouchDevice } from "../engine/gfx.js";
 import { submitRun, fetchAllProfiles, buildLeaderboard } from "../arenaDb.js";
-import { loadSettings, saveSettings, CAMERA_DISTANCES } from "../identity.js";
+import { loadSettings, saveSettings, CAMERA_DISTANCES, AVATARS } from "../identity.js";
 import { sfx, setSoundEnabled, setVolume, unlockAudio, disposeAudio } from "../audio.js";
 import { ArenaButton, Overlay, Pill, panelStyle } from "./primitives.jsx";
 import {
   HudTopBar, Crosshair, InteractPrompt, ToastStack, useToasts,
-  StatusMeter, ObjectiveList, Readouts, PaletteBar, ARENA_KEYFRAMES,
-} from "./Hud.jsx";
+  StatusMeter, ObjectiveList, Readouts, PaletteBar, ARENA_KEYFRAMES, CutsceneOverlay } from "./Hud.jsx";
 import Joystick, { JOYSTICK_STYLES } from "./Joystick.jsx";
 import TouchLook from "./TouchLook.jsx";
 import ActionButtonCluster, { CraneControls } from "./ActionButtons.jsx";
@@ -553,7 +552,10 @@ export default function GameShell({
 
   const input = instanceRef.current?.input || null;
   const scheme = hud.controlScheme || game.controls;
-  const interactive = phase === "playing" && !paused && !dialog && !portraitBlock;
+  // A scene the player watches (the ERT's response) takes the controls
+  // away until it is over.
+  const cutscene = hud.cutscene || null;
+  const interactive = phase === "playing" && !paused && !dialog && !portraitBlock && !cutscene;
   const showMobileControls = mobile && interactive;
 
   /* ---- what the cab is driven with ----
@@ -678,7 +680,7 @@ export default function GameShell({
             <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
 
             <InteractPrompt
-              text={hud.prompt?.text}
+              text={cutscene ? null : hud.prompt?.text}
               tone={hud.prompt?.tone}
               keyHint={hud.prompt?.key || "E"}
               mobile={mobile}
@@ -686,8 +688,10 @@ export default function GameShell({
 
             <ToastStack toasts={toasts} mobile={mobile} />
 
+            <CutsceneOverlay cutscene={cutscene} mobile={mobile} lang={lang} />
+
             {/* Meters, readouts and objective list, top-left. */}
-            {(hud.meters?.length > 0 || hud.tasks?.length > 0 || hud.readouts?.length > 0) && (
+            {!cutscene && (hud.meters?.length > 0 || hud.tasks?.length > 0 || hud.readouts?.length > 0) && (
               <div
                 style={{
                   position: "absolute",
@@ -1308,6 +1312,14 @@ function GraphicsAndSound({ quality, settings, updateSettings, mobile }) {
         value={settings.cameraDistance}
         onPick={(id) => updateSettings({ cameraDistance: id })}
         accent={C.blue}
+      />
+      {/* Who you play as — takes effect when the next mission starts. */}
+      <SettingChoice
+        title="YOUR CHARACTER · உங்கள் கதாபாத்திரம்"
+        options={AVATARS}
+        value={settings.avatar || "man"}
+        onPick={(id) => updateSettings({ avatar: id })}
+        accent={C.purple || C.yellow}
       />
 
       <div style={{ display: "grid", gap: 12, gridTemplateColumns: mobile ? "1fr" : "1fr 1fr" }}>

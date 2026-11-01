@@ -28,6 +28,11 @@
  *    variety    comes from a seed: skin tone, hair, moustache, shirt,
  *               trousers, sleeves, gloves, build and height. A crowd of
  *               identical people looks wrong before you can say why.
+ *    women      are built as women, not as smaller men: narrower
+ *               shoulders, a waist, a bust and wider hips; a softer jaw,
+ *               fuller lips, finer brows; long hair worn in a braid or a
+ *               bun under the hard hat; ear studs, a nose stud and a
+ *               bindi on some; and a tunic over the trousers.
  *
  *  The skeleton is the one the games already drive — hips, spine,
  *  neck, head, legs with knees, arms with elbows and hands — plus an
@@ -539,7 +544,7 @@ const smax = (a, b, k) => -smin(-a, -b, k);
  * and the cheeks a little so a crowd is not cloned.
  */
 function headField(shape) {
-  const { jaw = 1, nose = 1, cheek = 1, brow = 1 } = shape;
+  const { jaw = 1, nose = 1, cheek = 1, brow = 1, lips = 1 } = shape;
   return (x0, y, z) => {
     const x = Math.abs(x0);
     // Cranium.
@@ -564,8 +569,8 @@ function headField(shape) {
     d = smin(d, sdCapsule(x, y, z, 0, 0.014, 0.088, 0, -0.024, 0.097, 0.0065), 0.012);
     // The muzzle, the lips on it, and the line between them.
     d = smin(d, sdEllipsoid(x, y, z, 0, -0.056, 0.086, 0.03, 0.024, 0.0175), 0.012);
-    d = smin(d, sdEllipsoid(x, y, z, 0, -0.0508, 0.0985, 0.0205, 0.0058, 0.0072), 0.005);
-    d = smin(d, sdEllipsoid(x, y, z, 0, -0.0625, 0.0972, 0.019, 0.0068, 0.0074), 0.005);
+    d = smin(d, sdEllipsoid(x, y, z, 0, -0.0508, 0.0985, 0.0205, 0.0058 * lips, 0.0072 + 0.0012 * (lips - 1)), 0.005);
+    d = smin(d, sdEllipsoid(x, y, z, 0, -0.0625, 0.0972, 0.019, 0.0068 * lips, 0.0074 + 0.0014 * (lips - 1)), 0.005);
     d = smax(d, -sdEllipsoid(x, y, z, 0, -0.0568, 0.1045, 0.0195, 0.0011, 0.0068), 0.0016);
     return d;
   };
@@ -624,7 +629,7 @@ function headArrays(shape, seg, rows) {
     return [RAY_ORIGIN[0] + d[0] * t, RAY_ORIGIN[1] + d[1] * t, RAY_ORIGIN[2] + d[2] * t];
   }));
   const arrays = stitch(surface);
-  return { ...arrays, colors: faceColors(arrays.positions) };
+  return { ...arrays, colors: faceColors(arrays.positions, shape) };
 }
 
 /*
@@ -633,9 +638,10 @@ function headArrays(shape, seg, rows) {
  * a little shade round the eyes. The material supplies the skin tone;
  * these only shift it, so one sculpt serves every complexion.
  */
-function faceColors(positions) {
+function faceColors(positions, { female = false, bindi = false } = {}) {
   const out = [];
   const g = (dx, sx, dy, sy) => Math.exp(-((dx / sx) ** 2) - ((dy / sy) ** 2));
+  const lipTint = female ? [0.86, 0.5, 0.54] : [0.86, 0.6, 0.62];
   for (let i = 0; i < positions.length; i += 3) {
     const x = Math.abs(positions[i]);
     const y = positions[i + 1];
@@ -645,11 +651,15 @@ function faceColors(positions) {
     let gg = 1;
     let b = 1;
     const lips = Math.max(g(x, 0.022, y + 0.0508, 0.0062), g(x, 0.02, y + 0.0625, 0.0074)) * front;
-    r = lerp(r, 0.86, lips); gg = lerp(gg, 0.6, lips); b = lerp(b, 0.62, lips);
+    r = lerp(r, lipTint[0], lips); gg = lerp(gg, lipTint[1], lips); b = lerp(b, lipTint[2], lips);
     const line = g(x, 0.0205, y + 0.0568, 0.0018) * front;
     r = lerp(r, 0.3, line); gg = lerp(gg, 0.24, line); b = lerp(b, 0.24, line);
     const socket = g(x - 0.031, 0.02, y - 0.012, 0.014) * front;
     r *= 1 - 0.12 * socket; gg *= 1 - 0.14 * socket; b *= 1 - 0.12 * socket;
+    if (bindi) {
+      const dot = g(x, 0.0042, y - 0.044, 0.0042) * front;
+      r = lerp(r, 0.62, dot); gg = lerp(gg, 0.05, dot); b = lerp(b, 0.08, dot);
+    }
     out.push(r, gg, b);
   }
   return out;
@@ -1093,6 +1103,23 @@ function palette(mat) {
         color: base.color.clone(), shininess: 60, specular: 0x5a5a5a,
       }), "helmet"));
     },
+    /** Lettering on the back of a vest — "ERT" on the response team. */
+    badge(text) {
+      return made(`badge${text}`, () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 256;
+        canvas.height = 128;
+        const c = canvas.getContext("2d");
+        c.fillStyle = "#ffffff";
+        c.font = "900 92px Arial, Helvetica, sans-serif";
+        c.textAlign = "center";
+        c.textBaseline = "middle";
+        c.fillText(text, 128, 70);
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tag(new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.4 }), "badge");
+      });
+    },
     tape() {
       return made("tape", () => tag(new THREE.MeshPhongMaterial({
         color: 0xd9dde0, emissive: 0x2a2a2a, shininess: 90, specular: 0x9a9a9a,
@@ -1136,6 +1163,66 @@ const FACES = [
   { jaw: 1.08, nose: 1.12, cheek: 1.1, brow: 1.1 },
   { jaw: 0.94, nose: 0.92, cheek: 0.95, brow: 0.95 },
 ];
+/* A woman's face: a narrower, softer jaw, a smaller nose, fuller lips
+ * and less of a brow ridge. */
+const FACES_F = [
+  { jaw: 0.88, nose: 0.86, cheek: 1.04, brow: 0.78, lips: 1.18, female: true },
+  { jaw: 0.91, nose: 0.9, cheek: 1.0, brow: 0.82, lips: 1.12, female: true },
+];
+
+/* Kurti colours, and the darker trousers worn under them. */
+const TUNICS = [0x7a2e4d, 0x2f6f73, 0xc98b2a, 0x5a3f8c, 0xa33b3b, 0x3e6fa8, 0xc77f92, 0x4f7a3a];
+const TROUSERS_F = [0x2b2b33, 0x3a3f58, 0x463a52, 0x2d394d];
+
+/**
+ * A woman's proportions, from the man's: narrower shoulders, a waist,
+ * a bust, wider hips; slimmer arms, legs and neck.
+ */
+function feminise(plan) {
+  const each = (rings, f) => rings.map((r) => ({ ...r, ...f(r) }));
+  return {
+    pelvis: each(plan.pelvis, (r) => ({
+      rx: r.rx * (r.y <= 0.06 ? 1.08 : 0.97),
+      rz: r.rz * 1.03,
+    })),
+    torso: each(plan.torso, (r) => {
+      const waist = r.y > 0.08 && r.y < 0.3 ? 0.89 : 1;
+      const shoulders = r.y >= 0.44 ? 0.87 : r.y >= 0.36 ? 0.93 : 1;
+      const bust = Math.exp(-(((r.y - 0.355) / 0.055) ** 2));
+      return {
+        rx: r.rx * waist * shoulders,
+        rz: r.rz * (r.y > 0.08 && r.y < 0.3 ? 0.93 : 1) + 0.024 * bust,
+        cz: (r.cz || 0) + 0.018 * bust,
+      };
+    }),
+    thigh: each(plan.thigh, (r) => {
+      const k = r.y > -0.2 ? 1.0 : 0.92;
+      return { rx: r.rx * k, rz: r.rz * k };
+    }),
+    shin: each(plan.shin, (r) => ({ rx: r.rx * 0.9, rz: r.rz * 0.9 })),
+    upperArm: each(plan.upperArm, (r) => ({ rx: r.rx * 0.86, rz: r.rz * 0.86, cx: (r.cx || 0) * 0.6 })),
+    forearm: each(plan.forearm, (r) => ({ rx: r.rx * 0.87, rz: r.rz * 0.87 })),
+    neck: each(plan.neck, (r) => ({ rx: r.rx * 0.86, rz: r.rz * 0.86 })),
+  };
+}
+
+/** Gold studs, coloured by vertex for the shiny vertex-coloured material. */
+function studArrays(points, radius) {
+  return joinArrays(points.map((p) => paint(shellArrays(radius, radius, radius, { seg: 8, rows: 5, center: p }), [0.95, 0.74, 0.26])));
+}
+
+/** A long braid down the back, as Tamil women wear it under a hat. */
+function braidArrays() {
+  const pts = [];
+  const radii = [];
+  for (let i = 0; i <= 12; i++) {
+    const t = i / 12;
+    pts.push([0.004 * Math.sin(i * 1.7), -0.045 - t * 0.33, -0.098 - t * 0.04]);
+    // The plaits: a little fuller and thinner in turn, tapering.
+    radii.push((0.021 - t * 0.011) * (i % 2 ? 0.86 : 1));
+  }
+  return tubeArrays(pts, radii, { seg: 8, side: [1, 0, 0] });
+}
 
 /* ============================ baking ============================ */
 
@@ -1230,8 +1317,11 @@ export function buildWorker(geo, mat, {
   role = "worker", vestColor = null, detail = "high",
   seed = null, shirt = null, trousers = null, sleeves = null,
   gloves = null, hair = null, moustache = null, build = null,
+  gender = "male", badge = null, braid = null, bindi = null,
 } = {}) {
   const r = rng(seed ?? nextSeed++);
+  // "any" lets the seed decide, about one in three a woman, for crowds.
+  const female = gender === "female" || (gender === "any" && r() < 0.34);
   const officer = role === "officer";
   // On the lowest graphics setting everybody is built at crowd detail:
   // a full figure is ~18k triangles against ~9k, and the phones that
@@ -1246,33 +1336,44 @@ export function buildWorker(geo, mat, {
       : Number.isInteger(skin) ? clamp(skin, 0, SKIN_TONES.length - 1)
         : Math.floor(r() * SKIN_TONES.length);
   const skinMat = P.skin(toneIndex);
-  const older = r() < 0.18;
+  const older = r() < (female ? 0.1 : 0.18);
   const hairKey = hair || (older ? pick(r, ["grey", "salt"]) : r() < 0.85 ? "black" : "brown");
   const hairMat = hairKey === "none" ? null : P.hair(hairKey);
-  const hasMoustache = moustache ?? (r() < 0.62);
-  const bodyBuild = build ?? (0.94 + r() * 0.14);
-  const belly = older ? 0.006 + r() * 0.01 : r() * 0.006;
-  const heightScale = 0.96 + r() * 0.07;
-  const longSleeves = sleeves ? sleeves === "long" : (officer || harness || r() < 0.55);
-  const shirtHex = shirt ?? (officer ? pick(r, OFFICER_SHIRTS) : pick(r, SHIRTS));
-  const trouserHex = trousers ?? (officer ? pick(r, [0x26272a, 0x2d394d, 0x3a3c40]) : pick(r, TROUSERS));
+  const hasMoustache = !female && (moustache ?? (r() < 0.62));
+  const bodyBuild = build ?? (female ? 0.95 + r() * 0.08 : 0.94 + r() * 0.14);
+  const belly = female ? 0 : older ? 0.006 + r() * 0.01 : r() * 0.006;
+  // A man here is 1.69-1.82 m, a woman 1.58-1.66 m.
+  const heightScale = female ? 0.9 + r() * 0.045 : 0.96 + r() * 0.07;
+  const longSleeves = sleeves ? sleeves === "long" : (officer || harness || female || r() < 0.55);
+  const shirtHex = shirt ?? (female && !officer ? pick(r, TUNICS) : officer ? pick(r, OFFICER_SHIRTS) : pick(r, SHIRTS));
+  const trouserHex = trousers ?? (female ? pick(r, TROUSERS_F)
+    : officer ? pick(r, [0x26272a, 0x2d394d, 0x3a3c40]) : pick(r, TROUSERS));
+  const wearsBraid = female && (braid ?? r() < 0.6);
+  const wearsBindi = female && (bindi ?? r() < 0.55);
+  const noseStud = female && r() < 0.45;
   const gloveHex = gloves === true ? pick(r, GLOVES)
     : typeof gloves === "number" ? gloves
       : gloves === false || officer ? null
         : r() < 0.35 ? pick(r, GLOVES) : null;
-  const face = FACES[Math.floor(r() * FACES.length)];
-  const faceKey = FACES.indexOf(face);
+  const faceBase = female ? FACES_F[Math.floor(r() * FACES_F.length)] : FACES[Math.floor(r() * FACES.length)];
+  const face = { ...faceBase, bindi: wearsBindi };
+  const faceKey = `${female ? "f" : "m"}${(female ? FACES_F : FACES).indexOf(faceBase)}${wearsBindi ? "b" : ""}`;
 
   const shirtMat = P.cloth(shirtHex);
   const trouserMat = P.cloth(trouserHex);
   const beltMat = mat.black;
-  const named = { yellow: mat.yellow, white: mat.white, blue: mat.blue, orange: mat.orange, green: mat.green, hiVis: mat.hiVis };
+  const named = {
+    yellow: mat.yellow, white: mat.white, blue: mat.blue, orange: mat.orange,
+    green: mat.green, hiVis: mat.hiVis, red: mat.red,
+  };
   const helmetBase = named[helmetColor] || (officer ? mat.white : mat.yellow);
   const vestMat = named[vestColor] || (officer ? mat.orange : mat.hiVis);
   const handMat = gloveHex ? P.cloth(gloveHex, "glove") : skinMat;
   const bootMat = P.boot(r() < 0.7 ? 0x1f1f21 : 0x4a3222);
 
-  const plan = bodyPlan(bodyBuild, belly);
+  const plan = female ? feminise(bodyPlan(bodyBuild, belly)) : bodyPlan(bodyBuild, belly);
+  // Every cached shape is keyed by body, so a woman's never borrows a man's.
+  const g = female ? "f" : "m";
   const seg = low ? 12 : 18;
   const limbSeg = low ? 10 : 14;
 
@@ -1280,7 +1381,7 @@ export function buildWorker(geo, mat, {
 
   /** A mesh from cached arrays, placed in a joint. */
   const part = (parent, material, key, build, { at = [0, 0, 0], rot = [0, 0, 0], scale: s = [1, 1, 1], shadow = true } = {}) => {
-    const m = new THREE.Mesh(geometryFor(geo, key, build), material);
+    const m = new THREE.Mesh(geometryFor(geo, `${g}:${key}`, build), material);
     m.position.set(...at);
     m.rotation.set(...rot);
     m.scale.set(...s);
@@ -1302,17 +1403,32 @@ export function buildWorker(geo, mat, {
 
   const buildKey = `${bodyBuild.toFixed(2)}:${belly.toFixed(3)}`;
   loftPart(hips, trouserMat, `pelvis:${buildKey}`, plan.pelvis);
-  // The belt, and its buckle at the front.
-  const beltRings = inflate([ringAt(plan.pelvis, 0.078), ringAt(plan.pelvis, 0.112)].map((x) => ({ ...x, n: 2.4 })), 0.0045);
-  loftPart(hips, beltMat, `belt:${buildKey}`, beltRings, { capBottom: false, capTop: false });
-  const buckleZ = (surfaceZ(plan.pelvis, 0, 0.095, 1) || 0.11) + 0.006;
-  part(hips, beltMat, "buckle", () => shellArrays(0.022, 0.017, 0.006, { seg: 8, rows: 4, n: 3 }), { at: [0, 0.095, buckleZ] });
+  if (female) {
+    // The tunic (kurti) over the hips, flared enough at its hem for the
+    // legs to stride inside it.
+    // Sized from the hips it hangs over, so the trousers never show
+    // through its sides.
+    const over = (y, ease, flare) => {
+      const r = ringAt(plan.pelvis, Math.max(-0.13, y)) || plan.pelvis[plan.pelvis.length - 1];
+      return { y, rx: r.rx + ease + flare, rz: r.rz + ease + flare * 0.8, cz: r.cz || 0, n: r.n || 2.3 };
+    };
+    loftPart(hips, shirtMat, `tunic:${buildKey}`, [
+      over(-0.135, 0.018, 0.05), over(-0.07, 0.016, 0.02), over(0.0, 0.014, 0.004),
+      over(0.09, 0.012, 0), over(0.15, 0.01, 0),
+    ], { capBottom: false, capTop: false });
+  } else {
+    // The belt, and its buckle at the front.
+    const beltRings = inflate([ringAt(plan.pelvis, 0.078), ringAt(plan.pelvis, 0.112)].map((x) => ({ ...x, n: 2.4 })), 0.0045);
+    loftPart(hips, beltMat, `belt:${buildKey}`, beltRings, { capBottom: false, capTop: false });
+    const buckleZ = (surfaceZ(plan.pelvis, 0, 0.095, 1) || 0.11) + 0.006;
+    part(hips, beltMat, "buckle", () => shellArrays(0.022, 0.017, 0.006, { seg: 8, rows: 4, n: 3 }), { at: [0, 0.095, buckleZ] });
+  }
 
   /* ------------------------------ legs ------------------------------ */
   const legs = [];
   [-1, 1].forEach((side) => {
     const leg = new THREE.Group();
-    leg.position.set(side * 0.092, 0, 0);
+    leg.position.set(side * (female ? 0.096 : 0.092), 0, 0);
     loftPart(leg, trouserMat, "thigh", plan.thigh, { seg: limbSeg });
     if (harness) {
       // Leg loops round the top of each thigh.
@@ -1327,7 +1443,7 @@ export function buildWorker(geo, mat, {
     const ankle = new THREE.Group();
     ankle.position.y = -0.41;
     if (boots) {
-      part(ankle, bootMat, `boot:${low}`, () => bootArrays({ low }));
+      part(ankle, bootMat, `boot:${low}`, () => bootArrays({ low }), { scale: female ? [0.9, 1, 0.9] : [1, 1, 1] });
     } else {
       // Chappals: a bare foot on a thin sole with a strap over it.
       part(ankle, skinMat, "barefoot", bareFootArrays);
@@ -1379,6 +1495,15 @@ export function buildWorker(geo, mat, {
     });
   }
 
+  if (badge) {
+    const backZ = (surfaceZ(inflate(plan.torso, vest ? 0.011 : 0.002), 0, 0.37, -1) || -0.13) - 0.006;
+    const plate = new THREE.Mesh(geo.plane, P.badge(badge));
+    plate.scale.set(0.2, 0.1, 1);
+    plate.rotation.y = Math.PI;
+    plate.position.set(0, 0.37, backZ);
+    spine.add(plate);
+  }
+
   if (harness) {
     const body = inflate(plan.torso, vest ? 0.017 : 0.006);
     [-1, 1].forEach((side) => {
@@ -1414,7 +1539,7 @@ export function buildWorker(geo, mat, {
   const arms = [];
   [-1, 1].forEach((side) => {
     const arm = new THREE.Group();
-    arm.position.set(side * 0.183 * bodyBuild, 0.495, 0);
+    arm.position.set(side * 0.183 * bodyBuild * (female ? 0.9 : 1), female ? 0.488 : 0.495, 0);
     const mirror = side < 0 ? [-1, 1, 1] : [1, 1, 1];
     const upper = plan.upperArm;
     if (longSleeves) {
@@ -1446,6 +1571,7 @@ export function buildWorker(geo, mat, {
       return side < 0 ? mirrorX(a) : a;
     });
     const handMesh = new THREE.Mesh(handGeo, handMat);
+    if (female) handMesh.scale.setScalar(0.9);
     handMesh.castShadow = true;
     hand.add(handMesh);
     elbow.add(hand);
@@ -1465,6 +1591,7 @@ export function buildWorker(geo, mat, {
 
   const head = new THREE.Group();
   head.position.set(0, 0.168, 0.008);
+  if (female) head.scale.setScalar(0.96);
   neck.add(head);
 
   const headSeg = low ? 30 : 60;
@@ -1485,7 +1612,7 @@ export function buildWorker(geo, mat, {
   // Eyes in the sockets, with the upper lid over the top of each.
   const eyeMat = P.eye();
   [-1, 1].forEach((side) => {
-    part(head, eyeMat, "eyeball", () => eyeArrays(0.0112), { at: [side * 0.031, 0.008, 0.0758] });
+    part(head, eyeMat, "eyeball", () => eyeArrays(female ? 0.0117 : 0.0112), { at: [side * 0.031, 0.008, 0.0758] });
     part(head, faceMat, `lid:${side}`, () => paint(placeArrays(
       shellArrays(0.0142, 0.0085, 0.0128, { seg: 10, rows: 5, latFrom: 0, latTo: Math.PI * 0.62, capBottom: true }),
       { at: [side * 0.031, 0.0126, 0.0762], rot: [-0.32, 0, 0] }
@@ -1500,12 +1627,17 @@ export function buildWorker(geo, mat, {
     // Eyebrows.
     [-1, 1].forEach((side) => {
       part(head, hairMat, `brow:${side}:${faceKey}`, () => placeArrays(
-        shellArrays(0.0162, 0.0026, 0.0046, {
-          seg: 10, rows: 4, deform: ([x, y, z]) => [x, y - 9 * x * x, z],
+        shellArrays(0.0162, female ? 0.0018 : 0.0026, 0.0046, {
+          seg: 10, rows: 4, deform: ([x, y, z]) => [x, y - (female ? 15 : 9) * x * x, z],
         }),
         { at: [side * 0.032, 0.0275, 0.0912 + (face.brow - 1) * 0.004], rot: [0.25, side * 0.22, side * -0.08] }
       ));
     });
+    if (female) {
+      // Long hair, worn up: a braid down the back, or a bun at the nape.
+      if (wearsBraid) part(head, hairMat, "braid", braidArrays);
+      else part(head, hairMat, "bun", () => shellArrays(0.043, 0.036, 0.033, { seg: 12, rows: 8, center: [0, -0.04, -0.098] }));
+    }
     if (hasMoustache) {
       [-1, 1].forEach((side) => {
         part(head, hairMat, `moustache:${side}:${faceKey}`, () => placeArrays(
@@ -1514,6 +1646,14 @@ export function buildWorker(geo, mat, {
         ));
       });
     }
+  }
+
+  if (female) {
+    // Gold ear studs, and a nose stud on some — in the eyes' shiny,
+    // vertex-coloured material, so they cost no draw call.
+    const studs = [[-0.077, -0.032, -0.003], [0.077, -0.032, -0.003]];
+    if (noseStud) studs.push([0.0128, -0.03, 0.1035]);
+    part(head, eyeMat, `studs:${noseStud}`, () => studArrays(studs, 0.0034));
   }
 
   if (helmet) {
@@ -1552,7 +1692,12 @@ export function buildWorker(geo, mat, {
   // people does not breathe in unison.
   group.userData.idleOffset = r() * 12;
   group.userData.worker = { helmet, vest, harness, boots };
-  group.userData.person = { tone: toneIndex, hair: hairKey, moustache: hasMoustache, sleeves: longSleeves ? "long" : "short", seed };
+  group.userData.person = {
+    gender: female ? "female" : "male",
+    tone: toneIndex, hair: hairKey, moustache: hasMoustache,
+    sleeves: longSleeves ? "long" : "short", seed,
+    braid: wearsBraid, bindi: wearsBindi, badge,
+  };
 
   // Bake each joint down to one mesh per material. Done last, so
   // everything is in place; the rig still works because the joint

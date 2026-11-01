@@ -16,6 +16,7 @@
  * ------------------------------------------------------------------ */
 
 import * as THREE from "three";
+import { avatarGender } from "../../identity.js";
 import { createStage, addIndoorLight, addSky, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
@@ -1191,7 +1192,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    */
   // Reassigned when the player draws their PPE and puts it on.
   let avatar = buildWorker(geo, mat, {
-    helmet: true, vest: true, boots: true, helmetColor: "orange",
+    helmet: true, vest: true, boots: true, helmetColor: "orange", gender: avatarGender(settings),
   });
   avatar.visible = false;
   // Posed from the controller every frame, so the crowd animator
@@ -1213,7 +1214,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     if (state.wearingPPE) return;
     state.wearingPPE = true;
     const kitted = buildWorker(geo, mat, {
-      helmet: true, vest: true, boots: true, harness: true, role: "officer",
+      helmet: true, vest: true, boots: true, harness: true, role: "officer", gender: avatarGender(settings),
     });
     kitted.position.copy(avatar.position);
     kitted.rotation.copy(avatar.rotation);

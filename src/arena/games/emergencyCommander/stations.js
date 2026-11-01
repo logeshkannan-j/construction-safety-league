@@ -113,16 +113,20 @@ export const STATIONS = [
   {
     id: "casualty",
     phase: 5,
-    label: "First-aid post",
-    action: "SEND THE FIRST AIDER",
+    label: "ERT and first-aid post",
+    action: "SEND THE ERT",
     where: "firstAid",
-    prompt: "Send the trained first aider — do not go yourself",
-    done: "The site first aider is on the way with the trauma kit.",
+    prompt: "Send the Emergency Response Team — do not go yourself",
+    done: "The Emergency Response Team is on its way with the stretcher, the trauma kit and the AED.",
     lesson:
-      "You send the trained responder. You do not go yourself, and you do not send willing "
-      + "volunteers into a hazard they are not equipped for.",
+      "You send the trained Emergency Response Team. You do not go yourself, and you do not send "
+      + "willing volunteers into a hazard they are not equipped for.",
     effects: { casualty: 26, control: 6 },
-    ta: { prompt: "முதலுதவி நிலையத்திலிருந்து உதவியை அழைக்கவும்", label: "முதலுதவி மையம்", action: "முதலுதவியாளரை அனுப்பவும்" },
+    ta: {
+      prompt: "அவசர மீட்புக் குழுவை அனுப்பவும் — நீங்களே செல்ல வேண்டாம்",
+      label: "அவசரக் குழு மற்றும் முதலுதவி மையம்",
+      action: "அவசரக் குழுவை அனுப்பவும்",
+    },
   },
   {
     id: "services",

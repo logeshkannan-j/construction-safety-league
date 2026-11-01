@@ -124,7 +124,19 @@ export const DEFAULT_SETTINGS = {
   // camera up in the air turns the player into a speck. Anybody who
   // wants more of the site in view can still pinch or wheel out.
   cameraDistance: "close",
+  // Who you play as. Women work on this site too, and play this game.
+  avatar: "man",
 };
+
+export const AVATARS = [
+  { id: "man", label: "Man", desc: "Play as a man" },
+  { id: "woman", label: "Woman", desc: "Play as a woman" },
+];
+
+/** The figure a game builds for the player, from their settings. */
+export function avatarGender(settings) {
+  return settings?.avatar === "woman" ? "female" : "male";
+}
 
 export const CAMERA_DISTANCES = [
   { id: "close", label: "Close", scale: 1, desc: "Over the shoulder" },

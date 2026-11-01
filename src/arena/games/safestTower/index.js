@@ -34,7 +34,7 @@ import {
   collectWorkers, idleWorkers, createWalker, buildCementBag,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
-import { cameraScale } from "../../identity.js";
+import { cameraScale, avatarGender } from "../../identity.js";
 import { HAZARDS, HAZARD_COUNT, SCORING } from "./hazards.js";
 
 /* ============================== metadata ============================== */
@@ -179,7 +179,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       { speed: 1.25, load: buildCementBag(geo, mat) }
     ),
     createWalker(
-      buildWorker(geo, mat, { helmet: true, vest: true, helmetColor: "white", seed: 5032 }),
+      buildWorker(geo, mat, { helmet: true, vest: true, helmetColor: "white", gender: "female", seed: 5032 }),
       [
         { x: 27, z: 14, pause: 3, pose: "stand" },
         { x: 27.5, z: 0 },
@@ -680,7 +680,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   });
 
   const avatar = buildWorker(geo, mat, {
-    helmet: true, vest: true, boots: true, role: "officer",
+    helmet: true, vest: true, boots: true, role: "officer", gender: avatarGender(settings),
   });
   // Posed from the controller every frame, so the crowd animator
   // must leave it alone.

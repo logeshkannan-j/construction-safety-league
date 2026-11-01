@@ -282,7 +282,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   }
   placeWorker({ helmet: true, vest: true, pose: "work" }, 7, -5, 1.2);
   placeWorker({ helmet: true, vest: true, pose: "work", skin: "dark" }, 10, -8, -0.7);
-  placeWorker({ helmet: true, vest: true, pose: "stand", helmetColor: "white" }, -1, 21, 2.4);
+  placeWorker({ helmet: true, vest: true, pose: "stand", helmetColor: "white", gender: "female" }, -1, 21, 2.4);
   placeWorker({ helmet: true, vest: true, pose: "work", helmetColor: "blue" }, 25, -1, 0.3);
   placeWorker({ helmet: true, vest: true, harness: true, pose: "stand" }, -9, 15, Math.PI, frame.floors[2].y);
 

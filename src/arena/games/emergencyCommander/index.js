@@ -30,7 +30,7 @@ import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
 import { t, tAlt, getLang, onLangChange } from "../../language.js";
-import { cameraScale } from "../../identity.js";
+import { cameraScale, avatarGender } from "../../identity.js";
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
@@ -42,6 +42,7 @@ import {
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PHASES, SCORING, pickScenario } from "./scenarios.js";
+import { createERT, ERT_DONE } from "./ert.js";
 import {
   STATIONS, STATION_COUNT, STATION_SCORING, HAZARD_ENTRY, stationById,
 } from "./stations.js";
@@ -120,7 +121,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const mat = createMaterials(cfg);
   const geo = createGeometries(cfg);
 
-  const scenario = pickScenario();
+  const scenario = pickScenario(settings?.scenarioId);
 
   /* --------------------------- environment --------------------------- */
 
@@ -372,6 +373,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const smokeGroup = new THREE.Group();
   const sparkGroup = new THREE.Group();
   let casualty = null;
+  // Kept for the ERT's response, which works on them.
+  let lanyard = null;
+  let anchorY = 0;
+  const mates = [];
 
   if (scenario.scene === "fire") {
     incident.position.set(BUILDING.x + BUILDING.width / 2 + 3, 0, BUILDING.z - 3);
@@ -418,11 +423,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     incident.objects.add(casualty);
 
     // The lanyard back up to the anchor.
-    const anchorY = incident.position.y + 0.9;
+    anchorY = incident.position.y + 0.9;
     const dropLength = anchorY - (incident.position.y - 2.4 + 1.3);
-    incident.objects.add(cylinder(geo, mat.orange, 0.035, dropLength,
+    lanyard = cylinder(geo, mat.orange, 0.035, dropLength,
       incident.position.x, anchorY - dropLength / 2, incident.position.z - 1.1,
-      { low: true, shadow: false }));
+      { low: true, shadow: false });
+    incident.objects.add(lanyard);
 
     // Dropped tools below, which is why the area needs a cordon.
     [[0.8, -0.6], [-0.7, 0.4], [0.2, 1.1]].forEach(([ox, oz]) => {
@@ -475,6 +481,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       mate.position.set(incident.position.x + ox, incident.position.y, incident.position.z + oz);
       mate.rotation.y = -1.2;
       incident.objects.add(mate);
+      mates.push(mate);
     });
   }
 
@@ -489,6 +496,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       pose: "stand",
       helmetColor: ["yellow", "white", "blue", "orange"][i % 4],
       skin: i % 3 === 0 ? "dark" : "skin",
+      // Men and women: the workforce on this site is both.
+      gender: "any",
       // Sixteen of them, and the commander never stands next to any of
       // them. Full detail here costs ~200 draw calls for eyelashes
       // nobody can see from the command post.
@@ -568,6 +577,20 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   firePoint.position.set(incident.position.x - 6, 0, incident.position.z + 4);
   scene.add(firePoint);
 
+  /* ------------------ the site's Emergency Response Team ------------------
+   * Waiting at its post beside the first-aid station until the
+   * commander sends it. Sending it stops the clock and SHOWS the player
+   * the response this emergency needs (see ert.js). */
+  const ert = createERT({
+    scene, geo, mat, scenario,
+    post: { x: FIRSTAID.x + 3.4, z: FIRSTAID.z - 1.8 },
+    incident, casualty, lanyard, anchorY, mates,
+    fire: fireGroup, smoke: smokeGroup, smokeMat, sparks: sparkGroup,
+    stair: { top: frame.stairs[0]?.exit ?? { x: -10.8, y: 3.4, z: 0.6 } },
+    gate: GATE,
+    shot: (s) => siteView.playTour([{ ...s, seconds: 1.6, step: null }], { loop: true }),
+  });
+
   /* ============================ game state ============================ */
 
   const missionMs = 420000 * difficulty.timeScale;
@@ -604,6 +627,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     consequenceUntil: 0,
     lessons: [],
     fireIntensity: 1,
+    // True while the ERT's response is playing: the clock is stopped
+    // and the player watches.
+    cutscene: false,
   };
 
   /* ---- the trap: the incident itself is clickable ----
@@ -696,7 +722,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   });
 
   const avatar = buildWorker(geo, mat, {
-    helmet: true, vest: true, boots: true, role: "officer",
+    helmet: true, vest: true, boots: true, role: "officer", gender: avatarGender(settings),
   });
   // Posed from the controller every frame, so the crowd animator
   // must leave it alone.
@@ -910,11 +936,35 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     markStationDone(station.id);
     frameForStation(station);
+    if (station.id === "casualty") startERTResponse();
     pushHud();
 
-    if (state.doneStations.size >= STATION_COUNT) {
+    // Not while the response is playing: it finishes the mission itself
+    // when it is over, if this was the last action.
+    if (state.doneStations.size >= STATION_COUNT && !state.cutscene) {
       later(() => { if (!state.finished) finish(true); }, 1600);
     }
+  }
+
+  /**
+   * The ERT's response, shown to the player. The clock stops, the
+   * controls are locked, the camera goes to the team; afterwards it all
+   * comes back and the clock runs on from where it stopped.
+   */
+  function startERTResponse() {
+    const started = ert.play(() => {
+      state.cutscene = false;
+      siteView.stopTour();
+      input.setEnabled(!state.paused);
+      api.toast(`${ERT_DONE.en} · ${ERT_DONE.ta}`, "good");
+      pushHud();
+      if (state.doneStations.size >= STATION_COUNT) {
+        later(() => { if (!state.finished) finish(true); }, 1600);
+      }
+    });
+    if (!started) return;
+    state.cutscene = true;
+    input.setEnabled(false);
   }
 
   function enterHazard() {
@@ -1080,6 +1130,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     };
     api.hud({
       controlScheme: "command",
+      // The ERT response, while it plays: captions in both languages.
+      cutscene: ert.caption(),
       objective: state.finished
         ? "Incident closed out"
         : nextStation
@@ -1160,7 +1212,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   stage.start((dt) => {
     if (state.paused) return;
 
-    if (!state.finished) {
+    // The clock stands still while the ERT's response is on screen.
+    if (!state.finished && !state.cutscene) {
       state.remainingMs -= dt * 1000;
       if (state.remainingMs <= 0) {
         state.remainingMs = 0;
@@ -1175,7 +1228,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
 
     /* ----- acting on the world ----- */
-    if (!state.finished && !state.briefOpen && input.wasPressed("tap")) {
+    if (!state.finished && !state.briefOpen && !state.cutscene && input.wasPressed("tap")) {
       const hit = screenRaycast(camera, input.state.ndc, pickTargets, 400);
       if (hit) {
         const asStation = findTagged(hit.object, "stationId");
@@ -1292,6 +1345,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
 
     updateCommander(dt);
+    ert.update(dt, stage.elapsed);
     siteView.update(dt, input, () => driveCamera(dt));
 
     if (cfg.shadows) {
@@ -1339,7 +1393,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       // stage stops accumulating while paused — so pausing freezes the
       // decision timer automatically and no adjustment is needed here.
       stage.setPaused(!!value);
-      input.setEnabled(!value);
+      input.setEnabled(!value && !state.cutscene);
     },
 
     dispose() {
@@ -1355,7 +1409,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     __test: {
       walker: commander, avatar, bearingToNext, stationMarkers,
       camDistance: () => cam.distance,
-      state, scenario, crowd,
+      state, scenario, crowd, ert, casualty,
+      fire: fireGroup,
       STATIONS, STATION_COUNT,
       actOnStation, enterHazard, nextRequiredPhase,
       stationMarkers,

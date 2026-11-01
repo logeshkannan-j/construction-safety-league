@@ -637,6 +637,8 @@ export function createMaterials(cfg) {
     asphalt: L({ color: 0x3a3d40 }),
     courtBlue: L({ color: 0x2d6ea8 }),
     courtRed: L({ color: 0xa8452f }),
+    // The red-paved internal driveway of the development.
+    paving: L({ color: 0xa65d45 }),
 
     // White interior finishes — the escape building's palette.
     plaster: L({ map: plasterTexture([2, 1], aniso) }),
@@ -941,144 +943,301 @@ export function buildBrandBanners(geo, mat, {
   return group;
 }
 
-/**
- * ONE tower of the Casagrand Aria development, built from the project
- * renders: a lit podium, a shaft of vertical fins with a warm uplight
- * wash climbing them, glazing recessed behind the fin line, bright slab
- * edges, balconies and a crown.
+/* ========================= Casagrand Aria =========================
  *
- * `floors` defaults to 19 — the real building.
+ * The development the site is building, as the renders show it:
  *
- * Everything that can be merged is merged: a tower is ~15 draw calls,
- * because three of these plus the grounds have to sit in the background
- * of every mission without costing frame rate on a phone.
+ *   - a 19-floor tower on the west side,
+ *   - a 9-floor block in the middle, in front,
+ *   - a 19-floor L-shaped block to the east: one long wing across the
+ *     back of the garden and a return wing behind the corner, with the
+ *     rooftop pool where the two meet,
+ *
+ * around a landscaped garden, with the blue tennis court and the
+ * coloured play court in the south-east corner, a red-paved internal
+ * driveway, dense palms and broadleaf trees all round, the main road
+ * along the front, and the low-rise city beyond.
+ *
+ * The facades are what make it read as THIS building: light grey walls
+ * with a deep, full-height balcony slot in every fourth bay, so the
+ * recesses line up into the dark vertical stripes of the renders; a
+ * sunshade over every window; a dark stilt-parking floor underneath;
+ * and a jagged roofline of stair heads, lift rooms and water tanks.
  */
-function buildAriaTower(geo, mat, {
-  floors = 19, floorHeight = 3.1, width = 20, depth = 16,
-  pool = false,
-} = {}) {
-  const group = new THREE.Group();
-  const shaftH = floors * floorHeight;
-  const hw = width / 2;
-  const hd = depth / 2;
-  const podiumH = 5.2;
-  const base = 1 + podiumH;
-  const roofY = base + shaftH;
 
-  /* ---- podium: the lit glass base the towers stand on ---- */
-  group.add(box(geo, mat.concrete, width + 6, 1.0, depth + 6, 0, 0.5, 0));
-  group.add(box(geo, mat.concreteDark, width + 3.4, podiumH, depth + 3.4, 0, 1 + podiumH / 2, 0));
-
-  // The continuous glazed strip that makes the base glow at dusk.
-  const glowStrips = [
-    { w: width + 3.2, h: 2.4, d: 0.2, x: 0, y: 2.6, z: hd + 1.75 },
-    { w: width + 3.2, h: 2.4, d: 0.2, x: 0, y: 2.6, z: -hd - 1.75 },
-    { w: 0.2, h: 2.4, d: depth + 3.2, x: hw + 1.75, y: 2.6, z: 0 },
-    { w: 0.2, h: 2.4, d: depth + 3.2, x: -hw - 1.75, y: 2.6, z: 0 },
-  ];
-  const glow = mergedMesh(glowStrips, mat.lobbyGlow, { shadow: false });
-  glow.renderOrder = 1;
-  group.add(glow);
-
-  /* ---- the shaft ---- */
-  group.add(box(geo, mat.towerShell, width, shaftH, depth, 0, base + shaftH / 2, 0));
-
-  // Glazing, set INSIDE the fin line so the fins stand proud of it.
-  const glass = (w, px, pz, ry) => {
-    const face = new THREE.Mesh(geo.plane, mat.curtainWall);
-    face.scale.set(w, shaftH - 1.2, 1);
-    face.position.set(px, base + shaftH / 2, pz);
-    face.rotation.y = ry;
-    group.add(face);
-  };
-  glass(width - 2.2, 0, hd + 0.05, 0);
-  glass(width - 2.2, 0, -hd - 0.05, Math.PI);
-  glass(depth - 2.2, hw + 0.05, 0, Math.PI / 2);
-  glass(depth - 2.2, -hw - 0.05, 0, -Math.PI / 2);
-
-  /* ---- vertical fins: the defining feature of this facade ---- */
-  const fins = [];
-  const finD = 0.75;
-  const finW = 0.85;
-  const perFace = 5;
-  for (let i = 0; i <= perFace; i++) {
-    const fx = -hw + (i / perFace) * width;
-    fins.push({ w: finW, h: shaftH, d: finD, x: fx, y: base + shaftH / 2, z: hd + finD / 2 });
-    fins.push({ w: finW, h: shaftH, d: finD, x: fx, y: base + shaftH / 2, z: -hd - finD / 2 });
-  }
-  for (let i = 0; i <= perFace - 1; i++) {
-    const fz = -hd + (i / (perFace - 1)) * depth;
-    fins.push({ w: finD, h: shaftH, d: finW, x: hw + finD / 2, y: base + shaftH / 2, z: fz });
-    fins.push({ w: finD, h: shaftH, d: finW, x: -hw - finD / 2, y: base + shaftH / 2, z: fz });
-  }
-  group.add(mergedMesh(fins, mat.towerFin, { shadow: false }));
-
-  // The warm uplight washing up every other fin, as in the night render.
-  const wash = mergedMesh(
-    fins.filter((_, i) => i % 2 === 0).map((f) => ({
-      w: f.w * 1.3, h: shaftH * 0.72, d: f.d * 1.3,
-      x: f.x, y: base + shaftH * 0.36, z: f.z,
-    })),
-    mat.facadeUplight,
-    { shadow: false },
-  );
-  wash.renderOrder = 2;
-  group.add(wash);
-
-  /* ---- slab edges and balconies ---- */
-  const bands = [];
-  const balconies = [];
-  for (let f = 0; f < floors; f++) {
-    const y = base + f * floorHeight;
-    bands.push({ w: width + 1.8, h: 0.3, d: depth + 1.8, x: 0, y, z: 0 });
-    if (f % 2 === 1) {
-      balconies.push({ w: width * 0.3, h: 0.2, d: 1.5, x: -width * 0.27, y: y + 0.28, z: hd + 1.1 });
-      balconies.push({ w: width * 0.3, h: 0.2, d: 1.5, x: width * 0.27, y: y + 0.28, z: -hd - 1.1 });
+/** One tile is one floor of four bays: window, window, balcony, window. */
+function ariaFacadeTexture(aniso) {
+  return canvasTexture("ariaFacade", 512, 128, (g, w, h) => {
+    const bay = w / 4;
+    g.fillStyle = "#dcdfe0";
+    g.fillRect(0, 0, w, h);
+    for (let b = 0; b < 4; b++) {
+      const x = b * bay;
+      if (b === 2) {
+        // The balcony: deep in shadow, a glazed door at the back, the
+        // railing across the front.
+        g.fillStyle = "#3a4048";
+        g.fillRect(x + bay * 0.05, 0, bay * 0.9, h);
+        g.fillStyle = "#65727e";
+        g.fillRect(x + bay * 0.22, h * 0.12, bay * 0.56, h * 0.7);
+        g.fillStyle = "#8ea3b4";
+        g.fillRect(x + bay * 0.24, h * 0.14, bay * 0.16, h * 0.64);
+        g.fillStyle = "#f1f2f2";
+        g.fillRect(x + bay * 0.05, h * 0.55, bay * 0.9, h * 0.045);
+        for (let i = 0; i <= 8; i++) g.fillRect(x + bay * (0.05 + i * 0.1125), h * 0.55, 2, h * 0.33);
+      } else {
+        // A window under its sunshade.
+        g.fillStyle = "#4e5a66";
+        g.fillRect(x + bay * 0.18, h * 0.26, bay * 0.64, h * 0.5);
+        const glare = g.createLinearGradient(0, h * 0.26, 0, h * 0.76);
+        glare.addColorStop(0, "rgba(196,220,238,0.55)");
+        glare.addColorStop(1, "rgba(196,220,238,0.04)");
+        g.fillStyle = glare;
+        g.fillRect(x + bay * 0.18, h * 0.26, bay * 0.64, h * 0.5);
+        g.fillStyle = "#c8ccd0";
+        g.fillRect(x + bay * 0.495, h * 0.26, 3, h * 0.5);
+        g.fillStyle = "#f4f5f5";
+        g.fillRect(x + bay * 0.13, h * 0.2, bay * 0.74, h * 0.065);
+        g.fillStyle = "rgba(0,0,0,0.2)";
+        g.fillRect(x + bay * 0.13, h * 0.265, bay * 0.74, h * 0.035);
+      }
+      // The pier between bays.
+      g.fillStyle = "#ccd1d4";
+      g.fillRect(x, 0, bay * 0.04, h);
     }
-  }
-  group.add(mergedMesh(bands, mat.towerBand, { shadow: false }));
-  if (balconies.length) group.add(mergedMesh(balconies, mat.balconyGlass, { shadow: false }));
+    // The slab edge at each floor.
+    g.fillStyle = "#f5f6f6";
+    g.fillRect(0, h * 0.91, w, h * 0.09);
+  }, { aniso });
+}
 
-  /* ---- roof: parapet, lift overrun, warning lights ---- */
-  group.add(box(geo, mat.concreteDark, width + 2.2, 0.8, depth + 2.2, 0, roofY + 0.4, 0));
-  group.add(box(geo, mat.steelDark, 3.4, 2.8, 3.4, -hw + 3.2, roofY + 2.2, -hd + 3.2));
-  group.add(mergedMesh(
-    [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].map(([cx, cz]) => ({
-      w: 0.4, h: 0.4, d: 0.4, x: cx, y: roofY + 1.1, z: cz,
-    })),
-    mat.red,
-    { shadow: false },
-  ));
-
-  if (pool) {
-    // The rooftop pool and deck from the aerial render — the thing that
-    // makes the overhead view of this development recognisable.
-    group.add(box(geo, mat.timber, 11, 0.12, 7.5, 2, roofY + 0.86, 1.5));
-    const water = new THREE.Mesh(geo.plane, mat.poolWater);
-    water.scale.set(7.4, 4.4, 1);
-    water.rotation.x = -Math.PI / 2;
-    water.position.set(2, roofY + 0.95, 1.5);
-    group.add(water);
-  }
-
-  group.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
-  return { group, height: roofY + 3 };
+/** The stilt floor under each block: columns, parked cars, shadow. */
+function ariaStiltTexture(aniso) {
+  return canvasTexture("ariaStilt", 256, 64, (g, w, h) => {
+    g.fillStyle = "#2b3035";
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = "#c9cdd0";
+    for (let i = 0; i < 4; i++) g.fillRect(i * (w / 4), 0, w * 0.035, h);
+    const cars = ["#8a1f1f", "#d6d8da", "#3b4f6b", "#1d1f22"];
+    for (let i = 0; i < 4; i++) {
+      g.fillStyle = cars[i];
+      g.fillRect(i * (w / 4) + w * 0.07, h * 0.55, w * 0.14, h * 0.3);
+    }
+    g.fillStyle = "#f2f3f3";
+    g.fillRect(0, 0, w, h * 0.08);
+  }, { aniso });
 }
 
 /**
- * The Casagrand Aria development: three 19-floor towers in the stepped
- * L the site plan uses, on landscaped grounds with the sports courts,
- * the internal road and the tree line from the aerial render — and the
- * ARIA mark standing lit at the entrance, as real geometry rather than
- * a texture.
+ * The walls of a block as ONE geometry: four faces per part, with UVs
+ * in bays and floors so the facade tiles at the right scale on every
+ * face, whatever the part's size.
+ *
+ * part: { x, z, w, d, y0, floors } in the block's local space.
+ */
+function facadeGeometry(parts, { floorH, bayW, startFloor = 0 }) {
+  const pos = [];
+  const nor = [];
+  const uv = [];
+  const idx = [];
+  const quad = (a, b, c, d, n, uw, vh, v0) => {
+    const i = pos.length / 3;
+    pos.push(...a, ...b, ...c, ...d);
+    for (let k = 0; k < 4; k++) nor.push(...n);
+    uv.push(0, v0, uw, v0, uw, v0 + vh, 0, v0 + vh);
+    idx.push(i, i + 1, i + 2, i, i + 2, i + 3);
+  };
+  parts.forEach((p) => {
+    const x0 = p.x - p.w / 2;
+    const x1 = p.x + p.w / 2;
+    const z0 = p.z - p.d / 2;
+    const z1 = p.z + p.d / 2;
+    const y0 = p.y0;
+    const y1 = p.y0 + p.floors * floorH;
+    const tilesW = (len) => len / (bayW * 4);
+    const v0 = startFloor;
+    // +z, -z, +x, -x — counter-clockwise seen from outside.
+    quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1], tilesW(p.w), p.floors, v0);
+    quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [0, 0, -1], tilesW(p.w), p.floors, v0);
+    quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [1, 0, 0], tilesW(p.d), p.floors, v0);
+    quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [-1, 0, 0], tilesW(p.d), p.floors, v0);
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+
+/**
+ * One block of the development: stilt floor, the floors above it, the
+ * roof with its parapet and the stair heads, lift rooms and water tanks
+ * that give these blocks their jagged skyline.
+ */
+function buildAriaBlock(geo, mat, facadeMat, stiltMat, {
+  name, parts, floors, floorH = 3.0, bayW = 3.4, services = [], pool = null,
+}) {
+  const group = new THREE.Group();
+  const STILT = 3.6;
+  const top = STILT + floors * floorH;
+
+  const stiltMesh = new THREE.Mesh(
+    facadeGeometry(parts.map((p) => ({ ...p, w: p.w - 0.8, d: p.d - 0.8, y0: 0, floors: 1 })), { floorH: STILT, bayW: bayW * 1.6 }),
+    stiltMat
+  );
+  group.add(stiltMesh);
+  group.add(new THREE.Mesh(
+    facadeGeometry(parts.map((p) => ({ ...p, y0: STILT, floors })), { floorH, bayW }),
+    facadeMat
+  ));
+
+  // Roofs, the slab over the stilts, the parapet and the roof clutter,
+  // all in one merged mesh.
+  const roof = [];
+  parts.forEach((p) => {
+    roof.push({ w: p.w + 0.6, h: 0.35, d: p.d + 0.6, x: p.x, y: STILT, z: p.z });
+    roof.push({ w: p.w, h: 0.3, d: p.d, x: p.x, y: top, z: p.z });
+    // Parapet round each part.
+    roof.push({ w: p.w, h: 1.1, d: 0.25, x: p.x, y: top + 0.55, z: p.z + p.d / 2 - 0.12 });
+    roof.push({ w: p.w, h: 1.1, d: 0.25, x: p.x, y: top + 0.55, z: p.z - p.d / 2 + 0.12 });
+    roof.push({ w: 0.25, h: 1.1, d: p.d, x: p.x + p.w / 2 - 0.12, y: top + 0.55, z: p.z });
+    roof.push({ w: 0.25, h: 1.1, d: p.d, x: p.x - p.w / 2 + 0.12, y: top + 0.55, z: p.z });
+  });
+  services.forEach((s) => {
+    roof.push({ w: s.w, h: s.h, d: s.d, x: s.x, y: top + s.h / 2, z: s.z });
+    // A water tank on top of most of them.
+    if (s.tank !== false) {
+      roof.push({ w: s.w * 0.7, h: 1.6, d: s.d * 0.6, x: s.x, y: top + s.h + 0.8, z: s.z });
+    }
+  });
+  group.add(mergedMesh(roof, mat.towerBand, { shadow: false }));
+
+  if (pool) {
+    // The rooftop pool with its deck and glass balustrade.
+    group.add(mergedMesh([
+      { w: pool.w + 4, h: 0.3, d: pool.d + 4, x: pool.x, y: top + 0.45, z: pool.z },
+    ], mat.timber, { shadow: false }));
+    const water = new THREE.Mesh(geo.plane, mat.poolWater);
+    water.scale.set(pool.w, pool.d, 1);
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(pool.x, top + 0.64, pool.z);
+    group.add(water);
+    group.add(mergedMesh([
+      { w: pool.w + 4, h: 1.1, d: 0.08, x: pool.x, y: top + 1.15, z: pool.z + pool.d / 2 + 2 },
+      { w: 0.08, h: 1.1, d: pool.d + 4, x: pool.x + pool.w / 2 + 2, y: top + 1.15, z: pool.z },
+    ], mat.balconyGlass, { shadow: false }));
+  }
+
+  group.userData.ariaBuilding = { name, floors, height: top, parts };
+  return { group, height: top };
+}
+
+/**
+ * Trees, the way the renders have them: coconut palms and rounded
+ * broadleaf canopies in several greens. All of them go into a handful
+ * of merged meshes, so a few hundred trees cost four draw calls.
+ */
+function buildTreeGroves(spots, { seed = 7 } = {}) {
+  let s = seed;
+  const rand = () => {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+  const trunkParts = [];
+  const canopyParts = [];
+  const palmTrunks = [];
+  const frondParts = [];
+  const greens = [
+    [0.2, 0.42, 0.16], [0.25, 0.48, 0.18], [0.16, 0.36, 0.14],
+    [0.3, 0.5, 0.2], [0.22, 0.4, 0.22], [0.33, 0.46, 0.17],
+  ];
+  const blob = new THREE.IcosahedronGeometry(1, 1);
+  const trunk = new THREE.CylinderGeometry(0.16, 0.26, 1, 6);
+  const frond = new THREE.BoxGeometry(0.55, 0.06, 4.2);
+  frond.translate(0, 0, 2.1);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const place = (g, x, y, z, sx, sy, sz, rx = 0, ry = 0, rz = 0) => {
+    e.set(rx, ry, rz, "YXZ");
+    q.setFromEuler(e);
+    m.compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(sx, sy, sz));
+    return g.clone().applyMatrix4(m);
+  };
+  const tint = (g, rgb) => {
+    const n = g.attributes.position.count;
+    const c = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      // Lighter where the canopy faces the sky, darker underneath.
+      const shade = 0.78 + 0.34 * Math.max(0, g.attributes.normal.getY(i));
+      c[i * 3] = rgb[0] * shade; c[i * 3 + 1] = rgb[1] * shade; c[i * 3 + 2] = rgb[2] * shade;
+    }
+    g.setAttribute("color", new THREE.BufferAttribute(c, 3));
+    return g;
+  };
+
+  spots.forEach(({ x, z, palm = null, scale = 1 }) => {
+    const isPalm = palm ?? rand() < 0.35;
+    if (isPalm) {
+      const h = (8 + rand() * 4) * scale;
+      const lean = (rand() - 0.5) * 0.2;
+      palmTrunks.push(place(trunk, x, h / 2, z, 0.9, h, 0.9, lean, 0, (rand() - 0.5) * 0.15));
+      const fronds = 9;
+      const yaw0 = rand() * Math.PI * 2;
+      for (let i = 0; i < fronds; i++) {
+        const yaw = yaw0 + (i / fronds) * Math.PI * 2;
+        frondParts.push(tint(place(frond, x + Math.sin(lean) * h * 0.5, h, z, scale, scale, scale, 0.35 + rand() * 0.35, yaw, 0), greens[(i + Math.floor(rand() * 6)) % 6]));
+      }
+    } else {
+      const h = (3.2 + rand() * 2.2) * scale;
+      const r = (2.4 + rand() * 1.8) * scale;
+      trunkParts.push(place(trunk, x, h / 2, z, 1.3 * scale, h, 1.3 * scale));
+      const green = greens[Math.floor(rand() * greens.length)];
+      const blobs = 2 + Math.floor(rand() * 2);
+      for (let k = 0; k < blobs; k++) {
+        const a = rand() * Math.PI * 2;
+        const off = k === 0 ? 0 : r * 0.45;
+        canopyParts.push(tint(place(blob,
+          x + Math.cos(a) * off, h + r * (k === 0 ? 0.75 : 0.55), z + Math.sin(a) * off,
+          r * (k === 0 ? 1 : 0.75), r * (k === 0 ? 0.85 : 0.65), r * (k === 0 ? 1 : 0.75)),
+        green));
+      }
+    }
+  });
+
+  const group = new THREE.Group();
+  const leaf = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const bark = new THREE.MeshLambertMaterial({ color: 0x6e5338 });
+  const palmBark = new THREE.MeshLambertMaterial({ color: 0x8a7458 });
+  const add = (parts, material) => {
+    if (!parts.length) return;
+    const merged = mergeGeometries(parts, false);
+    parts.forEach((g) => g.dispose());
+    if (merged) group.add(new THREE.Mesh(merged, material));
+  };
+  add(trunkParts, bark);
+  add(canopyParts, leaf);
+  add(palmTrunks, palmBark);
+  add(frondParts, leaf);
+  blob.dispose();
+  trunk.dispose();
+  frond.dispose();
+  group.userData.treeCount = spots.length;
+  return group;
+}
+
+/**
+ * The Casagrand Aria development: the 19-floor west tower, the 9-floor
+ * middle block and the 19-floor L-shaped block, laid out as the renders
+ * show, with the grounds, the trees and the road in front.
  *
  * This is SCENERY. It sits beyond the hoarding, carries no colliders,
  * casts no shadows, and reads from any angle the player can get to,
  * including the overhead view.
  *
- * `x`/`z` place the ENTRANCE, not the centre: the grounds are pushed
- * back behind that anchor so a caller can park the development just
- * past its hoarding line without doing the arithmetic.
+ * `x`/`z` place the ENTRANCE on the main road. The development runs
+ * back from it (local -z), with the road along the front (local +z).
  */
 export function buildBrandedTower(geo, mat, {
   x = 0, z = -95, floors = 19, rotY = 0,
@@ -1087,83 +1246,198 @@ export function buildBrandedTower(geo, mat, {
   group.position.set(x, 0, z);
   group.rotation.y = rotY;
 
-  // Everything hangs off this, offset so local z = 0 is the entrance.
+  const aniso = 4;
+  const facadeMat = new THREE.MeshLambertMaterial({ map: ariaFacadeTexture(aniso) });
+  const stiltMat = new THREE.MeshLambertMaterial({ map: ariaStiltTexture(aniso) });
+
+  // Everything hangs off this, so local z = 0 is the compound wall.
   const site = new THREE.Group();
-  site.position.z = -40;
   group.add(site);
 
-  // Landscaped ground the whole development sits on.
-  site.add(box(geo, mat.lawn, 150, 0.4, 92, 0, 0.2, 0));
-
-  /* ---- three towers, stepped as the renders show ---- */
-  const towers = [
-    { at: [-38, 6], rot: 0, floors, width: 20, depth: 16, pool: true },
-    { at: [2, -18], rot: -0.42, floors: floors - 2, width: 17, depth: 15 },
-    { at: [44, 10], rot: 0.30, floors, width: 26, depth: 15 },
-  ];
-  towers.forEach((t) => {
-    const tower = buildAriaTower(geo, mat, {
-      floors: t.floors, width: t.width, depth: t.depth, pool: t.pool,
-    });
-    tower.group.position.set(t.at[0], 0, t.at[1]);
-    tower.group.rotation.y = t.rot;
-    site.add(tower.group);
-  });
-
-  /* ---- sports courts, straight off the aerial ---- */
-  const courts = [
-    { at: [46, 34], w: 17, d: 11, m: mat.courtBlue },
-    { at: [64, 34], w: 15, d: 11, m: mat.courtRed },
-  ];
-  const courtLines = [];
-  courts.forEach((c) => {
-    const pad = new THREE.Mesh(geo.plane, c.m);
-    pad.scale.set(c.w, c.d, 1);
-    pad.rotation.x = -Math.PI / 2;
-    pad.position.set(c.at[0], 0.45, c.at[1]);
-    site.add(pad);
-    courtLines.push({ w: c.w, h: 0.04, d: 0.16, x: c.at[0], y: 0.47, z: c.at[1] });
-    courtLines.push({ w: 0.16, h: 0.04, d: c.d, x: c.at[0], y: 0.47, z: c.at[1] });
-  });
-  site.add(mergedMesh(courtLines, mat.white, { shadow: false }));
-
-  /* ---- internal road and the paths between the towers ---- */
+  /* ---- the ground: garden lawn inside the wall, verge outside ---- */
   site.add(mergedMesh([
-    { w: 150, h: 0.08, d: 5, x: 0, y: 0.44, z: 26 },
-    { w: 5, h: 0.08, d: 68, x: -62, y: 0.44, z: 0 },
-  ], mat.asphalt, { shadow: false }));
+    { w: 168, h: 0.3, d: 104, x: 0, y: 0.15, z: -53 },
+  ], mat.lawn, { shadow: false }));
+
+  /* ---- the main road along the front, footpaths and markings ---- */
+  site.add(mergedMesh([{ w: 230, h: 0.12, d: 8, x: 0, y: 0.06, z: 5 }], mat.asphalt, { shadow: false }));
   site.add(mergedMesh([
-    { w: 60, h: 0.06, d: 2.4, x: -4, y: 0.44, z: 20 },
-    { w: 2.4, h: 0.06, d: 34, x: 22, y: 0.44, z: 2 },
+    { w: 230, h: 0.2, d: 1.6, x: 0, y: 0.1, z: 0.2 },
+    { w: 230, h: 0.2, d: 1.4, x: 0, y: 0.1, z: 9.8 },
   ], mat.concreteDark, { shadow: false }));
+  const marks = [];
+  for (let i = -112; i < 112; i += 6) marks.push({ w: 3, h: 0.02, d: 0.18, x: i, y: 0.13, z: 5 });
+  marks.push({ w: 230, h: 0.02, d: 0.14, x: 0, y: 0.13, z: 1.4 });
+  marks.push({ w: 230, h: 0.02, d: 0.14, x: 0, y: 0.13, z: 8.6 });
+  site.add(mergedMesh(marks, mat.white, { shadow: false }));
 
-  /* ---- tree line, with a gap left open at the entrance ---- */
-  const trunks = [];
-  const canopy = [];
-  for (let i = 0; i < 46; i++) {
-    const ang = (i / 46) * Math.PI * 2;
-    const r = 58 + ((i * 13) % 11);
-    const tx = Math.cos(ang) * r;
-    const tz = Math.sin(ang) * r * 0.55;
-    // Keep the view of the entrance and the mark clear.
-    if (tz > 20 && Math.abs(tx) < 26) continue;
-    const h = 4.5 + ((i * 7) % 4);
-    trunks.push({ w: 0.5, h, d: 0.5, x: tx, y: 0.4 + h / 2, z: tz });
-    canopy.push({ w: 4.6, h: 3.4, d: 4.6, x: tx, y: 0.4 + h + 1.3, z: tz });
+  /* ---- compound wall, with the gate on the driveway ---- */
+  site.add(mergedMesh([
+    { w: 76, h: 1.8, d: 0.3, x: -46, y: 0.9, z: -1.4 },
+    { w: 76, h: 1.8, d: 0.3, x: 46, y: 0.9, z: -1.4 },
+    { w: 0.3, h: 1.8, d: 102, x: -84, y: 0.9, z: -52 },
+    { w: 0.3, h: 1.8, d: 102, x: 84, y: 0.9, z: -52 },
+    { w: 168, h: 1.8, d: 0.3, x: 0, y: 0.9, z: -103 },
+  ], mat.towerShell, { shadow: false }));
+
+  /* ---- the red-paved internal driveway ---- */
+  site.add(mergedMesh([
+    { w: 7, h: 0.08, d: 43, x: 0, y: 0.33, z: -23.5 },
+    { w: 96, h: 0.08, d: 7, x: 9, y: 0.33, z: -44 },
+    { w: 58, h: 0.08, d: 6, x: -27, y: 0.33, z: -12 },
+    { w: 6, h: 0.08, d: 14, x: -54, y: 0.33, z: -21 },
+  ], mat.paving || mat.timberDark, { shadow: false }));
+
+  /* ---- the three buildings ---- */
+  const west = buildAriaBlock(geo, mat, facadeMat, stiltMat, {
+    name: "west tower",
+    floors,
+    parts: [
+      { x: 0, z: 0, w: 24, d: 15 },
+      { x: 0, z: 0, w: 15, d: 25 },
+      { x: -8, z: 9, w: 6, d: 6 },
+      { x: 8, z: -9, w: 6, d: 6 },
+    ],
+    services: [
+      { x: -6, z: -4, w: 6, d: 5, h: 4.5 },
+      { x: 6, z: 4, w: 6, d: 5, h: 4.5 },
+      { x: 0, z: 9, w: 4, d: 4, h: 3, tank: false },
+      { x: -9, z: 2, w: 3.5, d: 3.5, h: 2.6 },
+    ],
+  });
+  west.group.position.set(-54, 0, -42);
+  site.add(west.group);
+
+  const middle = buildAriaBlock(geo, mat, facadeMat, stiltMat, {
+    name: "middle block",
+    floors: 9,
+    parts: [
+      { x: 0, z: 0, w: 17, d: 12 },
+      { x: 0, z: 0, w: 11, d: 17 },
+    ],
+    services: [
+      { x: -3, z: -2, w: 5, d: 4, h: 3.8 },
+      { x: 4, z: 3, w: 3, d: 3, h: 2.4 },
+    ],
+  });
+  middle.group.position.set(-24, 0, -27);
+  site.add(middle.group);
+
+  // The L: a long wing across the back of the garden, and a return wing
+  // running back from its west end. The pool is on the corner.
+  const lBlock = buildAriaBlock(geo, mat, facadeMat, stiltMat, {
+    name: "L-shaped block",
+    floors,
+    parts: [
+      { x: 0, z: 0, w: 62, d: 15 },
+      { x: -23.5, z: -17, w: 15, d: 34 },
+      // Projecting bays along the long face, so it steps as the renders do.
+      { x: -8, z: 8.5, w: 8, d: 2.4 },
+      { x: 10, z: 8.5, w: 8, d: 2.4 },
+      { x: 26, z: 8.5, w: 7, d: 2.4 },
+      { x: -8, z: -8.5, w: 8, d: 2.4 },
+      { x: 12, z: -8.5, w: 8, d: 2.4 },
+    ],
+    services: [
+      { x: -16, z: -4, w: 5, d: 5, h: 4.5 },
+      { x: 2, z: 0, w: 6, d: 5, h: 4.5 },
+      { x: 18, z: 0, w: 6, d: 5, h: 4.5 },
+      { x: 28, z: -3, w: 4, d: 4, h: 3 },
+      { x: -23.5, z: -28, w: 6, d: 5, h: 4.5 },
+      { x: -27, z: -14, w: 3.5, d: 3.5, h: 2.6 },
+    ],
+    pool: { x: -23.5, z: -1, w: 9, d: 5 },
+  });
+  lBlock.group.position.set(14, 0, -58);
+  site.add(lBlock.group);
+
+  /* ---- the courts in the south-east corner ---- */
+  const tennis = new THREE.Mesh(geo.plane, mat.courtBlue);
+  tennis.scale.set(24, 11, 1);
+  tennis.rotation.x = -Math.PI / 2;
+  tennis.position.set(42, 0.32, -24);
+  site.add(tennis);
+  const play = new THREE.Mesh(geo.plane, mat.courtRed);
+  play.scale.set(15, 11, 1);
+  play.rotation.x = -Math.PI / 2;
+  play.position.set(65, 0.32, -24);
+  site.add(play);
+  const lines = [];
+  [[42, 24, 11], [65, 15, 11]].forEach(([cx, w, d]) => {
+    lines.push({ w, h: 0.02, d: 0.14, x: cx, y: 0.34, z: -24 - d / 2 + 0.3 });
+    lines.push({ w, h: 0.02, d: 0.14, x: cx, y: 0.34, z: -24 + d / 2 - 0.3 });
+    lines.push({ w: 0.14, h: 0.02, d, x: cx - w / 2 + 0.3, y: 0.34, z: -24 });
+    lines.push({ w: 0.14, h: 0.02, d, x: cx + w / 2 - 0.3, y: 0.34, z: -24 });
+  });
+  lines.push({ w: 0.14, h: 0.02, d: 11, x: 42, y: 0.34, z: -24 });
+  lines.push({ w: 0.08, h: 1.0, d: 10, x: 42, y: 0.8, z: -24 });
+  site.add(mergedMesh(lines, mat.white, { shadow: false }));
+  // The play court's coloured rings and the fence round both courts.
+  const rings = [];
+  [[60, -27, mat.yellow], [65, -21, mat.green], [70, -26, mat.blue]].forEach(([cx, cz, m]) => {
+    const ring = new THREE.Mesh(new THREE.CircleGeometry(1.8, 20), m);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(cx, 0.335, cz);
+    rings.push(ring);
+  });
+  rings.forEach((r) => site.add(r));
+  site.add(mergedMesh([
+    { w: 42, h: 3, d: 0.06, x: 53, y: 1.8, z: -17.6 },
+    { w: 42, h: 3, d: 0.06, x: 53, y: 1.8, z: -30.4 },
+  ], mat.net, { shadow: false }));
+
+  /* ---- trees: the street, the garden, and the belt round the site ---- */
+  const spots = [];
+  // Along the road, inside the wall.
+  for (let tx = -80; tx <= 80; tx += 9) {
+    // Clear of the gate and of the name wall beside it.
+    if (Math.abs(tx) < 10 || (tx > 6 && tx < 34)) continue;
+    spots.push({ x: tx, z: -4.5, palm: (tx / 9) % 2 === 0 });
   }
-  site.add(mergedMesh(trunks, mat.timberDark, { shadow: false }));
-  site.add(mergedMesh(canopy, mat.foliage, { shadow: false }));
+  // The belt round the sides and back.
+  for (let tz = -10; tz >= -98; tz -= 7) {
+    spots.push({ x: -79, z: tz });
+    spots.push({ x: 79, z: tz });
+  }
+  for (let tx = -76; tx <= 76; tx += 7) spots.push({ x: tx, z: -98 });
+  // The garden between the blocks and the courts.
+  [[-6, -18], [8, -14], [16, -26], [24, -16], [-10, -32], [6, -34], [28, -36],
+    [18, -38], [-36, -10], [-40, -20], [-14, -12], [34, -10], [52, -38], [60, -12],
+    [72, -38], [-68, -18], [-66, -62], [-40, -64], [-40, -78], [-56, -84], [44, -82],
+    [60, -84], [70, -66], [30, -84], [5, -88], [14, -92], [50, -71], [74, -50]]
+    .forEach(([tx, tz]) => spots.push({ x: tx, z: tz }));
+  // Outside the compound: the green the city is set in.
+  for (let tx = -110; tx <= 110; tx += 11) {
+    if (Math.abs(tx) < 88) continue;
+    for (let tz = -6; tz >= -100; tz -= 12) spots.push({ x: tx + ((tz * 7) % 5), z: tz, scale: 1.15 });
+  }
+  const groves = buildTreeGroves(spots);
+  site.add(groves);
 
-  /* ---- the entrance: name wall with the ARIA mark above it ---- */
-  const wall = box(geo, mat.brandDark, 26, 6.5, 0.6, 0, 3.6, 36, { shadow: false });
-  site.add(wall);
+  /* ---- the city beyond: low blocks among the trees ---- */
+  const city = [];
+  [[-122, -20, 14, 10, 12], [-126, -48, 12, 16, 18], [-120, -78, 16, 12, 9],
+    [122, -24, 12, 12, 15], [126, -56, 16, 14, 9], [120, -86, 12, 10, 21]].forEach(([cx, cz, w, d, h]) => {
+    city.push({ w, h, d, x: cx, y: h / 2, z: cz });
+    city.push({ w: 3, h: 2, d: 3, x: cx - w / 4, y: h + 1, z: cz });
+  });
+  site.add(mergedMesh(city, mat.towerShell, { shadow: false }));
 
-  const mark = buildAriaMark(geo, mat, { size: 7 });
-  mark.group.position.set(0, 12.5, 36);
+  /* ---- the entrance: the name wall with the ARIA mark above it ---- */
+  site.add(box(geo, mat.brandDark, 22, 5.4, 0.6, 20, 3.0, -3.2, { shadow: false }));
+  const mark = buildAriaMark(geo, mat, { size: 6 });
+  mark.group.position.set(20, 10.5, -3.2);
   site.add(mark.group);
 
   group.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
-  return { group, height: 1 + 5.2 + floors * 3.1 + 3, floors, ariaRing: mark.ring };
+  return {
+    group,
+    height: lBlock.height + 6,
+    floors,
+    ariaRing: mark.ring,
+    buildings: [west.group, middle.group, lBlock.group],
+    trees: spots.length,
+  };
 }
 
 /* =========================== buildings =========================== */
