@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Gamepad2, RefreshCw, Loader2, ShieldAlert, ToggleLeft, ToggleRight,
-  BarChart3, Users, Clock, Trophy, Copy, Check, AlertTriangle, Target,
+  Gamepad2, RefreshCw, Loader2, ShieldAlert, ToggleLeft, ToggleRight, Users, Clock, Trophy, Copy, Check, AlertTriangle, Target,
 } from "lucide-react";
-import { C, GAMES, GAME_IDS, getGame } from "../arenaConstants.js";
+import { C, GAME_IDS, getGame } from "../arenaConstants.js";
 import {
   fetchAllProfiles, fetchFeed, fetchArenaConfig, setGameEnabled, setControlDefaults,
   findSuspiciousRuns, buildLeaderboard,

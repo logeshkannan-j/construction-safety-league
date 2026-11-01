@@ -23,20 +23,14 @@ import { createTopView } from "../../engine/topview.js";
 import { shot } from "../../engine/demoTour.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
 import {
-  createMaterials, createGeometries, box, cylinder, collider,
-  buildGround, buildSign, buildFireExtinguisher, buildElectricalPanel,
-  buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadderAgainst,
-  buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
-  buildZoneMarker, buildAriaMark, buildBrandedTower, animateWorker, turnToward, buildKey, buildInfoBoard,
-  buildNameplate, buildIsolatorPanel,
-  collectWorkers, idleWorkers,
+  createMaterials, createGeometries, box, cylinder, collider, buildGround, buildSign, buildFireExtinguisher, buildElectricalPanel, buildPuddle, buildLadderAgainst, buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier, buildZoneMarker, buildAriaMark, buildBrandedTower, animateWorker, turnToward, buildKey, buildInfoBoard, buildNameplate, buildIsolatorPanel, collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
 import { buildTask, placeTask } from "../../engine/tasks.js";
-import { debrisYard, scatterDebris } from "../../engine/debris.js";
+import { scatterDebris } from "../../engine/debris.js";
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
 import { shuffledOrder } from "../../shuffle.js";
-import { t, tAlt, tOptions, onLangChange, getLang } from "../../language.js";
+import { t, tAlt, onLangChange, getLang } from "../../language.js";
 
 /* ============================== metadata ============================== */
 

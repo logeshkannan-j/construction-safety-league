@@ -19,16 +19,10 @@ import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import { createFirstPerson, ladderVolume } from "../../engine/fpsController.js";
 import { avatarGender } from "../../identity.js";
 import {
-  createMaterials, createGeometries, box, cylinder, collider,
-  buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail, buildScaffold,
-  buildLadder, buildLadderAgainst, buildTowerCrane, updateHoistRope, buildWorker, buildCone,
-  buildBarrier, buildSign, buildFireExtinguisher, buildElectricalPanel,
-  buildExcavation, buildMaterialPallet, buildDebris, buildCableRun, buildPuddle,
-  buildPPEStation, buildMaterialHoist, buildZoneMarker, buildSiteHut, makeHighlight,
-  collectWorkers, idleWorkers, animateWorker, turnToward, createWalker, buildCementBag,
+  createMaterials, createGeometries, box, cylinder, collider, buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail, buildScaffold, buildLadder, buildLadderAgainst, buildTowerCrane, updateHoistRope, buildWorker, buildCone, buildBarrier, buildSign, buildFireExtinguisher, buildElectricalPanel, buildExcavation, buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildPPEStation, buildMaterialHoist, buildZoneMarker, buildSiteHut, collectWorkers, idleWorkers, animateWorker, turnToward, createWalker, buildCementBag,
 } from "../../engine/kit.js";
 import { buildTask, placeTask } from "../../engine/tasks.js";
-import { debrisYard, scatterDebris } from "../../engine/debris.js";
+import { debrisYard } from "../../engine/debris.js";
 import { sfx } from "../../audio.js";
 import { HAZARDS, SCORING, categoryOptions, actionOptions } from "./hazards.js";
 import { t, tAlt, getLang, onLangChange } from "../../language.js";

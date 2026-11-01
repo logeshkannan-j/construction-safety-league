@@ -19,8 +19,7 @@
 
 import { getApp, getApps, initializeApp } from "firebase/app";
 import {
-  getDatabase, ref, get, set, update, push, query,
-  orderByChild, limitToLast, runTransaction,
+  getDatabase, ref, get, set, update, query, orderByChild, limitToLast, runTransaction,
 } from "firebase/database";
 // Explicit extensions so these modules also load under plain Node
 // (used by the logic test harness), not only through Vite's resolver.

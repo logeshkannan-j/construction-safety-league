@@ -28,13 +28,6 @@ export const SCORING = {
   timeBonusPerSecond: 3,
 };
 
-/** The control hierarchy, used in the debrief. */
-export const HIERARCHY = {
-  eliminate: "Eliminate",
-  engineer: "Engineering control",
-  admin: "Administrative control",
-  ppe: "PPE",
-};
 
 export const HAZARDS = [
   {
@@ -383,6 +376,3 @@ export const HAZARDS = [
 
 export const HAZARD_COUNT = HAZARDS.length;
 
-export function hazardById(id) {
-  return HAZARDS.find((h) => h.id === id) || null;
-}

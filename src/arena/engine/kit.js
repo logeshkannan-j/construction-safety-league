@@ -3528,25 +3528,5 @@ export function buildSiteHut(geo, mat, { width = 6, depth = 2.6, height = 2.6, c
   return group;
 }
 
-/* ------------------------- interaction glow ------------------------- */
-
-/**
- * Creates a slightly inflated copy of a mesh's bounding box, rendered
- * in a translucent colour. This is the outline the player sees when the
- * crosshair is on an interactive object — it reads clearly on a phone
- * screen without needing a post-processing pass.
- */
-export function makeHighlight(object, material) {
-  const bbox = new THREE.Box3().setFromObject(object);
-  const size = bbox.getSize(new THREE.Vector3());
-  const centre = bbox.getCenter(new THREE.Vector3());
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(size.x * 1.14 + 0.12, size.y * 1.1 + 0.12, size.z * 1.14 + 0.12),
-    material
-  );
-  mesh.position.copy(centre);
-  mesh.renderOrder = 2;
-  return mesh;
-}
 
 export { THREE };

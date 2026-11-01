@@ -57,26 +57,6 @@ export function isMobileLayout() {
   return isTouchDevice() && Math.min(window.innerWidth, window.innerHeight) < 820;
 }
 
-/**
- * Picks a starting quality tier from what the device tells us about
- * itself. Players can always override this in Settings.
- */
-export function detectQuality() {
-  if (typeof navigator === "undefined") return "medium";
-  const cores = navigator.hardwareConcurrency || 4;
-  const memory = navigator.deviceMemory || 0; // Chrome only
-  const touch = isTouchDevice();
-  const dpr = window.devicePixelRatio || 1;
-  const pixels = window.screen ? window.screen.width * window.screen.height * dpr * dpr : 1e6;
-
-  if (touch) {
-    if (cores <= 4 || (memory && memory <= 3) || pixels > 4.5e6) return "low";
-    if (cores <= 6) return "medium";
-    return "medium"; // phones cap at medium by default; High is opt-in
-  }
-  if (cores <= 4) return "medium";
-  return "high";
-}
 
 export const QUALITY_PRESETS = {
   low: {
@@ -126,7 +106,7 @@ export function resolveQuality(setting) {
   if (setting === "low" || setting === "medium" || setting === "high") return setting;
   /* "auto" now means HIGH on everything.
    *
-   * detectQuality() was giving most phones and any four-core laptop
+   * The old guess from the device (core count, screen) gave most phones and any four-core laptop
    * the medium tier, and medium is a visibly poorer picture — it was
    * behind several of the "the graphics are low quality" reports. The
    * scenes are ~1,000 draw calls and 50-75k triangles, which a phone
@@ -616,16 +596,6 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/* --------------------------- misc helpers --------------------------- */
-
-/** Mobile-safe raycast from the centre of the screen (the crosshair). */
-export function centerRaycast(camera, targets, maxDistance = 6) {
-  const raycaster = new THREE.Raycaster();
-  raycaster.far = maxDistance;
-  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-  const hits = raycaster.intersectObjects(targets, true);
-  return hits.length ? hits[0] : null;
-}
 
 export function screenRaycast(camera, ndc, targets, maxDistance = 400) {
   const raycaster = new THREE.Raycaster();

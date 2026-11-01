@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useState } from "react";
 import {
   Gamepad2, Trophy, Play, Clock, BarChart3, Award, Lock, RefreshCw,
   ChevronLeft, User, Loader2, AlertTriangle, Target, CheckCircle2, Zap, Box,

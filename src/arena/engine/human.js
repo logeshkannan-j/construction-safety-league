@@ -1879,8 +1879,6 @@ function reachArm(p, side, to, pole) {
   p[`elbow${L}`] = -elbow;
 }
 
-/** The ways people stand about, and how often. */
-export const STANCES = ["relaxed", "hips", "folded", "behind"];
 
 /*
  * How somebody stands about. Not everybody hangs their arms at their

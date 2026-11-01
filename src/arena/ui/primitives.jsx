@@ -111,15 +111,6 @@ export function StatBox({ label, value, color = C.yellow, sub, big = false }) {
   );
 }
 
-export function SectionTitle({ children, icon, right }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-      {icon}
-      <h2 style={{ fontSize: 15, fontWeight: 900, margin: 0, letterSpacing: 0.2 }}>{children}</h2>
-      <div style={{ marginLeft: "auto" }}>{right}</div>
-    </div>
-  );
-}
 
 export function Divider({ margin = 14 }) {
   return <div style={{ height: 1, background: C.line, margin: `${margin}px 0` }} />;

@@ -1478,12 +1478,12 @@ section("The TV shows the live session and the final result");
     tvScreenFor({ status: "lobby", releasedRound: 2 }) === "lobby");
   check("ending the event shows the results",
     tvScreenFor({ status: "ended", releasedRound: 4 }) === "results");
-  /* The old lock-step mode is still reachable for a game that never
-   * released a round, so a legacy record does not lose its display. */
-  check("a game with no round released still uses the old question screen",
-    tvScreenFor({ status: "question", releasedRound: -1 }) === "question");
-  check("and its reveal screen",
-    tvScreenFor({ status: "reveal", releasedRound: -1 }) === "reveal");
+  /* The old one-question-at-a-time mode is gone. A record left in it
+   * shows the join screen — its question screen crashed on plan rows. */
+  check("a legacy record with no round released shows the join screen",
+    tvScreenFor({ status: "question", releasedRound: -1 }) === "lobby");
+  check("and so does a legacy reveal",
+    tvScreenFor({ status: "reveal", releasedRound: -1 }) === "lobby");
 
   const { buildEventPlan, createRun, STAGES } = await server.ssrLoadModule("/src/session.js");
 

@@ -40,11 +40,10 @@ import {
   buildSiteHut, buildBarrier, buildZoneMarker, buildCableRun, buildPuddle, buildNameplate,
   collectWorkers, idleWorkers, animateWorker, turnToward,
 } from "../../engine/kit.js";
-import { buildTask, placeTask } from "../../engine/tasks.js";
-import { debrisYard, scatterDebris } from "../../engine/debris.js";
 import { sfx } from "../../audio.js";
 import { createVoices } from "../../voice.js";
-import { PHASES, SCORING, pickScenario } from "./scenarios.js";
+import { debrisYard, scatterDebris } from "../../engine/debris.js";
+import { pickScenario } from "./scenarios.js";
 import { createERT } from "./ert.js";
 import {
   STATIONS, STATION_COUNT, STATION_SCORING, HAZARD_ENTRY, stationById,
@@ -1053,19 +1052,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     pushHud();
   }
 
-  /** Clicking something that is not a station at all. */
-  function wrongTarget(label) {
-    if (state.finished) return;
-    state.score += STATION_SCORING.wrongTarget;
-    sfx.locked();
-    api.toast(`${label} is not part of the response right now.`, "warn", STATION_SCORING.wrongTarget);
-  }
 
 
   function showBrief() {
-    // The brief can be re-read at any time, including mid-decision — but
-    // the decision clock keeps running, so reading it costs you time.
-    const interrupting = false;
+    // The brief can be re-read at any time.
     // Stops the decision dialog's periodic timer re-render from
     // immediately painting over the brief.
     state.briefOpen = true;
@@ -1079,7 +1069,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       tone: "danger",
       options: [],
       dismissable: true,
-      dismissLabel: interrupting ? "Back to the decision — the clock is running" : "Back to the incident",
+      dismissLabel: "Back to the incident",
       footer: [`Alert: ${t(scenario, "alert", lang)}`, tAlt(scenario, "alert", lang)]
         .filter(Boolean).join("  ·  "),
       onDismiss: closeBrief,

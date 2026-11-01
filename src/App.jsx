@@ -1,11 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import {
-  HardHat, Users, Trophy, Clock, CheckCircle2, XCircle, Play, Pause,
-  SkipForward, RotateCcw, Eye, EyeOff, Award, Wifi, WifiOff, Flag,
-  ChevronRight, Shield, Zap, Crown, QrCode, LogIn, Volume2, VolumeX,
-  Target, Upload, Trash2, MapPin, ImagePlus, X, Percent, Phone, Gem, Ban,
-  Pencil, UserMinus, Save, AlertTriangle, ListChecks, Lock, Gamepad2,
-  Projector, Languages, Copy, Monitor, Tv
+  HardHat, Users, Trophy, Play, RotateCcw, Wifi, WifiOff, Flag, ChevronRight, Shield, Zap, Crown, QrCode, LogIn, Volume2, Target, Upload, Trash2, ImagePlus, X, Gem, Pencil, UserMinus, Save, AlertTriangle, ListChecks, Lock, Gamepad2, Projector, Copy, Monitor, Tv,
 } from "lucide-react";
 
 // The 3D Safety Gaming Arena is loaded on demand. Everything it needs
@@ -40,7 +35,6 @@ import {
   buildEventPlan, renumberPlan, planSummary, createRun, clampQuizPerRound,
   ROUND_COUNT, ROUND_GAMES, ROUND_MISSION_NAMES, ROUND_MISSION_BLURBS, NOT_RELEASED,
   QUIZ_PER_ROUND, QUIZ_PER_ROUND_OPTIONS, MQ_PER_ROUND,
-  ITEM_GAME3D, ITEM_QUIZ, ITEM_MILLIONAIRE,
   STAGES, runProgress, runSummary, runPlayingMs, planRoundCount,
   compareStanding, waitingRounds, runRoundIndex,
 } from "./session.js";
@@ -443,47 +437,8 @@ function enforceFixedGameTimer(question) {
     : { ...question, timer: GAME_QUESTION_SECONDS };
 }
 
-function getQuestionDuration(question) {
-  return Number(question?.timer) > 0 ? Number(question.timer) : GAME_QUESTION_SECONDS;
-}
 
-/* --------- adapting the shared bank to the live event format --------- */
 
-// The live event stores a flat list of question objects with a `round`
-// field. The shared bank in questionBank.js is format-neutral, so these
-// two adapters put a bank question into the shape the TV display and the
-// player view already expect.
-function toLiveQuizQuestion(question) {
-  return {
-    round: "quiz",
-    bankId: question.id,
-    category: question.topic,
-    difficulty: question.difficulty || "Medium",
-    question: question.question,
-    options: question.options,
-    correct: question.correct,
-    timer: GAME_QUESTION_SECONDS,
-    points: question.points,
-    explanation: question.explanation,
-  };
-}
-
-function toLiveMillionaireQuestion(question, ladderIndex) {
-  return {
-    round: "millionaire",
-    bankId: question.id,
-    category: "Safety Millionaire",
-    difficulty: "Escalating",
-    ladderIndex,
-    tier: question.tier,
-    question: question.question,
-    options: question.options,
-    correct: question.correct,
-    timer: GAME_QUESTION_SECONDS,
-    points: question.points,
-    explanation: question.explanation,
-  };
-}
 
 /** A built-in picture-matching round, for the admin to add on demand. */
 function pickBuiltInHazardRound(existing = []) {
@@ -752,15 +707,6 @@ function ConnBadge({ connected }) {
   );
 }
 
-/* -------------------- shared "Spot the Hazard" pieces -------------------- */
-
-// Renders the hazard scene (inline SVG or an uploaded photo) with optional
-// markers overlaid, and reports normalized (0-100) tap coordinates.
-// HazardImage now lives in HazardRound.jsx, shared with the session screen.
-
-function hazardDistancePct(ax, ay, bx, by) {
-  return Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2);
-}
 
 /* ------------------------------ ADMIN VIEW ------------------------------ */
 
@@ -958,22 +904,6 @@ function AdminView({ onExit }) {
     await refresh();
   }
 
-  async function startGame() {
-    const offset = await getServerTimeOffset();
-    await patchGame({ status: "question", qIndex: 0, questionStartedAt: Date.now() + offset, revealed: false });
-  }
-  async function revealAnswer() {
-    await patchGame({ status: "reveal", revealed: true });
-  }
-  async function nextQuestion() {
-    const nextIdx = (game.qIndex ?? 0) + 1;
-    if (nextIdx >= questions.length) {
-      await patchGame({ status: "ended" });
-    } else {
-      const offset = await getServerTimeOffset();
-      await patchGame({ status: "question", qIndex: nextIdx, questionStartedAt: Date.now() + offset, revealed: false });
-    }
-  }
   /* The same app, addressed as a different station. Built from the
    * CURRENT location rather than the hosted URL so it works on a laptop
    * running the dev server as well as on the published site. */
@@ -1136,8 +1066,6 @@ function AdminView({ onExit }) {
     await refresh();
   }
 
-  const curQ = questions[game?.qIndex ?? 0];
-  const answeredCount = curQ ? players.filter((p) => p.answers && p.answers[game.qIndex] !== undefined).length : 0;
 
   // Plain derived values, safe to compute after the early returns.
   // One event, one plan. `questions` IS the plan.
@@ -1545,18 +1473,6 @@ function AdminView({ onExit }) {
             </div>
           </Panel>
 
-          {releasedRound < 0 && game.status === "question" && curQ && (
-            <Panel title={`Live: ${curQ.category}`} icon={curQ.round === "millionaire" ? <Gem size={18} color={COLORS.purple} /> : <Clock size={18} color={COLORS.orange} />}>
-              <p style={{ fontSize: 15, marginBottom: 10 }}>{curQ.question}</p>
-              {curQ.round === "millionaire" && <p style={{ fontSize: 12, color: COLORS.purple, marginBottom: 6, fontWeight: 700 }}>{curQ.tier} · worth {curQ.points} pts</p>}
-              <div style={{ fontSize: 13, color: COLORS.muted }}>{answeredCount} / {players.length} players have answered</div>
-            </Panel>
-          )}
-
-          {releasedRound < 0 && (game.status === "question" || game.status === "reveal") && curQ && (
-            <PlayerAnswersPanel curQ={curQ} qIndex={game.qIndex} players={players} />
-          )}
-
           <Panel title="Team competition" icon={<Users size={18} color={COLORS.green} />} right={
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
               <input type="checkbox" checked={!!game.teamModeEnabled} onChange={(e) => patchGame({ teamModeEnabled: e.target.checked })} />
@@ -1871,59 +1787,7 @@ function QuestionEditor({ question, onCancel, onSave }) {
   );
 }
 
-function QuestionImage({ question }) {
-  if (!question?.imageData) return null;
-  return <img src={question.imageData} alt="Question" style={{ display: "block", width: "100%", maxWidth: 560, maxHeight: 280, objectFit: "contain", borderRadius: 8, margin: "0 auto 16px", background: COLORS.surfaceRaised }} />;
-}
 
-// Shows, for the current question, which players answered correctly vs
-// incorrectly (and what they picked), so the admin can review live.
-function PlayerAnswersPanel({ curQ, qIndex, players }) {
-  const rows = players.filter((p) => p.answers && p.answers[qIndex] !== undefined);
-  const correctCount = curQ.round === "hazard"
-    ? rows.filter((p) => (p.answers[qIndex].correctCount || 0) >= (curQ.hazards?.length || 0)).length
-    : rows.filter((p) => p.answers[qIndex].correct).length;
-
-  return (
-    <Panel
-      title={`Player Answers · Q${qIndex + 1}`}
-      icon={<ListChecks size={18} color={COLORS.green} />}
-      right={rows.length > 0 && <span style={{ fontSize: 12, color: COLORS.muted }}>{correctCount} / {rows.length} correct</span>}
-    >
-      {rows.length === 0 && <p style={{ color: COLORS.muted, fontSize: 13 }}>No answers submitted yet for this question.</p>}
-      {rows.length > 0 && (
-        <div style={{ display: "grid", gap: 6 }}>
-          {rows.map((p) => {
-            const a = p.answers[qIndex];
-            if (curQ.round === "hazard") {
-              const total = curQ.hazards?.length || 0;
-              const found = a.found?.length || 0;
-              const allFound = found >= total;
-              return (
-                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.surfaceRaised, borderRadius: 6, padding: "7px 10px", fontSize: 13 }}>
-                  {allFound ? <CheckCircle2 size={15} color={COLORS.green} style={{ flexShrink: 0 }} /> : <XCircle size={15} color={COLORS.orange} style={{ flexShrink: 0 }} />}
-                  <span style={{ flex: 1, fontWeight: 600 }}>{p.name}</span>
-                  <span style={{ color: COLORS.muted }}>{a.correctCount || 0}/{total} matched</span>
-                  <span style={{ fontWeight: 800, color: COLORS.yellow, minWidth: 44, textAlign: "right" }}>{(a.score || 0) >= 0 ? "+" : ""}{a.score || 0}</span>
-                </div>
-              );
-            }
-            return (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.surfaceRaised, borderRadius: 6, padding: "7px 10px", fontSize: 13 }}>
-                {a.correct ? <CheckCircle2 size={15} color={COLORS.green} style={{ flexShrink: 0 }} /> : <XCircle size={15} color={COLORS.red} style={{ flexShrink: 0 }} />}
-                <span style={{ flex: 1, fontWeight: 600 }}>{p.name}</span>
-                <span style={{ color: COLORS.muted, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {typeof a.answer === "number" && curQ.options ? curQ.options[a.answer] : "—"}
-                </span>
-                <span style={{ fontWeight: 800, color: COLORS.yellow, minWidth: 44, textAlign: "right" }}>+{a.points || 0}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </Panel>
-  );
-}
 
 // Lets the admin author their own quiz or true/false question on the fly.
 function AddQuestionForm({ onAdd, busy, locked = false }) {
@@ -2189,102 +2053,10 @@ function PlayerView({ onExit }) {
     setJoining(false);
   }
 
-  async function submitAnswer(qIndex, optionIndex, question) {
-    if (!me || !game) return;
-    if (me.answers && me.answers[qIndex] !== undefined) return; // no duplicates
-    const currentServerTime = Date.now() + serverOffset;
-    const elapsed = (currentServerTime - (game.questionStartedAt || currentServerTime)) / 1000;
-    if (elapsed > GAME_QUESTION_SECONDS) return; // late
-    const scoredElapsed = Math.min(GAME_QUESTION_SECONDS, Math.max(0, elapsed));
-    const correct = optionIndex === question.correct;
-    let points = 0;
-    const speedMark = correct ? Math.round(((GAME_QUESTION_SECONDS - scoredElapsed) / GAME_QUESTION_SECONDS) * 100) : 0;
-    if (correct) {
-      points = Math.round((question.points || 100) * (0.5 + speedMark / 200));
-    }
-    const updated = {
-      ...me,
-      score: (me.score || 0) + points,
-      answers: { ...(me.answers || {}), [qIndex]: { answer: optionIndex, correct, points, speedMark, elapsed: Math.round(scoredElapsed * 10) / 10, submittedAt: currentServerTime } },
-    };
-    setMe(updated);
-    await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
-  }
 
-  async function submitHazardTap(qIndex, xPct, yPct, question) {
-    if (!me || !game) return;
-    const prior = (me.answers && me.answers[qIndex]) || { type: "hazard", found: [], misses: 0, score: 0 };
-    if (prior.found.length >= question.hazards.length) return; // already found all
-    const currentServerTime = Date.now() + serverOffset;
-    const elapsed = (currentServerTime - (game.questionStartedAt || currentServerTime)) / 1000;
-    if (elapsed > getQuestionDuration(question)) return; // time's up
 
-    const hit = question.hazards.find(
-      (h) => !prior.found.includes(h.id) && hazardDistancePct(xPct, yPct, h.xPct, h.yPct) <= (h.radiusPct || 8)
-    );
 
-    let addPoints = 0;
-    let nextFound = prior.found;
-    let nextMisses = prior.misses || 0;
-    if (hit) {
-      addPoints = hit.points;
-      nextFound = [...prior.found, hit.id];
-      if (nextFound.length === question.hazards.length) addPoints += question.bonusAll || 0;
-    } else {
-      addPoints = -(question.wrongPenalty || 0);
-      nextMisses = nextMisses + 1;
-    }
 
-    const nextAnswer = { type: "hazard", found: nextFound, misses: nextMisses, score: (prior.score || 0) + addPoints, lastTap: { xPct, yPct, hit: !!hit } };
-    const updated = {
-      ...me,
-      score: (me.score || 0) + addPoints,
-      answers: { ...(me.answers || {}), [qIndex]: nextAnswer },
-    };
-    setMe(updated);
-    await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
-  }
-
-  async function submitHazardMatches(qIndex, matches, question) {
-    if (!me || !game || me.answers?.[qIndex] !== undefined) return;
-    const currentServerTime = Date.now() + serverOffset;
-    const elapsed = (currentServerTime - (game.questionStartedAt || currentServerTime)) / 1000;
-    if (elapsed > getQuestionDuration(question)) return;
-    const correctCount = question.hazards.reduce(
-      (count, hazard, index) => count + (matches[index] === hazard.id ? 1 : 0),
-      0
-    );
-    const score = correctCount * 62 + (correctCount === question.hazards.length ? question.bonusAll || 0 : 0);
-    const answer = { type: "hazard-match", matches, correctCount, score, submittedAt: currentServerTime };
-    const updated = {
-      ...me,
-      score: (me.score || 0) + score,
-      answers: { ...(me.answers || {}), [qIndex]: answer },
-    };
-    setMe(updated);
-    await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
-  }
-
-  async function useLifeline(qIndex, type, question) {
-    if (!me) return;
-    if (me.lifelines && me.lifelines[type]) return; // already used, once per game
-    const nextLifelines = { ...(me.lifelines || {}), [type]: true };
-    const nextData = { ...(me.lifelineData || {}) };
-    if (type === "fifty") {
-      const wrongIdxs = question.options.map((_, i) => i).filter((i) => i !== question.correct);
-      const shuffled = [...wrongIdxs].sort(() => Math.random() - 0.5);
-      nextData[qIndex] = { ...(nextData[qIndex] || {}), fiftyEliminated: shuffled.slice(0, 2) };
-    }
-    const updated = { ...me, lifelines: nextLifelines, lifelineData: nextData };
-    setMe(updated);
-    await safeSet(PLAYER_PREFIX + me.id, JSON.stringify(updated), true);
-  }
-
-  const sorted = useMemo(() => [...players].sort(byScoreThenSpeed), [players]);
-  const teamScores = useMemo(
-    () => (game?.teamModeEnabled ? computeTeamScores(players, game.teams, game.teamScoringMode) : []),
-    [game?.teamModeEnabled, players, game?.teams, game?.teamScoringMode]
-  );
 
   // There is only one kind of event now: the single plan drives it.
 
@@ -2391,152 +2163,7 @@ function PlayerView({ onExit }) {
   );
 }
 
-/* The original lock-step question view is no longer reachable — the one
-   event plan drives everybody. Kept (unmounted) so the hazard, video and
-   millionaire display components it shares with the TV stay in use. */
-/* Every handler this takes is a prop, including the five that used to be
- * read straight out of PlayerView's scope. Unmounted code still has to
- * be correct code: a free variable inside a component compiles happily
- * and only throws the moment that screen renders, which is exactly how
- * `lang` reached a player mid-quiz. */
-function UnusedLivePlayerView({
-  me, game, questions, players, connected, serverOffset, onExit, sorted,
-  now, teamScores = [], submitAnswer, submitHazardMatches, useLifeline,
-}) {
 
-  const rank = sorted.findIndex((p) => p.id === me.id) + 1;
-  const curQ = questions[game.qIndex ?? 0];
-  const myAnswer = curQ && me.answers ? me.answers[game.qIndex] : undefined;
-
-  return (
-    <div className="csl-player-stage" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${COLORS.line}` }}>
-        <div style={{ fontWeight: 800, fontSize: 14 }}>{me.name}</div>
-        <ConnBadge connected={connected} />
-      </div>
-
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        {game.status === "lobby" && (
-          <>
-            <CheckCircle2 size={48} color={COLORS.green} />
-            <h2 style={{ marginTop: 14, fontSize: 20, fontWeight: 800 }}>You have joined!</h2>
-            <p style={{ color: COLORS.muted, marginTop: 6 }}>Please wait for the admin to start the game.</p>
-          </>
-        )}
-
-        {game.status === "question" && curQ && curQ.round === "hazard" && (
-          <HazardQuestion
-            question={curQ}
-            startedAt={game.questionStartedAt}
-            now={now}
-            myAnswer={myAnswer}
-            onSubmit={(matches) => submitHazardMatches(game.qIndex, matches, curQ)}
-          />
-        )}
-
-        {game.status === "question" && curQ && curQ.round === "millionaire" && myAnswer === undefined && (
-          <MillionaireQuestion
-            question={curQ}
-            startedAt={game.questionStartedAt}
-            now={now}
-            me={me}
-            players={players}
-            qIndex={game.qIndex}
-            onAnswer={(i) => submitAnswer(game.qIndex, i, curQ)}
-            onLifeline={(type) => useLifeline(game.qIndex, type, curQ)}
-          />
-        )}
-
-        {game.status === "question" && curQ && curQ.round !== "hazard" && curQ.round !== "millionaire" && myAnswer === undefined && (
-          <QuestionCard question={curQ} startedAt={game.questionStartedAt} now={now} onAnswer={(i) => submitAnswer(game.qIndex, i, curQ)} />
-        )}
-
-        {game.status === "question" && curQ && curQ.round !== "hazard" && myAnswer !== undefined && (
-          <>
-            <CheckCircle2 size={48} color={COLORS.green} />
-            <h2 style={{ marginTop: 14, fontSize: 20, fontWeight: 800 }}>ANSWER SUBMITTED</h2>
-            <p style={{ color: COLORS.muted, marginTop: 6 }}>Waiting for results…</p>
-          </>
-        )}
-
-        {game.status === "reveal" && curQ && curQ.round === "hazard" && (
-          <HazardResultCard question={curQ} myAnswer={myAnswer} score={me.score || 0} rank={rank} />
-        )}
-
-        {game.status === "reveal" && curQ && curQ.round !== "hazard" && (
-          <ResultCard question={curQ} myAnswer={myAnswer} score={me.score || 0} rank={rank} />
-        )}
-
-        {game.status === "leaderboard" && (
-          <div style={{ width: "100%", maxWidth: 380 }}>
-            <h3 style={{ textAlign: "center", fontWeight: 800, marginBottom: 12 }}>Leaderboard</h3>
-            {sorted.slice(0, 10).map((p, i) => <LeaderRow key={p.id} rank={i + 1} name={p.name} sub={p.team || p.company} score={p.score || 0} highlight={p.id === me.id} />)}
-            {game.teamModeEnabled && teamScores.length > 0 && (
-              <>
-                <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.muted, margin: "16px 0 8px", textAlign: "center" }}>TEAM LEADERBOARD</div>
-                {teamScores.map((t, i) => <LeaderRow key={t.name} rank={i + 1} name={t.name} sub={`${t.count} player${t.count === 1 ? "" : "s"}`} score={t.score} highlight={t.name === me.team} />)}
-              </>
-            )}
-          </div>
-        )}
-
-        {game.status === "ended" && (
-          <WinnerBlock players={sorted} me={me} rank={rank} teamScores={teamScores} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function QuestionCard({ question, startedAt, now, onAnswer }) {
-  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
-  const isTF = question.round === "truefalse";
-  const [picked, setPicked] = useState(null);
-  const optionColors = [COLORS.orange, COLORS.green, COLORS.yellow, "#5B8DEF"];
-
-  // A new question must arrive with nothing focused and nothing picked,
-  // or the previous answer's focus ring carries over and looks like a
-  // hint. Keyed on the question text so it fires on every change.
-  useEffect(() => {
-    setPicked(null);
-    const active = typeof document !== "undefined" ? document.activeElement : null;
-    if (active && typeof active.blur === "function" && active !== document.body) active.blur();
-  }, [question.question]);
-
-  return (
-    <div style={{ width: "100%", maxWidth: 420 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontSize: 12, color: COLORS.muted, fontWeight: 700 }}>{question.category}</span>
-        <TimerBadge remaining={remaining} total={GAME_QUESTION_SECONDS} />
-      </div>
-      <p style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.35, marginBottom: 18 }}>{question.question}</p>
-      <QuestionImage question={question} />
-      {question.videoUrl && <VideoEmbed url={question.videoUrl} />}
-      <div style={{ display: "grid", gridTemplateColumns: isTF ? "1fr 1fr" : "1fr 1fr", gap: 10 }}>
-        {question.options.map((opt, i) => (
-          <button
-            // Keyed by text so React does not reuse the same four DOM
-            // nodes across questions and park focus on one slot.
-            key={`${i}:${opt}`}
-            type="button"
-            className="csl-answer"
-            disabled={remaining === 0 || picked !== null}
-            onClick={() => { setPicked(i); onAnswer(i); }}
-            style={{
-              padding: isTF ? "28px 10px" : "22px 10px", borderRadius: 10, border: "none",
-              background: optionColors[i % optionColors.length], color: "#14171A",
-              fontWeight: 800, fontSize: isTF ? 18 : 15, cursor: remaining === 0 ? "not-allowed" : "pointer",
-              opacity: remaining === 0 ? 0.5 : 1, gridColumn: isTF ? "span 1" : undefined,
-              minHeight: 64,
-            }}
-          >
-            {opt}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function VideoEmbed({ url }) {
   let parsed;
@@ -2551,265 +2178,12 @@ function VideoEmbed({ url }) {
   return <video controls preload="metadata" src={url} style={{ width: "100%", maxHeight: 280, borderRadius: 8, marginBottom: 16, background: "#000" }}>Your browser cannot play this video.</video>;
 }
 
-function MillionaireQuestion({ question, startedAt, now, me, players, qIndex, onAnswer, onLifeline }) {
-  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
-  const [picked, setPicked] = useState(null);
-  const [showAudience, setShowAudience] = useState(false);
-  const [showHint, setShowHint] = useState(false);
-  const eliminated = (me.lifelineData && me.lifelineData[qIndex] && me.lifelineData[qIndex].fiftyEliminated) || [];
-  const optionColors = [COLORS.orange, COLORS.green, COLORS.yellow, "#5B8DEF"];
 
-  const otherAnswers = players
-    .filter((p) => p.id !== me.id && p.answers && p.answers[qIndex] && p.answers[qIndex].answer !== undefined)
-    .map((p) => p.answers[qIndex].answer);
-  const audienceDist = question.options.map((_, i) => otherAnswers.filter((a) => a === i).length);
-  const audienceTotal = Math.max(1, otherAnswers.length);
 
-  return (
-    <div style={{ width: "100%", maxWidth: 440 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: COLORS.purple }}>
-          <Gem size={14} /> {question.tier?.toUpperCase()}
-        </span>
-        <TimerBadge remaining={remaining} total={GAME_QUESTION_SECONDS} />
-      </div>
-      <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 12 }}>Worth {question.points} points</div>
-      {question.videoUrl && <VideoEmbed url={question.videoUrl} />}
-      <p style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.35, marginBottom: 16 }}>{question.question}</p>
-      <QuestionImage question={question} />
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <LifelineButton icon={<Percent size={14} />} label="50:50" used={me.lifelines?.fifty} onClick={() => onLifeline("fifty")} />
-        <LifelineButton icon={<Users size={14} />} label="Ask the Room" used={me.lifelines?.audience} onClick={() => { onLifeline("audience"); setShowAudience(true); }} />
-        <LifelineButton icon={<Phone size={14} />} label="Hint" used={me.lifelines?.phone} onClick={() => { onLifeline("phone"); setShowHint(true); }} />
-      </div>
 
-      {showAudience && (
-        <div style={{ background: COLORS.surfaceRaised, borderRadius: 8, padding: 10, marginBottom: 12 }}>
-          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 6 }}>HOW OTHERS ARE VOTING SO FAR ({otherAnswers.length} answered)</div>
-          {question.options.map((opt, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, fontSize: 12 }}>
-              <span style={{ width: 18 }}>{String.fromCharCode(65 + i)}</span>
-              <div style={{ flex: 1, height: 8, background: "#00000033", borderRadius: 4, overflow: "hidden" }}>
-                <div style={{ width: `${(audienceDist[i] / audienceTotal) * 100}%`, height: "100%", background: COLORS.purple }} />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {showHint && (
-        <div style={{ background: COLORS.surfaceRaised, borderRadius: 8, padding: 10, marginBottom: 12, fontSize: 13, color: COLORS.muted }}>
-          💡 {question.explanation}
-        </div>
-      )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {question.options.map((opt, i) => {
-          const isOut = eliminated.includes(i);
-          return (
-            <button
-              key={i}
-              disabled={remaining === 0 || picked !== null || isOut}
-              onClick={() => { setPicked(i); onAnswer(i); }}
-              style={{
-                padding: "20px 10px", borderRadius: 10, border: "none",
-                background: isOut ? COLORS.surfaceRaised : optionColors[i % optionColors.length],
-                color: isOut ? COLORS.muted : "#14171A",
-                fontWeight: 800, fontSize: 14, cursor: (remaining === 0 || isOut) ? "not-allowed" : "pointer",
-                opacity: (remaining === 0 && !isOut) ? 0.5 : 1, minHeight: 60,
-                textDecoration: isOut ? "line-through" : "none",
-              }}
-            >
-              {isOut ? "" : opt}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
-const LifelineButton = React.memo(function LifelineButton({ icon, label, used, onClick }) {
-  return (
-    <button
-      disabled={used}
-      onClick={onClick}
-      style={{
-        flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-        padding: "8px 4px", borderRadius: 8, border: `1px solid ${used ? COLORS.line : COLORS.purple}`,
-        background: used ? COLORS.surfaceRaised : COLORS.purple + "22", color: used ? COLORS.muted : COLORS.purple,
-        fontSize: 10, fontWeight: 700, cursor: used ? "not-allowed" : "pointer", opacity: used ? 0.5 : 1,
-      }}
-    >
-      {used ? <Ban size={14} /> : icon}
-      {label}
-    </button>
-  );
-});
-
-function HazardQuestion({ question, startedAt, now, myAnswer, onSubmit }) {
-  const duration = getQuestionDuration(question);
-  const remaining = Math.max(0, duration - Math.floor((now - startedAt) / 1000));
-  const [matches, setMatches] = useState({});
-  const [draggedHazardId, setDraggedHazardId] = useState(null);
-  const [selectedNumber, setSelectedNumber] = useState(0);
-  const [confirming, setConfirming] = useState(false);
-  const [shuffledHazards] = useState(() => shuffleArray(question.hazards));
-  const submitted = myAnswer !== undefined;
-  const markers = question.hazards.map((hazard, index) => ({
-    key: hazard.id, xPct: hazard.xPct, yPct: hazard.yPct, color: COLORS.yellow, size: 28, label: String(index + 1),
-  }));
-
-  function placeHazardName(slotIndex, hazardId) {
-    if (submitted || remaining === 0) return;
-    setMatches((current) => {
-      const next = { ...current };
-      Object.keys(next).forEach((index) => { if (next[index] === hazardId) delete next[index]; });
-      next[slotIndex] = hazardId;
-      return next;
-    });
-    const nextEmpty = question.hazards.findIndex((_, index) => index !== slotIndex && !matches[index]);
-    setSelectedNumber(nextEmpty === -1 ? null : nextEmpty);
-  }
-
-  function chooseHazardName(hazardId) {
-    if (selectedNumber === null) return;
-    placeHazardName(selectedNumber, hazardId);
-  }
-
-  function submitMatches() {
-    if (submitted || remaining === 0 || Object.keys(matches).length !== question.hazards.length) return;
-    setConfirming(true);
-  }
-
-  function confirmMatches() {
-    if (!confirming) return;
-    setConfirming(false);
-    onSubmit(matches);
-  }
-
-  return (
-    <div className="csl-hazard-question" style={{ width: "100%", maxWidth: 560, paddingBottom: 20 }}>
-      <style>{`@media (max-width: 520px) { .csl-hazard-question { max-width: 100% !important; } .csl-hazard-question .csl-hazard-slot, .csl-hazard-question .csl-hazard-answer { padding: 8px 10px !important; min-height: 36px !important; font-size: 13px !important; } .csl-hazard-question .csl-hazard-image { aspect-ratio: 4 / 3 !important; } .csl-hazard-question .csl-hazard-heading { font-size: 12px !important; } }`}</style>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span className="csl-hazard-heading" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, color: COLORS.orange }}><Target size={14} /> FIND THE HAZARDS!</span>
-        <TimerBadge remaining={remaining} total={duration} />
-      </div>
-      <p style={{ fontSize: 13, color: COLORS.muted, marginBottom: 10 }}>Drag each hazard name into the matching numbered box, then confirm once. After confirming, your answers cannot be changed.</p>
-      <div className="csl-hazard-image"><HazardImage question={question} markers={markers} aspectRatio="4 / 3" maxWidth={560} /></div>
-      <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
-        {question.hazards.map((hazard, index) => {
-          const matchedName = matches[index];
-          return (
-            <div className="csl-hazard-slot" key={hazard.id} onClick={() => { if (!submitted && remaining > 0) setSelectedNumber(index); }} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedHazardId) placeHazardName(index, draggedHazardId); setDraggedHazardId(null); }} style={{
-              display: "flex", alignItems: "center", gap: 10, textAlign: "left", padding: "10px 12px",
-              borderRadius: 8, border: `1px dashed ${selectedNumber === index ? COLORS.yellow : COLORS.line}`,
-              background: selectedNumber === index ? COLORS.yellow + "22" : COLORS.surfaceRaised, color: COLORS.ink, minHeight: 42,
-              cursor: submitted || remaining === 0 ? "default" : "pointer",
-            }}>
-              <b style={{ color: COLORS.yellow, minWidth: 22 }}>{index + 1}.</b>
-              <span>{matchedName ? question.hazards.find((item) => item.id === matchedName)?.name : "Drop answer here"}</span>
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-        {shuffledHazards.map((hazard) => (
-          <div className="csl-hazard-answer" key={hazard.id} draggable={!submitted && remaining > 0} onDragStart={() => setDraggedHazardId(hazard.id)} style={{
-            padding: "11px 12px", borderRadius: 8, border: `1px solid ${COLORS.green}88`, background: COLORS.green + "18",
-            color: COLORS.ink, textAlign: "left", cursor: submitted || remaining === 0 ? "default" : "grab", opacity: Object.values(matches).includes(hazard.id) ? 0.5 : 1,
-          }} onClick={() => chooseHazardName(hazard.id)}>
-            {hazard.name}
-          </div>
-        ))}
-      </div>
-      {confirming && <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: COLORS.yellow + "22", color: COLORS.ink, fontSize: 13 }}>
-        Confirm your matches? You cannot edit them after confirmation.
-      </div>}
-      <button disabled={submitted || remaining === 0 || Object.keys(matches).length !== question.hazards.length} style={btnStyle(confirming ? COLORS.green : COLORS.orange)} onClick={confirming ? confirmMatches : submitMatches}>
-        {submitted ? "MATCHES LOCKED" : confirming ? "CONFIRM MATCHES" : "CHECK MATCHES"}
-      </button>
-    </div>
-  );
-}
-
-function HazardResultCard({ question, myAnswer, score, rank }) {
-  const matches = myAnswer?.matches || {};
-  const correctCount = myAnswer?.correctCount || 0;
-  const allMarkers = question.hazards.map((h) => ({
-    key: h.id, xPct: h.xPct, yPct: h.yPct,
-    color: Object.entries(matches).some(([index, id]) => Number(index) === question.hazards.indexOf(h) && id === h.id) ? COLORS.green : COLORS.red,
-    size: 24, label: String(question.hazards.indexOf(h) + 1),
-  }));
-  return (
-    <div style={{ textAlign: "center", width: "100%", maxWidth: 460 }}>
-      <h2 style={{ fontSize: 20, fontWeight: 900, marginBottom: 10 }}>{correctCount} / {question.hazards.length} matches correct</h2>
-      <HazardImage question={question} markers={allMarkers} />
-      <div style={{ textAlign: "left", marginTop: 14, display: "grid", gap: 6 }}>
-        {question.hazards.map((h) => (
-          <div key={h.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13 }}>
-            {matches[question.hazards.indexOf(h)] === h.id ? <CheckCircle2 size={15} color={COLORS.green} style={{ flexShrink: 0, marginTop: 1 }} /> : <XCircle size={15} color={COLORS.red} style={{ flexShrink: 0, marginTop: 1 }} />}
-            <span><b>{h.name}</b> — <span style={{ color: COLORS.muted }}>{h.description}</span></span>
-          </div>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 18 }}>
-        <StatCell label="Round score" value={"+" + Math.max(0, myAnswer?.score || 0)} />
-        <StatCell label="Total score" value={score} />
-        <StatCell label="Rank" value={"#" + rank} />
-      </div>
-    </div>
-  );
-}
-
-function TimerBadge({ remaining, total }) {
-  const urgent = remaining <= 3;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 900, fontSize: 15, color: urgent ? COLORS.red : COLORS.yellow }}>
-      <Clock size={14} /> {remaining}s
-    </div>
-  );
-}
-
-function ResultCard({ question, myAnswer, score, rank }) {
-  const answered = myAnswer !== undefined;
-  const correct = answered && myAnswer.correct;
-  return (
-    <div style={{ textAlign: "center", width: "100%", maxWidth: 360 }}>
-      {correct ? <CheckCircle2 size={52} color={COLORS.green} /> : <XCircle size={52} color={COLORS.red} />}
-      <h2 style={{ marginTop: 12, fontSize: 22, fontWeight: 900, color: correct ? COLORS.green : COLORS.red }}>
-        {answered ? (correct ? "CORRECT!" : "INCORRECT") : "NO ANSWER"}
-      </h2>
-      <p style={{ color: COLORS.muted, marginTop: 6, fontSize: 14 }}>
-        Correct answer: <b style={{ color: COLORS.ink }}>{question.options[question.correct]}</b>
-      </p>
-      <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 18 }}>
-        <StatCell label="Points earned" value={"+" + (answered ? myAnswer.points : 0)} />
-        {answered && <StatCell label="Speed mark" value={`${myAnswer.speedMark || 0}/100`} />}
-        <StatCell label="Total score" value={score} />
-        <StatCell label="Rank" value={"#" + rank} />
-      </div>
-    </div>
-  );
-}
-
-function WinnerBlock({ players, me, rank, teamScores = [] }) {
-  const podium = players.slice(0, 3);
-  return (
-    <div style={{ textAlign: "center", width: "100%", maxWidth: 380 }}>
-      <Crown size={44} color={COLORS.yellow} />
-      <h2 style={{ fontSize: 22, fontWeight: 900, margin: "10px 0 4px" }}>GAME OVER</h2>
-      {podium[0] && <p style={{ color: COLORS.muted, marginBottom: 18 }}>Safety Champion: <b style={{ color: COLORS.yellow }}>{podium[0].name}</b></p>}
-      <div style={{ marginBottom: 18 }}>
-        {podium.map((p, i) => <LeaderRow key={p.id} rank={i + 1} name={p.name} sub={p.team || p.company} score={p.score || 0} highlight={p.id === me.id} />)}
-      </div>
-      <p style={{ fontSize: 14 }}>You finished <b>#{rank}</b> with <b>{me.score || 0}</b> points.</p>
-      {teamScores.length > 0 && teamScores[0].count > 0 && (
-        <p style={{ fontSize: 14, marginTop: 10, color: COLORS.muted }}>Best team: <b style={{ color: COLORS.yellow }}>{teamScores[0].name}</b> ({teamScores[0].score} pts)</p>
-      )}
-    </div>
-  );
-}
 
 /* -------------------------------- TV VIEW -------------------------------- */
 
@@ -2832,8 +2206,9 @@ export function tvScreenFor(game) {
   if (game.status === "demo") return "demo";
   if (game.status === "lobby") return "lobby";
   if (released >= 0) return "live";
-  if (game.status === "question") return "question";
-  if (game.status === "reveal") return "reveal";
+  // The old one-question-at-a-time quiz is gone: every event releases
+  // rounds. A record left in that mode shows the join screen (its
+  // question screen could not read today's plan rows, and crashed).
   return "lobby";
 }
 
@@ -2841,19 +2216,6 @@ function TVView({ onExit }) {
   const { game, questions, players, connected, dbError } = useGamePoll();
   // Whoever the host has put on the TV (TvSpotlight.jsx), live.
   const { spotlight, live } = useTvSpotlight();
-  const [now, setNow] = useState(Date.now());
-  const [serverOffset, setServerOffset] = useState(0);
-  useEffect(() => {
-    let mounted = true;
-    const syncClock = async () => {
-      const offset = await getServerTimeOffset();
-      if (mounted) setServerOffset(offset);
-    };
-    syncClock();
-    const syncId = setInterval(syncClock, 30000);
-    const tickId = setInterval(() => setNow(Date.now() + serverOffset), 250);
-    return () => { mounted = false; clearInterval(syncId); clearInterval(tickId); };
-  }, [serverOffset]);
 
   const sorted = useMemo(() => [...players].sort(byScoreThenSpeed), [players]);
   const teamScores = useMemo(
@@ -2879,8 +2241,6 @@ function TVView({ onExit }) {
     );
   }
 
-  const curQ = questions[game.qIndex ?? 0];
-  const millionaireQs = questions.filter((q) => q.round === "millionaire");
   /* Once a round is open, every participant is working through their own
    * session rather than all answering one question together, so the TV
    * shows the room: who is playing, what they are on, and the score as
@@ -2933,9 +2293,6 @@ function TVView({ onExit }) {
           />
         );
       })()}
-      {screen === "question" && curQ && curQ.round === "millionaire" && <MillionaireDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} ladder={millionaireQs} />}
-      {screen === "question" && curQ && curQ.round !== "millionaire" && <QuestionDisplay q={curQ} qIndex={game.qIndex} total={questions.length} startedAt={game.questionStartedAt} now={now} players={players} />}
-      {screen === "reveal" && curQ && <RevealDisplay q={curQ} qIndex={game.qIndex} total={questions.length} players={players} />}
       {screen === "leaderboard" && <LeaderboardDisplay players={sorted} teamScores={teamScores} mediaUrl={game.leaderboardMediaUrl} mediaSettings={game} />}
       {screen === "results" && (anySessions
         ? <SessionResultsDisplay players={sorted} plan={questions} />
@@ -3407,149 +2764,8 @@ function QRScanner({ onDetected, onClose }) {
   );
 }
 
-function QuestionDisplay({ q, qIndex, total, startedAt, now, players }) {
-  const duration = getQuestionDuration(q);
-  const remaining = Math.max(0, duration - Math.floor((now - startedAt) / 1000));
-  const pct = total ? Math.round(((qIndex + 1) / total) * 100) : 0;
 
-  if (q.round === "hazard") {
-    const foundAll = players.filter((p) => p.answers && p.answers[qIndex] && p.answers[qIndex].correctCount >= q.hazards.length).length;
-    return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: COLORS.muted, marginBottom: 6 }}>
-          <span>{q.category.toUpperCase()} · QUESTION {qIndex + 1} / {total}</span>
-          <span>{foundAll} / {players.length} FOUND ALL HAZARDS</span>
-        </div>
-        <div style={{ height: 5, background: COLORS.surface, borderRadius: 3, marginBottom: 24 }}>
-          <div style={{ width: pct + "%", height: "100%", background: COLORS.yellow, borderRadius: 3, transition: "width .3s" }} />
-        </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22 }}>
-          <div style={{ fontSize: remaining <= 3 ? 96 : 60, fontWeight: 900, color: remaining <= 3 ? COLORS.red : COLORS.yellow }}>{remaining}</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 30, fontWeight: 900 }}><Target color={COLORS.orange} /> FIND THE HAZARDS!</div>
-          <HazardImage question={q} maxWidth={640} />
-          <p style={{ color: COLORS.muted, fontSize: 15 }}>Players are matching the numbered hazards to their names.</p>
-        </div>
-      </div>
-    );
-  }
 
-  const answered = players.filter((p) => p.answers && p.answers[qIndex] !== undefined).length;
-  return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: COLORS.muted, marginBottom: 6 }}>
-        <span>{q.category.toUpperCase()} · QUESTION {qIndex + 1} / {total}</span>
-        <span>{answered} / {players.length} ANSWERED</span>
-      </div>
-      <div style={{ height: 5, background: COLORS.surface, borderRadius: 3, marginBottom: 24 }}>
-        <div style={{ width: pct + "%", height: "100%", background: COLORS.yellow, borderRadius: 3, transition: "width .3s" }} />
-      </div>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 26 }}>
-        <div style={{ fontSize: remaining <= 3 ? 96 : 72, fontWeight: 900, color: remaining <= 3 ? COLORS.red : COLORS.yellow, transition: "font-size .2s" }}>{remaining}</div>
-        <p style={{ fontSize: 32, fontWeight: 800, textAlign: "center", maxWidth: 900, lineHeight: 1.3 }}>{q.question}</p>
-        <QuestionImage question={q} />
-        {q.videoUrl && <div style={{ width: "100%", maxWidth: 560 }}><VideoEmbed url={q.videoUrl} /></div>}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, width: "100%", maxWidth: 800 }}>
-          {q.options.map((opt, i) => (
-            <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "18px 22px", fontSize: 20, fontWeight: 700 }}>
-              <span style={{ color: COLORS.yellow, marginRight: 10 }}>{q.round === "truefalse" ? "" : String.fromCharCode(65 + i) + "."}</span>{opt}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MillionaireDisplay({ q, qIndex, total, startedAt, now, players, ladder }) {
-  const remaining = Math.max(0, GAME_QUESTION_SECONDS - Math.floor((now - startedAt) / 1000));
-  const answered = players.filter((p) => p.answers && p.answers[qIndex] !== undefined).length;
-  return (
-    <div style={{ flex: 1, display: "flex", gap: 30 }}>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: COLORS.purple, fontWeight: 800, marginBottom: 14 }}>
-          <Gem size={16} /> SAFETY MILLIONAIRE FINALE · {answered} / {players.length} ANSWERED
-        </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 26 }}>
-          <div style={{ fontSize: remaining <= 3 ? 96 : 72, fontWeight: 900, color: remaining <= 3 ? COLORS.red : COLORS.purple }}>{remaining}</div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: COLORS.muted }}>{q.tier} · {q.points} POINTS</div>
-          <p style={{ fontSize: 30, fontWeight: 800, textAlign: "center", maxWidth: 800, lineHeight: 1.3 }}>{q.question}</p>
-          <QuestionImage question={q} />
-          {q.videoUrl && <div style={{ width: "100%", maxWidth: 560 }}><VideoEmbed url={q.videoUrl} /></div>}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, width: "100%", maxWidth: 760 }}>
-            {q.options.map((opt, i) => (
-              <div key={i} style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "16px 20px", fontSize: 18, fontWeight: 700 }}>
-                <span style={{ color: COLORS.purple, marginRight: 10 }}>{String.fromCharCode(65 + i)}.</span>{opt}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-      <div style={{ width: 220, display: "flex", flexDirection: "column-reverse", gap: 6, justifyContent: "center" }}>
-        {ladder.map((lq, i) => {
-          const isCurrent = lq.ladderIndex === q.ladderIndex;
-          return (
-            <div key={i} style={{
-              padding: "8px 12px", borderRadius: 6, textAlign: "right",
-              background: isCurrent ? COLORS.purple : COLORS.surface,
-              color: isCurrent ? "#14171A" : COLORS.muted,
-              border: `1px solid ${isCurrent ? COLORS.purple : COLORS.line}`,
-              fontWeight: isCurrent ? 900 : 600, fontSize: 13,
-            }}>
-              {lq.points} · {lq.tier}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function RevealDisplay({ q, qIndex, total, players }) {
-  if (q.round === "hazard") {
-    const markers = q.hazards.map((h) => {
-      return { ...h, key: h.id, xPct: h.xPct, yPct: h.yPct, color: COLORS.green, size: 26, label: String(q.hazards.indexOf(h) + 1) };
-    });
-    return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
-        <div style={{ fontSize: 13, color: COLORS.muted }}>QUESTION {qIndex + 1} / {total} · HAZARDS REVEALED</div>
-        <HazardImage question={q} markers={markers} maxWidth={640} />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, width: "100%", maxWidth: 700 }}>
-          {q.hazards.map((h) => (
-            <div key={h.id} style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "10px 14px" }}>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>{h.name}</div>
-              <div style={{ fontSize: 12, color: COLORS.muted }}>{h.description}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  const dist = q.options.map((_, i) => players.filter((p) => p.answers && p.answers[qIndex] && p.answers[qIndex].answer === i).length);
-  const maxD = Math.max(1, ...dist);
-  return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 24 }}>
-      <div style={{ fontSize: 13, color: COLORS.muted }}>QUESTION {qIndex + 1} / {total} · ANSWER REVEALED{q.round === "millionaire" ? ` · ${q.tier}` : ""}</div>
-      <p style={{ fontSize: 28, fontWeight: 800, textAlign: "center", maxWidth: 900 }}>{q.question}</p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, width: "100%", maxWidth: 800 }}>
-        {q.options.map((opt, i) => {
-          const isCorrect = i === q.correct;
-          return (
-            <div key={i} style={{ background: isCorrect ? COLORS.green + "26" : COLORS.surface, border: `2px solid ${isCorrect ? COLORS.green : COLORS.line}`, borderRadius: 10, padding: "16px 20px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
-                <span>{isCorrect && <CheckCircle2 size={16} style={{ marginRight: 6, verticalAlign: -2 }} color={COLORS.green} />}{opt}</span>
-                <span style={{ color: COLORS.muted, fontWeight: 600, fontSize: 14 }}>{dist[i]}</span>
-              </div>
-              <div style={{ height: 6, background: "#00000055", borderRadius: 3 }}>
-                <div style={{ width: `${(dist[i] / maxD) * 100}%`, height: "100%", background: isCorrect ? COLORS.green : COLORS.orange, borderRadius: 3 }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {q.explanation && <p style={{ color: COLORS.muted, fontSize: 15, maxWidth: 700, textAlign: "center" }}>{q.explanation}</p>}
-    </div>
-  );
-}
 
 function LeaderboardMedia({ url }) {
   let parsed;

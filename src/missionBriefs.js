@@ -32,9 +32,6 @@ export function isLanguage(id) {
   return LANGUAGES.some((l) => l.id === id);
 }
 
-export function languageById(id) {
-  return LANGUAGES.find((l) => l.id === id) || LANGUAGES[0];
-}
 
 /* ----------------------- rules and regulations ----------------------- */
 

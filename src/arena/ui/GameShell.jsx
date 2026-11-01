@@ -480,13 +480,6 @@ export default function GameShell({
     setTimeout(() => startGame(), 0);
   }, [startGame, teardown]);
 
-  const backToBriefing = useCallback(() => {
-    teardown();
-    setPaused(false);
-    setDialog(null);
-    setResult(null);
-    setPhase("briefing");
-  }, [teardown]);
 
   /* --------------------- settings while playing --------------------- */
 
