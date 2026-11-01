@@ -1658,6 +1658,17 @@ export function buildWorker(geo, mat, {
 
   if (helmet) {
     part(head, P.helmet(helmetBase), `hardhat:${low}`, () => hardHatArrays({ low }));
+  } else {
+    // For a game that has somebody put their helmet on (a hazard put
+    // right): the same hard hat, on the head bone, so it sits on the head
+    // in whatever pose they are in. A helmet added to the figure as a
+    // whole stayed at standing head height while they bent to their work
+    // — floating in the air.
+    group.userData.putOnHelmet = () => {
+      if (group.userData.worker.helmet) return;
+      group.userData.worker.helmet = true;
+      part(head, P.helmet(helmetBase), `hardhat:${low}`, () => hardHatArrays({ low }));
+    };
   }
 
   if (officer) {

@@ -1962,7 +1962,11 @@ export function buildConcreteFrame(geo, mat, {
   // The geometry comes from stairs.js, which is unit tested against the
   // controller so the flight is guaranteed walkable.
   const flightZ = -hd + 2.1;
-  const flightXStart = -hw + 1.0;
+  // Each flight starts 2.4 m in from the edge of the slab, so on every
+  // upper floor there is a landing to walk onto the stairs from. At 1 m
+  // the first step was at the very edge of the floor: the place to stand
+  // to start the next flight was 20 cm from the drop.
+  const flightXStart = -hw + 2.4;
   const flights = [];
   for (let f = 0; f < Math.max(0, floors - 1); f++) {
     const flight = stairFlight({

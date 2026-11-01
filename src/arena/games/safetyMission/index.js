@@ -542,12 +542,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   // safer as the player works through it.
   const resolvers = {
     "no-helmet": () => {
-      const dome = new THREE.Mesh(geo.sphere, mat.yellow);
-      dome.scale.set(0.34, 0.26, 0.34);
-      dome.position.set(0, 1.93, 0);
-      dome.castShadow = true;
-      workerNoHelmet.add(dome);
-      workerNoHelmet.add(box(geo, mat.yellow, 0.3, 0.04, 0.12, 0, 1.87, 0.17));
+      // On his head, wherever his head is: he is bent over his wall.
+      workerNoHelmet.userData.putOnHelmet?.();
     },
 
     "floor-opening": () => {
@@ -994,6 +990,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
           state.actionCorrect += 1;
           addScore(SCORING.action);
           api.toast("Corrective action applied on site", "good", SCORING.action);
+          // Said on the radio too, in the player's language.
+          api.say?.({
+            en: `Put right: ${hazard.data.title}.`,
+            ta: hazard.data.ta?.title ? `சரிசெய்யப்பட்டது: ${hazard.data.ta.title}.` : undefined,
+          }, { interrupt: true });
           try { resolvers[hazard.data.id]?.(); } catch (e) { console.error("[arena] resolver failed", hazard.data.id, e); }
         } else {
           state.wrongAnswers += 1;
@@ -1261,7 +1262,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs to drive a real
     // playthrough headlessly. Nothing in the app reads this.
     __test: {
-      state, controller, hazards, scene, colliders, avatar, walkers,
+      state, controller, hazards, scene, colliders, avatar, walkers, resolvers,
       zoomFov: () => camera.fov,
     },
   };

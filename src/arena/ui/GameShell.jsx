@@ -10,7 +10,9 @@ import {
 import { supportsWebGL, resolveQuality, isMobileLayout, isTouchDevice, wantsTouchControls } from "../engine/gfx.js";
 import { submitRun, fetchAllProfiles, buildLeaderboard, fetchArenaConfig } from "../arenaDb.js";
 import { loadSettings, saveSettings, CAMERA_DISTANCES, AVATARS, BUTTON_POSITIONS, buttonPositionFor } from "../identity.js";
-import { sfx, setSoundEnabled, setVolume, unlockAudio, disposeAudio } from "../audio.js";
+import { sfx, setSoundEnabled, setVolume, unlockAudio, disposeAudio, startAmbience, stopAmbience } from "../audio.js";
+import { createGuide } from "../voice.js";
+import { missionBrief } from "../../missionBriefs.js";
 import { ArenaButton, Overlay, Pill, panelStyle } from "./primitives.jsx";
 import {
   HudTopBar, Crosshair, InteractPrompt, ToastStack, useToasts,
@@ -250,6 +252,14 @@ export default function GameShell({
     }
   }, []);
 
+  // The supervisor on the radio (voice.js): the mission at the start and,
+  // where a game asks for it, what to do next — in the player's language.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const guideRef = useRef(null);
+  if (!guideRef.current) guideRef.current = createGuide({ lang: getLang, enabled: () => settingsRef.current.sound !== false });
+  useEffect(() => () => guideRef.current?.dispose(), []);
+
   const api = useMemo(() => ({
     hud(partial) {
       Object.assign(hudBufferRef.current, partial);
@@ -272,6 +282,10 @@ export default function GameShell({
     },
     buttons(list) {
       setButtons(Array.isArray(list) ? list : []);
+    },
+    /** A line for the guide to speak: { en, ta }. */
+    say(line, opts) {
+      return guideRef.current?.say(line, opts) ?? null;
     },
     requestPause() {
       setPaused(true);
@@ -498,6 +512,29 @@ export default function GameShell({
     if (phase !== "playing") return;
     instanceRef.current?.setPaused(paused);
   }, [paused, phase]);
+
+  /* ------------------------ the site, and the radio ------------------------ */
+
+  // The construction site's own sound while a mission runs (audio.js);
+  // quiet on pause, on the results and when leaving.
+  useEffect(() => {
+    if (phase === "playing" && !paused && settings.sound !== false) startAmbience();
+    else stopAmbience();
+  }, [phase, paused, settings.sound]);
+  useEffect(() => () => stopAmbience(), []);
+
+  // Each mission opens with what it is about, spoken; a pause stops the
+  // talking.
+  useEffect(() => {
+    if (phase !== "playing") return;
+    guideRef.current?.reset();
+    const en = missionBrief(game.id, "en");
+    const ta = missionBrief(game.id, "ta");
+    if (en?.oneLiner) guideRef.current?.say({ en: `${game.title}. ${en.oneLiner}`, ta: ta?.oneLiner ? `${ta.title || game.title}. ${ta.oneLiner}` : undefined }, { interrupt: true });
+  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (paused) guideRef.current?.stop();
+  }, [paused]);
 
   /* --------------------------- live on the TV ---------------------------
    *

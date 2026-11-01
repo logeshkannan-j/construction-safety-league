@@ -393,7 +393,9 @@ export function createERT(ctx) {
     electrical: [
       () => {
         // To the foot of the stairs.
-        run1([[-18.6, 0, 0.6], [-19.3, 0, 1.3], [-19.9, 0, 0.0], [-20.5, 0, 0.9]]);
+        // Gathered at the foot of the flight, wherever the frame put it.
+        const foot = ctx.stair.foot || { x: -17.8, z: 0.6 };
+        run1([[foot.x - 0.8, 0, foot.z], [foot.x - 1.5, 0, foot.z + 0.7], [foot.x - 2.1, 0, foot.z - 0.6], [foot.x - 2.7, 0, foot.z + 0.3]]);
         postShot();
       },
       () => {

@@ -260,6 +260,173 @@ export function stopMotor(name) {
 
 export function stopAllLoops() {
   [...loops.keys()].forEach(stopMotor);
+  stopAmbience();
+}
+
+/* ------------------------- the site around you ------------------------- *
+ *
+ * A construction site is never quiet: plant idling in the distance, a
+ * generator, hammering, a grinder, a lorry reversing, steel being
+ * dropped. All of it made here, like every other sound in the game, and
+ * kept low under the alarms, the voices and the game's own sounds.
+ */
+let ambience = null;
+let noiseBuffer = null;
+
+function noise(c) {
+  if (noiseBuffer) return noiseBuffer;
+  // Two seconds of brown noise: soft, low, rumbling.
+  const length = c.sampleRate * 2;
+  noiseBuffer = c.createBuffer(1, length, c.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < length; i++) {
+    const white = Math.random() * 2 - 1;
+    last = (last + 0.02 * white) / 1.02;
+    data[i] = last * 3.5;
+  }
+  return noiseBuffer;
+}
+
+/** A short sound somewhere on the site, panned to one side or the other. */
+function siteEvent(c, out) {
+  const now = c.currentTime + 0.05;
+  const pan = c.createStereoPanner ? c.createStereoPanner() : null;
+  if (pan) { pan.pan.value = Math.random() * 1.6 - 0.8; pan.connect(out); }
+  const dest = pan || out;
+  const level = 0.4 + Math.random() * 0.6;
+  const kind = Math.random();
+  const hit = (at, freq, decay, gain, type = "triangle") => {
+    const o = c.createOscillator();
+    const g = c.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, at);
+    o.frequency.exponentialRampToValueAtTime(Math.max(40, freq * 0.55), at + decay);
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(gain * level, at + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + decay);
+    o.connect(g); g.connect(dest);
+    o.start(at); o.stop(at + decay + 0.05);
+  };
+  const burst = (at, freq, q, decay, gain) => {
+    const src = c.createBufferSource();
+    src.buffer = noise(c);
+    const f = c.createBiquadFilter();
+    f.type = "bandpass"; f.frequency.value = freq; f.Q.value = q;
+    const g = c.createGain();
+    g.gain.setValueAtTime(gain * level, at);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + decay);
+    src.connect(f); f.connect(g); g.connect(dest);
+    src.start(at, Math.random()); src.stop(at + decay + 0.05);
+  };
+  if (kind < 0.38) {
+    // Hammering: a few blows on timber or steel.
+    const blows = 2 + Math.floor(Math.random() * 4);
+    const gap = 0.32 + Math.random() * 0.2;
+    const pitch = 260 + Math.random() * 400;
+    for (let i = 0; i < blows; i++) {
+      hit(now + i * gap, pitch, 0.09, 0.22);
+      burst(now + i * gap, 2400, 1.5, 0.05, 0.5);
+    }
+  } else if (kind < 0.55) {
+    // A lorry reversing, out by the gate.
+    for (let i = 0; i < 4; i++) {
+      const o = c.createOscillator();
+      const g = c.createGain();
+      o.type = "square"; o.frequency.value = 1040;
+      g.gain.setValueAtTime(0.0001, now + i);
+      g.gain.linearRampToValueAtTime(0.025 * level, now + i + 0.02);
+      g.gain.setValueAtTime(0.025 * level, now + i + 0.45);
+      g.gain.linearRampToValueAtTime(0.0001, now + i + 0.48);
+      o.connect(g); g.connect(dest);
+      o.start(now + i); o.stop(now + i + 0.5);
+    }
+  } else if (kind < 0.75) {
+    // A grinder or a drill, for a second or two.
+    const len = 0.9 + Math.random() * 1.4;
+    const o = c.createOscillator();
+    const f = c.createBiquadFilter();
+    const g = c.createGain();
+    o.type = "sawtooth";
+    o.frequency.setValueAtTime(150, now);
+    o.frequency.linearRampToValueAtTime(210 + Math.random() * 60, now + 0.25);
+    f.type = "bandpass"; f.frequency.value = 1800; f.Q.value = 0.9;
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.05 * level, now + 0.2);
+    g.gain.setValueAtTime(0.05 * level, now + len - 0.25);
+    g.gain.linearRampToValueAtTime(0.0001, now + len);
+    o.connect(f); f.connect(g); g.connect(dest);
+    o.start(now); o.stop(now + len + 0.05);
+    burst(now, 3200, 0.8, len, 0.12);
+  } else {
+    // Steel dropped onto steel: two ringing, out-of-tune tones.
+    hit(now, 523 + Math.random() * 80, 0.9, 0.08, "sine");
+    hit(now, 1179 + Math.random() * 120, 0.7, 0.05, "sine");
+    burst(now, 900, 2, 0.12, 0.4);
+  }
+}
+
+/** The site's own sound, while a mission is running. Safe to call often. */
+export function startAmbience() {
+  if (ambience || !enabled || !unlocked) return;
+  const c = ensureCtx();
+  if (!c || !master) return;
+  try {
+    const out = c.createGain();
+    out.gain.setValueAtTime(0.0001, c.currentTime);
+    // Background, under the alarms and voices — but audible on a phone.
+    out.gain.linearRampToValueAtTime(1, c.currentTime + 1.5);
+    out.connect(master);
+    // The bed: distant plant and traffic, and a generator ticking over.
+    const bed = c.createBufferSource();
+    bed.buffer = noise(c);
+    bed.loop = true;
+    const low = c.createBiquadFilter();
+    low.type = "lowpass"; low.frequency.value = 320;
+    const bedGain = c.createGain();
+    bedGain.gain.value = 0.09;
+    bed.connect(low); low.connect(bedGain); bedGain.connect(out);
+    bed.start();
+    const gen = c.createOscillator();
+    const genFilter = c.createBiquadFilter();
+    const genGain = c.createGain();
+    gen.type = "sawtooth"; gen.frequency.value = 48;
+    genFilter.type = "lowpass"; genFilter.frequency.value = 140;
+    genGain.gain.value = 0.018;
+    gen.connect(genFilter); genFilter.connect(genGain); genGain.connect(out);
+    gen.start();
+    let timer = 0;
+    const next = () => {
+      timer = setTimeout(() => {
+        if (!ambience) return;
+        try { siteEvent(c, out); } catch { /* a missing node type on an old browser */ }
+        next();
+      }, 1200 + Math.random() * 3800);
+    };
+    ambience = { out, bed, gen, stop: () => clearTimeout(timer) };
+    next();
+  } catch {
+    ambience = null;
+  }
+}
+
+export function stopAmbience() {
+  const a = ambience;
+  if (!a) return;
+  ambience = null;
+  a.stop();
+  try {
+    const c = ensureCtx();
+    if (c) a.out.gain.setTargetAtTime(0.0001, c.currentTime, 0.15);
+    setTimeout(() => {
+      try { a.bed.stop(); a.gen.stop(); a.out.disconnect(); } catch { /* already stopped */ }
+    }, 800);
+  } catch { /* ignore */ }
+}
+
+/** True while the site's sound is playing (for tests and the HUD). */
+export function ambiencePlaying() {
+  return !!ambience;
 }
 
 /** Call when leaving a game so no sound survives the unmount. */

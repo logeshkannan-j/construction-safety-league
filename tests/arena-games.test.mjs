@@ -2269,6 +2269,118 @@ section("Audit: the scaffold, the cable, the ladder, and what could be gamed");
   }
 }
 
+section("A helmet on the head, a landing at the stairs, the radio in Tamil, the site's sound");
+
+{
+  /* "In hazard finding the helmet is in the air, not on the head." */
+  {
+    const { instance } = await boot("safetyMission");
+    runFrames(5);
+    const t = instance.__test;
+    let worker = null;
+    lastRenderer.lastScene.traverse((o) => { if (o.userData?.rig && o.userData.worker && !o.userData.worker.helmet && o.userData.task) worker = o; });
+    check("the bricklayer starts with no helmet", !!worker && typeof worker.userData.putOnHelmet === "function");
+    t.resolvers["no-helmet"]();
+    runFrames(30);
+    worker.updateMatrixWorld(true);
+    const head = worker.userData.rig.head;
+    const onHead = head.children.filter((c) => c.isMesh && /helmet/.test(c.material?.userData?.tag || c.material?.name || "") ).length
+      || head.children.length;
+    const headAt = new THREE.Vector3().setFromMatrixPosition(head.matrixWorld);
+    const hats = [];
+    worker.traverse((o) => { if (o.isMesh && o.parent === head) hats.push(o); });
+    const top = new THREE.Box3();
+    hats.forEach((h) => top.expandByObject(h));
+    check("put right, the helmet goes on his head and moves with it (it floated at standing height)",
+      worker.userData.worker.helmet && hats.length > 0 && onHead > 0 && top.min.y > headAt.y - 0.25 && top.max.y < headAt.y + 0.45,
+      `head at ${headAt.y.toFixed(2)} m, helmet ${top.min.y.toFixed(2)}..${top.max.y.toFixed(2)} m`);
+    const extras = worker.children.filter((c) => c.isMesh && c.geometry?.type === "SphereGeometry");
+    check("and no loose dome is left hanging on the figure", extras.length === 0, `${extras.length}`);
+    instance.dispose();
+  }
+
+  /* "The staircase to the 2nd floor does not start well." */
+  {
+    const kit = await import(`${SRC}/engine/kit.js`);
+    const container = makeElement("div", { width: 800, height: 600 });
+    const stage = gfx.createStage(container, { quality: "medium" });
+    const frame = kit.buildConcreteFrame(kit.createGeometries(stage.cfg), kit.createMaterials(stage.cfg), { x: -10, z: 10, width: 18, depth: 14, floors: 4, floorHeight: 3.4 });
+    const westEdge = -10 - 9;
+    const landings = frame.stairs.map((st) => st.xStart - westEdge);
+    check("every flight starts with a landing in front of it, not at the slab edge",
+      landings.every((d) => d >= 2), landings.map((d) => d.toFixed(1)).join(", ") + " m");
+    check("and the place to step onto it is on the floor, well in from the edge",
+      frame.stairs.every((st) => st.entry.x - westEdge >= 1.4), frame.stairs.map((st) => (st.entry.x - westEdge).toFixed(1)).join(", "));
+    stage.dispose();
+  }
+
+  /* "Tamil communication to the players, based on the scenario." */
+  {
+    const audio = await import(`${SRC}/audio.js`);
+    const voice = await import(`${SRC}/voice.js`);
+    const spokenLines = [];
+    let cancels = 0;
+    let voiceList = [{ lang: "en-IN" }, { lang: "ta-IN" }];
+    window.speechSynthesis = {
+      getVoices: () => voiceList, speak(u) { spokenLines.push(u); }, cancel() { cancels += 1; },
+      addEventListener() {}, removeEventListener() {},
+    };
+    window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+    audio.setSoundEnabled(true);
+    audio.setVolume(1);
+    try {
+      const line = { en: "Next: Command post.", ta: "அடுத்து: கட்டளை மையம்." };
+      const ta = voice.createGuide({ lang: () => "ta" });
+      check("the guide speaks Tamil to a Tamil player, in a Tamil voice",
+        ta.say(line) === line.ta && spokenLines.at(-1).lang === "ta-IN" && spokenLines.at(-1).voice?.lang === "ta-IN");
+      check("and does not repeat itself", ta.say(line) === null && spokenLines.length === 1);
+      const en = voice.createGuide({ lang: () => "en" });
+      check("English to an English player", en.say(line) === line.en && spokenLines.at(-1).lang === "en-IN");
+      voiceList = [{ lang: "en-IN" }];
+      const noTamil = voice.createGuide({ lang: () => "ta" });
+      check("English when the device has no Tamil voice (an English voice cannot read Tamil)", noTamil.say(line) === line.en);
+      const before = cancels;
+      noTamil.say({ en: "A new instruction." }, { interrupt: true });
+      check("a new instruction can cut off an old one", cancels > before);
+      const muted = voice.createGuide({ enabled: () => false });
+      check("silent in a game with its sound off", muted.say(line) === null);
+      check("an alert in capitals is spoken as a sentence", voice.spoken("MAN DOWN — SCAFFOLD") === "Man down — scaffold");
+      voiceList = [{ lang: "en-IN" }, { lang: "ta-IN" }];
+
+      // Emergency Response puts the scenario on the radio: the alert, then each step.
+      const said = [];
+      const container = makeElement("div", { width: 1280, height: 720 });
+      const { api } = makeApi();
+      api.say = (l, o) => { said.push({ ...l, interrupt: !!o?.interrupt }); return l.en; };
+      const mod = await import(`${SRC}/games/emergencyCommander/index.js`);
+      const inst = (mod.default?.create || mod.create)({ container, difficulty: DIFFICULTY.normal, quality: "medium", settings: { ...SETTINGS, scenarioId: "fire" }, mobile: false, api });
+      runFrames(90);
+      check("emergency: the alert goes out on the radio, in both languages",
+        said[0] && /smoke reported/i.test(said[0].en) && /புகை/.test(said[0].ta || ""), JSON.stringify(said[0]));
+      check("emergency: then the first step, in both languages",
+        said[1] && /^Next: /.test(said[1].en) && /அடுத்து/.test(said[1].ta || ""), JSON.stringify(said[1]));
+      const t = inst.__test;
+      t.actOnStation(t.STATIONS[t.nextRequiredPhase()]);
+      runFrames(10);
+      check("emergency: and the next step when that one is done, replacing what was being said",
+        said.length === 3 && said[2].interrupt && said[2].en !== said[1].en, JSON.stringify(said.slice(1)));
+      inst.dispose();
+    } finally {
+      delete window.speechSynthesis;
+      delete window.SpeechSynthesisUtterance;
+    }
+  }
+
+  /* "Add construction site sound." Without Web Audio (this harness, an
+   * old browser) it simply does not play, and never throws. */
+  {
+    const audio = await import(`${SRC}/audio.js`);
+    let threw = false;
+    try { audio.startAmbience(); audio.stopAmbience(); audio.stopAllLoops(); } catch { threw = true; }
+    check("the site's sound is harmless where there is no audio", !threw && !audio.ambiencePlaying());
+  }
+}
+
 section("The room tells you the problem before you touch anything");
 
 {

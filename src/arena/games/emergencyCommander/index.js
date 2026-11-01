@@ -41,7 +41,7 @@ import {
   collectWorkers, idleWorkers, animateWorker, turnToward,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
-import { createVoices } from "../../voice.js";
+import { createVoices, spoken } from "../../voice.js";
 import { debrisYard, scatterDebris } from "../../engine/debris.js";
 import { pickScenario } from "./scenarios.js";
 import { createERT } from "./ert.js";
@@ -629,7 +629,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     post: { x: FIRSTAID.x + 3.4, z: FIRSTAID.z - 1.8 },
     incident, casualty, lanyard, anchorY, mates,
     fire: fireGroup, smoke: smokeGroup, smokeMat, sparks: sparkGroup,
-    stair: { top: frame.stairs[0]?.exit ?? { x: -10.8, y: 3.4, z: 0.6 } },
+    stair: {
+      foot: frame.stairs[0]?.entry ?? { x: -17.8, z: 0.6 },
+      top: frame.stairs[0]?.exit ?? { x: -10.8, y: 3.4, z: 0.6 },
+    },
     gate: GATE,
     firstAid: FIRSTAID,
     muster: MUSTER,
@@ -673,6 +676,26 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       }
       person.shoutIn = kind && voices.shout(kind, from(person.object.position), { now: stage.elapsed * 1000 }) ? 6 + Math.random() * 6 : 1 + Math.random() * 2;
     });
+  }
+
+  /* The incident controller on the radio, in the player's language (the
+   * shell's guide voice): the alert, then each next step as it comes. */
+  let spokenAlert = false;
+  let spokenStation = null;
+  function radioNext() {
+    if (state.finished || state.cutscene || stage.elapsed < 1) return;
+    if (!spokenAlert) {
+      spokenAlert = true;
+      api.say?.({ en: spoken(scenario.alert), ta: scenario.ta?.alert });
+    }
+    const next = STATIONS[nextRequiredPhase()] || null;
+    if (!next || next.id === spokenStation) return;
+    const first = spokenStation === null;
+    spokenStation = next.id;
+    api.say?.({
+      en: `Next: ${next.label}. ${next.prompt}.`,
+      ta: next.ta?.prompt ? `அடுத்து: ${next.ta.label || next.label}. ${next.ta.prompt}.` : undefined,
+    }, { interrupt: !first });
   }
 
   // How fast an untreated casualty's condition falls, in % a second.
@@ -1465,6 +1488,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       });
     }
     shoutAbout(dt);
+    radioNext();
 
     input.endFrame();
   });

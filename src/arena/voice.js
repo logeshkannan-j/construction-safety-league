@@ -76,3 +76,69 @@ export function createVoices({ lang = () => "en", gap = 2200, enabled = () => tr
     },
   };
 }
+
+/**
+ * The site supervisor on the radio: what the mission is, and in an
+ * emergency what to do next — spoken to each player in their own
+ * language. Tamil when the player has chosen Tamil and the device has a
+ * Tamil voice; otherwise English (an English voice reading Tamil text
+ * is not understandable). Calm and level, unlike the shouting on site.
+ *
+ * `say({ en, ta })` speaks a line; a line the same as the last one is
+ * not repeated. `interrupt` stops whatever is being said first — for a
+ * new instruction that replaces an old one.
+ *
+ * @param lang     () => "en" | "ta"
+ * @param enabled  () => false keeps it quiet (sound off in this game)
+ */
+export function createGuide({ lang = () => "en", enabled = () => true } = {}) {
+  const synth = typeof window !== "undefined" ? window.speechSynthesis || null : null;
+  const Utterance = typeof window !== "undefined" ? window.SpeechSynthesisUtterance || null : null;
+  let voices = [];
+  let lastLine = "";
+  const load = () => { voices = synth?.getVoices?.() || []; };
+  load();
+  synth?.addEventListener?.("voiceschanged", load);
+  const find = (test) => voices.find((v) => test(String(v.lang || "").toLowerCase()));
+
+  return {
+    /** The words that were spoken, or null when nothing was. */
+    say(line, { interrupt = false } = {}) {
+      if (!line || !synth || !Utterance || !enabled() || !isSoundEnabled() || getVolume() <= 0) return null;
+      const tamilVoice = lang() === "ta" && line.ta ? find((l) => l.startsWith("ta")) : null;
+      const words = String(tamilVoice ? line.ta : line.en || "").trim();
+      if (!words || words === lastLine) return null;
+      const voice = tamilVoice || find((l) => l === "en-in" || l === "en_in") || find((l) => l.startsWith("en"));
+      try {
+        if (interrupt) synth.cancel();
+        const u = new Utterance(words);
+        u.lang = tamilVoice ? "ta-IN" : "en-IN";
+        if (voice) u.voice = voice;
+        u.volume = getVolume();
+        u.rate = 1;
+        u.pitch = 1;
+        synth.speak(u);
+      } catch {
+        return null;
+      }
+      lastLine = words;
+      return words;
+    },
+    /** Lets the same line be said again (a new mission). */
+    reset() { lastLine = ""; },
+    stop() {
+      try { synth?.cancel(); } catch { /* not supported */ }
+    },
+    dispose() {
+      this.stop();
+      synth?.removeEventListener?.("voiceschanged", load);
+    },
+  };
+}
+
+/** "MAN DOWN — SCAFFOLD, LEVEL 3" reads better spoken as a sentence. */
+export function spoken(text) {
+  const t = String(text || "").trim();
+  if (!t || t !== t.toUpperCase()) return t;
+  return t.charAt(0) + t.slice(1).toLowerCase();
+}
