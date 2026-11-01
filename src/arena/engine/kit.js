@@ -1133,97 +1133,512 @@ function buildAriaBlock(geo, mat, facadeMat, stiltMat, {
   return { group, height: top };
 }
 
-/**
- * Trees, the way the renders have them: coconut palms and rounded
- * broadleaf canopies in several greens. All of them go into a handful
- * of merged meshes, so a few hundred trees cost four draw calls.
- */
-function buildTreeGroves(spots, { seed = 7 } = {}) {
+/* ------------------------------ trees ------------------------------ */
+
+/** A repeatable random stream, so a grove grows the same every time. */
+function seededRandom(seed) {
   let s = seed;
-  const rand = () => {
+  return () => {
     s = (s * 16807) % 2147483647;
     return (s - 1) / 2147483646;
   };
-  const trunkParts = [];
-  const canopyParts = [];
-  const palmTrunks = [];
-  const frondParts = [];
-  const greens = [
-    [0.2, 0.42, 0.16], [0.25, 0.48, 0.18], [0.16, 0.36, 0.14],
-    [0.3, 0.5, 0.2], [0.22, 0.4, 0.22], [0.33, 0.46, 0.17],
-  ];
-  const blob = new THREE.IcosahedronGeometry(1, 1);
-  const trunk = new THREE.CylinderGeometry(0.16, 0.26, 1, 6);
-  const frond = new THREE.BoxGeometry(0.55, 0.06, 4.2);
-  frond.translate(0, 0, 2.1);
+}
+
+/**
+ * A leaf texture drawn on a canvas, uploaded with its see-through pixels
+ * coloured like the leaves instead of black. A canvas keeps no colour
+ * where it is fully transparent, and each smaller mipmap averages that
+ * black into the leaf edges, so distant foliage got a dark fringe. Rows
+ * are flipped so v runs up the canvas, as with a CanvasTexture.
+ */
+function bledTexture(key, width, height, draw) {
+  if (textureCache.has(key)) return textureCache.get(key);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const g = canvas.getContext("2d");
+  draw(g, width, height);
+  const src = g.getImageData(0, 0, width, height).data;
+  const sum = [0, 0, 0, 0];
+  for (let i = 0; i < src.length; i += 4) {
+    if (src[i + 3] > 200) {
+      sum[0] += src[i]; sum[1] += src[i + 1]; sum[2] += src[i + 2]; sum[3] += 1;
+    }
+  }
+  const fill = sum[3] ? [sum[0] / sum[3], sum[1] / sum[3], sum[2] / sum[3]] : [60, 100, 40];
+  const out = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const from = (y * width + x) * 4;
+      const to = ((height - 1 - y) * width + x) * 4;
+      const clear = src[from + 3] === 0;
+      out[to] = clear ? fill[0] : src[from];
+      out[to + 1] = clear ? fill[1] : src[from + 1];
+      out[to + 2] = clear ? fill[2] : src[from + 2];
+      out[to + 3] = src[from + 3];
+    }
+  }
+  const tex = new THREE.DataTexture(out, width, height, THREE.RGBAFormat);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  textureCache.set(key, tex);
+  return tex;
+}
+
+/**
+ * Lights both faces of a leaf card or a frond with the normal it was
+ * given. three.js turns the normal round on the back face of a
+ * double-sided material, and leaves lit as one rounded mass have their
+ * normals pointing out of the crown — so every card seen from behind
+ * came out black.
+ */
+function keepNormals(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <normal_fragment_begin>",
+      "#include <normal_fragment_begin>\n#ifdef DOUBLE_SIDED\n\tnormal *= faceDirection;\n#endif",
+    );
+  };
+  return material;
+}
+
+/**
+ * The inside of a canopy: leaves packed so close there is no ground
+ * between them, darker than the leaves on the outside.
+ */
+function denseFoliageTexture() {
+  return canvasTexture("treeFoliageDense", 128, 128, (g, w, h) => {
+    g.fillStyle = "#1f3d18";
+    g.fillRect(0, 0, w, h);
+    const rand = seededRandom(17);
+    const greens = ["#24461b", "#2d5622", "#376429", "#1a3514", "#41702e"];
+    for (let i = 0; i < 420; i++) {
+      const len = 4 + rand() * 5;
+      g.save();
+      g.translate(rand() * w, rand() * h);
+      g.rotate(rand() * Math.PI * 2);
+      g.fillStyle = greens[(rand() * greens.length) | 0];
+      g.beginPath();
+      g.ellipse(0, 0, len, len * 0.45, 0, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    }
+  }, { repeat: [2, 2] });
+}
+
+/**
+ * A spray of leaves on clear ground, for the alpha-cut cards a shade
+ * tree's canopy is made of. Dense in the middle and ragged at the edge,
+ * so no card ever shows its square.
+ */
+function foliageTexture() {
+  return bledTexture("treeFoliage", 256, 256, (g, w, h) => {
+    const rand = seededRandom(11);
+    const greens = ["#2b5921", "#37682a", "#447730", "#538636", "#62953e", "#244a1b", "#73a24a"];
+    for (let i = 0; i < 640; i++) {
+      const a = rand() * Math.PI * 2;
+      const r = Math.sqrt(rand()) * w * 0.46;
+      const len = 6 + rand() * 8;
+      g.save();
+      g.translate(w / 2 + Math.cos(a) * r, h / 2 + Math.sin(a) * r);
+      g.rotate(rand() * Math.PI * 2);
+      g.fillStyle = greens[(rand() * greens.length) | 0];
+      g.beginPath();
+      g.ellipse(0, 0, len, len * 0.42, 0, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    }
+  });
+}
+
+/**
+ * A coconut frond laid flat: the midrib up the middle and the leaflets
+ * in pairs either side, swept towards the tip and longest in the middle
+ * of the frond. The tip is at the top of the canvas, which is v = 1.
+ */
+function frondTexture() {
+  return bledTexture("palmFrond", 128, 512, (g, w, h) => {
+    const rand = seededRandom(23);
+    const greens = ["#3f6f25", "#4b7d2b", "#578a31", "#668f36", "#3a6522", "#6f9a3c"];
+    const cx = w / 2;
+    g.lineCap = "round";
+    for (let y = h - 8; y > 6; y -= 4.2) {
+      const t = 1 - y / h;
+      const reach = cx * 0.95 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.1 + t * 0.95)), 0.55)
+        * (0.86 + rand() * 0.2);
+      [-1, 1].forEach((side) => {
+        g.strokeStyle = greens[(rand() * greens.length) | 0];
+        g.lineWidth = 2 + rand() * 1.4;
+        g.beginPath();
+        g.moveTo(cx + side * 2, y);
+        g.quadraticCurveTo(cx + side * reach * 0.55, y - reach * 0.16, cx + side * reach, y - reach * 0.6 - rand() * 6);
+        g.stroke();
+      });
+    }
+    // The midrib, pale and stiff.
+    const rib = g.createLinearGradient(0, h, 0, 0);
+    rib.addColorStop(0, "#c4b66e");
+    rib.addColorStop(1, "#8da24c");
+    g.strokeStyle = rib;
+    g.lineWidth = 4;
+    g.beginPath();
+    g.moveTo(cx, h);
+    g.lineTo(cx, 0);
+    g.stroke();
+  });
+}
+
+/** Palm bark: grey-brown, ringed where old fronds fell. One metre of trunk. */
+function palmBarkTexture() {
+  return canvasTexture("palmBark", 32, 128, (g, w, h) => {
+    g.fillStyle = "#8b7c68";
+    g.fillRect(0, 0, w, h);
+    noise(g, w, h, 160, ["#7a6c5a", "#968873", "#6f6252", "#a09079"], 2);
+    const rand = seededRandom(5);
+    for (let y = 4; y < h; y += 13 + rand() * 4) {
+      g.fillStyle = "rgba(68, 56, 44, 0.8)";
+      g.fillRect(0, y, w, 2);
+      g.fillStyle = "rgba(196, 180, 154, 0.4)";
+      g.fillRect(0, y + 2, w, 1);
+    }
+  });
+}
+
+/** Bark for a shade tree: dark, with fissures running up the trunk. */
+function barkTexture() {
+  return canvasTexture("treeBark", 64, 128, (g, w, h) => {
+    g.fillStyle = "#5d4834";
+    g.fillRect(0, 0, w, h);
+    const rand = seededRandom(9);
+    for (let i = 0; i < 28; i++) {
+      const x = rand() * w;
+      g.strokeStyle = rand() < 0.55 ? "rgba(36, 27, 20, 0.6)" : "rgba(134, 114, 90, 0.45)";
+      g.lineWidth = 1 + rand() * 2;
+      g.beginPath();
+      g.moveTo(x, 0);
+      g.bezierCurveTo(x + (rand() - 0.5) * 8, h * 0.33, x + (rand() - 0.5) * 8, h * 0.66, x + (rand() - 0.5) * 6, h);
+      g.stroke();
+    }
+  });
+}
+
+/**
+ * A tapering tube through `points` ([x, y, z]) with a radius at each,
+ * for trunks and branches; `vMetres` of length to one repeat of the bark.
+ */
+function taperedTube(points, radii, radial, vMetres = 1) {
+  const p = points.map((a) => new THREE.Vector3(a[0], a[1], a[2]));
+  const pos = [];
+  const nor = [];
+  const uv = [];
+  const index = [];
+  const fwd = new THREE.Vector3();
+  const side = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  let along = 0;
+  for (let i = 0; i < p.length; i++) {
+    if (i > 0) along += p[i].distanceTo(p[i - 1]);
+    fwd.subVectors(p[Math.min(i + 1, p.length - 1)], p[Math.max(i - 1, 0)]).normalize();
+    if (Math.abs(fwd.x) > 0.9) side.set(0, 0, 1);
+    else side.set(1, 0, 0);
+    up.crossVectors(fwd, side).normalize();
+    side.crossVectors(up, fwd).normalize();
+    for (let j = 0; j <= radial; j++) {
+      const a = (j / radial) * Math.PI * 2;
+      const cx = side.x * Math.cos(a) + up.x * Math.sin(a);
+      const cy = side.y * Math.cos(a) + up.y * Math.sin(a);
+      const cz = side.z * Math.cos(a) + up.z * Math.sin(a);
+      pos.push(p[i].x + cx * radii[i], p[i].y + cy * radii[i], p[i].z + cz * radii[i]);
+      nor.push(cx, cy, cz);
+      uv.push(j / radial, along / vMetres);
+    }
+  }
+  for (let i = 0; i < p.length - 1; i++) {
+    for (let j = 0; j < radial; j++) {
+      const a = i * (radial + 1) + j;
+      const b = a + radial + 1;
+      index.push(a, a + 1, b, a + 1, b + 1, b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(index);
+  return g;
+}
+
+/**
+ * One palm frond: a strip along the midrib that leaves the crown `rise`
+ * radians above level and bends down by `droop` towards the tip, with
+ * the leaflets either side raised into a shallow V, the way a real frond
+ * holds them. u runs across the frond and v from the stalk (0) to the
+ * tip (1), matching frondTexture().
+ */
+function frondGeometry({ length, width, rise, droop, segments, yaw, base, tint }) {
+  const dx = Math.sin(yaw);
+  const dz = Math.cos(yaw);
+  const sx = Math.cos(yaw);
+  const sz = -Math.sin(yaw);
+  const fold = 0.38;
+  const pos = [];
+  const uv = [];
+  const col = [];
+  const index = [];
+  let along = 0;
+  let up = 0;
+  for (let i = 0; i <= segments; i++) {
+    const s = i / segments;
+    if (i > 0) {
+      const mid = rise - droop * Math.pow((i - 0.5) / segments, 1.3);
+      along += Math.cos(mid) * (length / segments);
+      up += Math.sin(mid) * (length / segments);
+    }
+    // Square to the midrib, in the upright plane it runs in.
+    const a = rise - droop * Math.pow(s, 1.3);
+    const nx = -Math.sin(a) * dx;
+    const ny = Math.cos(a);
+    const nz = -Math.sin(a) * dz;
+    const cx = base[0] + dx * along;
+    const cy = base[1] + up;
+    const cz = base[2] + dz * along;
+    // Bare stalk at the crown, leaflets from there to the tip.
+    const half = (width / 2) * Math.min(1, s / 0.12);
+    const shade = 0.72 + 0.32 * s;
+    [-1, 0, 1].forEach((side) => {
+      const out = Math.abs(side) * half;
+      pos.push(
+        cx + side * sx * half * Math.cos(fold) + nx * out * Math.sin(fold),
+        cy + ny * out * Math.sin(fold),
+        cz + side * sz * half * Math.cos(fold) + nz * out * Math.sin(fold),
+      );
+      uv.push((side + 1) / 2, s);
+      const k = side === 0 ? shade * 0.92 : shade;
+      col.push(tint[0] * k, tint[1] * k, tint[2] * k);
+    });
+  }
+  for (let i = 0; i < segments; i++) {
+    const a = i * 3;
+    const b = a + 3;
+    index.push(a, b, a + 1, a + 1, b, b + 1, a + 1, b + 1, a + 2, a + 2, b + 1, b + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(index);
+  g.computeVertexNormals();
+  // Turned to the sky and leant towards it, so the crown is lit like
+  // foliage from wherever it is seen, the underside included.
+  const n = g.attributes.normal;
+  for (let i = 0; i < n.count; i++) {
+    const flip = n.getY(i) < 0 ? -1 : 1;
+    const x = n.getX(i) * flip * 0.6;
+    const y = n.getY(i) * flip * 0.6 + 0.8;
+    const z = n.getZ(i) * flip * 0.6;
+    const len = Math.hypot(x, y, z) || 1;
+    n.setXYZ(i, x / len, y / len, z / len);
+  }
+  g.userData.tipY = base[1] + up;
+  return g;
+}
+
+/** Leaf colour per tree, so a grove is not one green. */
+const TREE_HUES = [[1, 1, 1], [1.08, 1.04, 0.78], [0.86, 0.98, 0.9], [0.98, 0.94, 0.86]];
+
+/**
+ * Trees, the way the renders have them: coconut palms and broadleaf
+ * shade trees.
+ *
+ * A palm is a curving, ringed trunk with a crown of fronds in a spiral:
+ * the young ones stand up in the middle, the older ones arch out and
+ * droop at the tips, the oldest hang yellowing down the trunk, and a
+ * bunch of coconuts sits under them. A shade tree is a trunk forking
+ * into branches, each ending in a clump of leaves. Leaves are alpha-cut
+ * cards on a painted leaf texture around a dark core, so the outline is
+ * leaves against the sky rather than a lump, and the fronds are leaflets
+ * on a midrib rather than flat blades. Everything is merged by material:
+ * the whole grove is six draw calls. `low` thins it all out for the
+ * lowest graphics setting.
+ */
+function buildTreeGroves(spots, { seed = 7, low = false } = {}) {
+  const rand = seededRandom(seed);
+  const parts = { bark: [], palmBark: [], solid: [], cores: [], leaves: [], fronds: [] };
+  const stats = { palms: 0, broadleaf: 0, crowns: [] };
+  const card = new THREE.PlaneGeometry(1, 1);
+  const nut = new THREE.IcosahedronGeometry(0.13, 0);
+  const core = new THREE.IcosahedronGeometry(1, low ? 0 : 1);
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
-  const e = new THREE.Euler();
-  const place = (g, x, y, z, sx, sy, sz, rx = 0, ry = 0, rz = 0) => {
-    e.set(rx, ry, rz, "YXZ");
-    q.setFromEuler(e);
-    m.compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(sx, sy, sz));
-    return g.clone().applyMatrix4(m);
-  };
-  const tint = (g, rgb) => {
-    const n = g.attributes.position.count;
-    const c = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      // Lighter where the canopy faces the sky, darker underneath.
-      const shade = 0.78 + 0.34 * Math.max(0, g.attributes.normal.getY(i));
-      c[i * 3] = rgb[0] * shade; c[i * 3 + 1] = rgb[1] * shade; c[i * 3 + 2] = rgb[2] * shade;
+  const twist = new THREE.Quaternion();
+  const v = new THREE.Vector3();
+  const Z = new THREE.Vector3(0, 0, 1);
+
+  // Colours a geometry: `rgb` times a shade worked out per vertex.
+  const paint = (g, rgb, shadeAt) => {
+    const p = g.attributes.position;
+    const n = g.attributes.normal;
+    const c = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const k = shadeAt(p.getY(i), n ? n.getY(i) : 0);
+      c[i * 3] = rgb[0] * k;
+      c[i * 3 + 1] = rgb[1] * k;
+      c[i * 3 + 2] = rgb[2] * k;
     }
     g.setAttribute("color", new THREE.BufferAttribute(c, 3));
     return g;
   };
 
-  spots.forEach(({ x, z, palm = null, scale = 1 }) => {
-    const isPalm = palm ?? rand() < 0.35;
-    if (isPalm) {
-      const h = (8 + rand() * 4) * scale;
-      const lean = (rand() - 0.5) * 0.2;
-      palmTrunks.push(place(trunk, x, h / 2, z, 0.9, h, 0.9, lean, 0, (rand() - 0.5) * 0.15));
-      const fronds = 9;
-      const yaw0 = rand() * Math.PI * 2;
-      for (let i = 0; i < fronds; i++) {
-        const yaw = yaw0 + (i / fronds) * Math.PI * 2;
-        frondParts.push(tint(place(frond, x + Math.sin(lean) * h * 0.5, h, z, scale, scale, scale, 0.35 + rand() * 0.35, yaw, 0), greens[(i + Math.floor(rand() * 6)) % 6]));
-      }
-    } else {
-      const h = (3.2 + rand() * 2.2) * scale;
-      const r = (2.4 + rand() * 1.8) * scale;
-      trunkParts.push(place(trunk, x, h / 2, z, 1.3 * scale, h, 1.3 * scale));
-      const green = greens[Math.floor(rand() * greens.length)];
-      const blobs = 2 + Math.floor(rand() * 2);
-      for (let k = 0; k < blobs; k++) {
-        const a = rand() * Math.PI * 2;
-        const off = k === 0 ? 0 : r * 0.45;
-        canopyParts.push(tint(place(blob,
-          x + Math.cos(a) * off, h + r * (k === 0 ? 0.75 : 0.55), z + Math.sin(a) * off,
-          r * (k === 0 ? 1 : 0.75), r * (k === 0 ? 0.85 : 0.65), r * (k === 0 ? 1 : 0.75)),
-        green));
-      }
+  const growPalm = (x, z, scale) => {
+    const h = (8 + rand() * 4) * scale;
+    const leanYaw = rand() * Math.PI * 2;
+    const lean = h * (0.03 + rand() * 0.08);
+    const rings = low ? 6 : 9;
+    const pts = [];
+    const radii = [];
+    for (let i = 0; i <= rings; i++) {
+      const t = i / rings;
+      const off = lean * Math.pow(t, 1.6);
+      pts.push([x + Math.sin(leanYaw) * off, h * t, z + Math.cos(leanYaw) * off]);
+      // Flared at the foot, then slim and nearly even to the crown.
+      radii.push((0.14 + 0.06 * (1 - t) + 0.12 * Math.pow(1 - t, 8)) * scale);
     }
+    parts.palmBark.push(taperedTube(pts, radii, low ? 6 : 8, 1));
+    const top = pts[rings];
+
+    const count = low ? 10 : 15;
+    const yaw0 = rand() * Math.PI * 2;
+    let lowestTip = Infinity;
+    let highest = -Infinity;
+    for (let k = 0; k < count; k++) {
+      const age = k / (count - 1);
+      const dead = !low && age > 0.9;
+      // The golden angle: how a palm lays its fronds round the crown.
+      const yaw = yaw0 + k * 2.39996 + (rand() - 0.5) * 0.3;
+      const frond = frondGeometry({
+        length: (3.4 + rand() * 1.2) * scale * (0.85 + 0.2 * age),
+        width: 1.5 * scale,
+        rise: dead ? -1.25 : 1.05 - 1.35 * age + (rand() - 0.5) * 0.2,
+        droop: dead ? 0.45 : 1.15 + 0.7 * age,
+        segments: low ? 5 : 8,
+        yaw,
+        base: [top[0] + Math.sin(yaw) * 0.12, top[1] + 0.1 - 0.45 * age * scale, top[2] + Math.cos(yaw) * 0.12],
+        tint: dead ? [1.25, 0.92, 0.5] : age > 0.7 ? [1.08, 1, 0.72] : [1, 1, 1],
+      });
+      const fp = frond.attributes.position;
+      for (let i = 0; i < fp.count; i++) highest = Math.max(highest, fp.getY(i));
+      lowestTip = Math.min(lowestTip, frond.userData.tipY);
+      parts.fronds.push(frond);
+    }
+
+    // A bunch of coconuts under the crown.
+    const nuts = low ? 3 : 5 + Math.floor(rand() * 3);
+    for (let k = 0; k < nuts; k++) {
+      const a = rand() * Math.PI * 2;
+      const g = nut.clone().applyMatrix4(m.makeTranslation(
+        top[0] + Math.cos(a) * 0.24, top[1] - 0.3 - rand() * 0.25, top[2] + Math.sin(a) * 0.24,
+      ));
+      parts.solid.push(paint(g, rand() < 0.6 ? [0.42, 0.5, 0.16] : [0.55, 0.4, 0.18], (y, ny) => 0.8 + 0.3 * ny));
+    }
+    stats.palms += 1;
+    stats.crowns.push({ x, z, top: top[1], lowestTip, highest });
+  };
+
+  const growShadeTree = (x, z, scale) => {
+    const forkH = (2.2 + rand() * 1.2) * scale;
+    const R = (2.5 + rand() * 1.5) * scale;
+    const crownY = forkH + R * 0.75;
+    const lx = (rand() - 0.5) * 0.4 * scale;
+    const lz = (rand() - 0.5) * 0.4 * scale;
+    const fork = new THREE.Vector3(x + lx, forkH, z + lz);
+    const r0 = (0.2 + rand() * 0.08) * scale;
+    parts.bark.push(taperedTube(
+      [[x, 0, z], [x + lx * 0.3, forkH * 0.35, z + lz * 0.3], [x + lx * 0.7, forkH * 0.7, z + lz * 0.7], fork.toArray()],
+      [r0 * 1.5, r0 * 1.05, r0 * 0.95, r0 * 0.85],
+      low ? 5 : 7, 1.6,
+    ));
+
+    // Branches out to the clumps of leaves; the top clump sits over the fork.
+    const clumps = [{ c: new THREE.Vector3(fork.x, crownY + R * 0.3, fork.z), r: R * 0.72 }];
+    const branches = 3 + Math.floor(rand() * 2);
+    const a0 = rand() * Math.PI * 2;
+    for (let b = 0; b < branches; b++) {
+      const a = a0 + (b / branches) * Math.PI * 2 + (rand() - 0.5) * 0.5;
+      const reach = R * (0.5 + rand() * 0.2);
+      const end = new THREE.Vector3(fork.x + Math.cos(a) * reach, crownY + (rand() - 0.4) * R * 0.3, fork.z + Math.sin(a) * reach);
+      const mid = fork.clone().lerp(end, 0.5);
+      mid.y += 0.35 * scale;
+      parts.bark.push(taperedTube([fork.toArray(), mid.toArray(), end.toArray()], [r0 * 0.6, r0 * 0.42, r0 * 0.2], low ? 4 : 5, 1.6));
+      clumps.push({ c: end, r: R * (0.55 + rand() * 0.15) });
+    }
+
+    // Each clump: a dark core so the middle reads as deep shade, then
+    // leaf cards over it, lit as one rounded mass rather than card by
+    // card, and darker underneath than on top.
+    const hue = TREE_HUES[(rand() * TREE_HUES.length) | 0];
+    const bottom = crownY - R;
+    const span = 2 * R;
+    clumps.forEach(({ c, r }, i) => {
+      parts.cores.push(paint(
+        core.clone().applyMatrix4(m.compose(c, q.identity(), v.set(r * 0.7, r * 0.6, r * 0.7))),
+        hue,
+        (y, ny) => 0.75 + 0.3 * Math.max(0, ny),
+      ));
+      const n = Math.round((low ? 7 : 16) * (i === 0 ? 1.3 : 1));
+      for (let k = 0; k < n; k++) {
+        // Mostly over the top and round the sides: the underside is in
+        // shade and seen far less.
+        const dir = new THREE.Vector3(rand() * 2 - 1, rand() * 1.5 - 0.5, rand() * 2 - 1).normalize();
+        const at = c.clone().addScaledVector(dir, r * (0.6 + rand() * 0.35));
+        at.y = c.y + (at.y - c.y) * 0.82;
+        const facing = dir.clone().add(new THREE.Vector3(rand() - 0.5, rand() - 0.3, rand() - 0.5).multiplyScalar(0.9)).normalize();
+        q.setFromUnitVectors(Z, facing);
+        twist.setFromAxisAngle(Z, rand() * Math.PI * 2);
+        q.multiply(twist);
+        const size = r * (0.75 + rand() * 0.45);
+        const leaf = card.clone().applyMatrix4(m.compose(at, q, v.set(size, size, size)));
+        const lp = leaf.attributes.position;
+        const ln = leaf.attributes.normal;
+        for (let j = 0; j < lp.count; j++) {
+          v.set(lp.getX(j) - c.x, (lp.getY(j) - c.y) * 1.2 + r * 0.25, lp.getZ(j) - c.z).normalize();
+          ln.setXYZ(j, v.x, v.y, v.z);
+        }
+        parts.leaves.push(paint(leaf, hue, (y) => 0.6 + 0.55 * Math.min(1, Math.max(0, (y - bottom) / span))));
+      }
+    });
+    stats.broadleaf += 1;
+  };
+
+  spots.forEach(({ x, z, palm = null, scale = 1 }) => {
+    if (palm ?? rand() < 0.35) growPalm(x, z, scale);
+    else growShadeTree(x, z, scale);
   });
 
   const group = new THREE.Group();
-  const leaf = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const bark = new THREE.MeshLambertMaterial({ color: 0x6e5338 });
-  const palmBark = new THREE.MeshLambertMaterial({ color: 0x8a7458 });
-  const add = (parts, material) => {
-    if (!parts.length) return;
-    const merged = mergeGeometries(parts, false);
-    parts.forEach((g) => g.dispose());
+  const add = (list, material) => {
+    if (!list.length) return;
+    const merged = mergeGeometries(list, false);
+    list.forEach((g) => g.dispose());
     if (merged) group.add(new THREE.Mesh(merged, material));
   };
-  add(trunkParts, bark);
-  add(canopyParts, leaf);
-  add(palmTrunks, palmBark);
-  add(frondParts, leaf);
-  blob.dispose();
-  trunk.dispose();
-  frond.dispose();
+  add(parts.bark, new THREE.MeshLambertMaterial({ map: barkTexture() }));
+  add(parts.palmBark, new THREE.MeshLambertMaterial({ map: palmBarkTexture() }));
+  add(parts.solid, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  add(parts.cores, new THREE.MeshLambertMaterial({ map: denseFoliageTexture(), vertexColors: true }));
+  add(parts.leaves, keepNormals(new THREE.MeshLambertMaterial({
+    map: foliageTexture(), vertexColors: true, alphaTest: 0.45, side: THREE.DoubleSide,
+  })));
+  add(parts.fronds, keepNormals(new THREE.MeshLambertMaterial({
+    map: frondTexture(), vertexColors: true, alphaTest: 0.4, side: THREE.DoubleSide,
+  })));
+  card.dispose();
+  nut.dispose();
+  core.dispose();
   group.userData.treeCount = spots.length;
+  group.userData.trees = stats;
   return group;
 }
 
@@ -1389,10 +1804,13 @@ export function buildBrandedTower(geo, mat, {
   /* ---- trees: the street, the garden, and the belt round the site ---- */
   const spots = [];
   // Along the road, inside the wall.
+  let roadside = 0;
   for (let tx = -80; tx <= 80; tx += 9) {
     // Clear of the gate and of the name wall beside it.
     if (Math.abs(tx) < 10 || (tx > 6 && tx < 34)) continue;
-    spots.push({ x: tx, z: -4.5, palm: (tx / 9) % 2 === 0 });
+    // Palms and shade trees by turns. (This was `(tx / 9) % 2 === 0`,
+    // which no position on this line ever met, so there were no palms.)
+    spots.push({ x: tx, z: -4.5, palm: roadside++ % 2 === 0 });
   }
   // The belt round the sides and back.
   for (let tz = -10; tz >= -98; tz -= 7) {
@@ -1411,7 +1829,7 @@ export function buildBrandedTower(geo, mat, {
     if (Math.abs(tx) < 88) continue;
     for (let tz = -6; tz >= -100; tz -= 12) spots.push({ x: tx + ((tz * 7) % 5), z: tz, scale: 1.15 });
   }
-  const groves = buildTreeGroves(spots);
+  const groves = buildTreeGroves(spots, { low: (geo.cyl?.parameters?.radialSegments ?? 12) <= 8 });
   site.add(groves);
 
   /* ---- the city beyond: low blocks among the trees ---- */
@@ -1437,6 +1855,7 @@ export function buildBrandedTower(geo, mat, {
     ariaRing: mark.ring,
     buildings: [west.group, middle.group, lBlock.group],
     trees: spots.length,
+    groves,
   };
 }
 

@@ -2722,6 +2722,47 @@ section("The Casagrand Aria development is visible in every mission");
 
   // Planted like the renders: trees all round, palms among them.
   check("it is planted the way the renders are", dev.trees > 100, `${dev.trees} trees`);
+
+  /* "What type of tree is this — it does not look like a tree." The palms
+   * were a pole with nine flat green boxes on top and the shade trees two
+   * or three lumpy balls on a stick. */
+  const grove = dev.groves.userData.trees;
+  check("there are palms and shade trees both", grove.palms >= 20 && grove.broadleaf >= 40,
+    `${grove.palms} palms, ${grove.broadleaf} shade trees`);
+  check("and palms along the road, by turns with the shade trees",
+    grove.crowns.filter((c) => Math.abs(c.z + 4.5) < 0.01).length >= 5,
+    `${grove.crowns.filter((c) => Math.abs(c.z + 4.5) < 0.01).length} roadside palms`);
+  check("every palm's fronds rise out of the crown and droop at the tips",
+    grove.crowns.every((c) => c.highest > c.top + 0.5 && c.lowestTip < c.top - 1),
+    grove.crowns.filter((c) => !(c.highest > c.top + 0.5 && c.lowestTip < c.top - 1)).length + " do not");
+  const leafy = dev.groves.children.filter((o) => o.isMesh && o.material.alphaTest > 0);
+  check("leaves and fronds are cut out of a leaf texture, not solid lumps",
+    leafy.length === 2 && leafy.every((o) => o.material.map && o.material.side === THREE.DoubleSide));
+  const patched = { fragmentShader: "#include <normal_fragment_begin>\nvoid main() {}" };
+  leafy.forEach((o) => o.material.onBeforeCompile?.(patched));
+  check("and lit the same from both faces, so no leaf is black from behind",
+    leafy.every((o) => typeof o.material.onBeforeCompile === "function")
+      && /normal \*= faceDirection/.test(patched.fragmentShader));
+  check("a leaf texture's clear ground is leaf-coloured, not black, so distant leaves have no dark rim",
+    leafy.every((o) => {
+      const d = o.material.map.image?.data;
+      return d && d[3] === 0 && d[0] + d[1] + d[2] > 60;
+    }));
+  const treeTriangles = (group) => group.children.reduce((sum, o) => {
+    const g = o.geometry;
+    return sum + (g.index ? g.index.count : g.attributes.position.count) / 3;
+  }, 0);
+  check("the grove is a handful of draw calls", dev.groves.children.length <= 6,
+    `${dev.groves.children.length} meshes`);
+  check("and few enough triangles to be scenery", treeTriangles(dev.groves) < 110000,
+    `${Math.round(treeTriangles(dev.groves))} triangles`);
+  {
+    const lowCfg = gfx.preset("low");
+    const lowDev = kit.buildBrandedTower(kit.createGeometries(lowCfg), kit.createMaterials(lowCfg), {});
+    check("and far fewer on the lowest graphics setting",
+      treeTriangles(lowDev.groves) < treeTriangles(dev.groves) * 0.5,
+      `${Math.round(treeTriangles(lowDev.groves))} against ${Math.round(treeTriangles(dev.groves))}`);
+  }
   const roadMarks = [];
   dev.group.traverse((o) => { if (o.isMesh && o.material === mat.asphalt) roadMarks.push(o); });
   check("the main road runs along the front", roadMarks.length >= 1);
