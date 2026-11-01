@@ -859,6 +859,17 @@ section("The worker is a person, not a pile of boxes");
     lowCost.tris < fullCost.tris && lowCost.meshes <= fullCost.meshes,
     `${lowCost.tris} vs ${fullCost.tris} triangles, ${lowCost.meshes} vs ${fullCost.meshes} meshes`);
 
+  // On the lowest graphics setting nobody is built at full detail.
+  const lowStage = gfx.createStage(makeElement("div", { width: 400, height: 300 }), { quality: "low" });
+  const lowGeo = kit.createGeometries(lowStage.cfg);
+  const lowMat = kit.createMaterials(lowStage.cfg);
+  const onLowPhone = costOf(kit.buildWorker(lowGeo, lowMat, { seed: 7 }));
+  const crowdOnLowPhone = costOf(kit.buildWorker(lowGeo, lowMat, { seed: 7, detail: "low" }));
+  check("on the lowest graphics setting everybody is built at crowd detail",
+    onLowPhone.tris === crowdOnLowPhone.tris && onLowPhone.tris < fullCost.tris,
+    `${onLowPhone.tris} vs ${crowdOnLowPhone.tris} triangles (full: ${fullCost.tris})`);
+  lowStage.dispose();
+
   check("poseWorker ignores something that is not a worker",
     (() => { try { kit.poseWorker(null, {}); kit.poseWorker({}, {}); return true; } catch { return false; } })());
 

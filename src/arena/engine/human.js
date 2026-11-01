@@ -1233,7 +1233,11 @@ export function buildWorker(geo, mat, {
 } = {}) {
   const r = rng(seed ?? nextSeed++);
   const officer = role === "officer";
-  const low = detail === "low";
+  // On the lowest graphics setting everybody is built at crowd detail:
+  // a full figure is ~18k triangles against ~9k, and the phones that
+  // end up on "low" are the ones that cannot spare the difference.
+  const lowQuality = (geo.cyl?.parameters?.radialSegments ?? 12) <= 8;
+  const low = detail === "low" || lowQuality;
   const P = palette(mat);
 
   /* ---- who this is ---- */
