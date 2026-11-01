@@ -601,7 +601,7 @@ section("The worker is a person, not a pile of boxes");
   const mat = kit.createMaterials(stage.cfg);
   const geo = kit.createGeometries(stage.cfg);
 
-  const person = kit.buildWorker(geo, mat, {});
+  const person = kit.buildWorker(geo, mat, { stance: "relaxed" });
   const rig = person.userData.rig;
 
   check("the figure has a skeleton, not just meshes",
@@ -1307,6 +1307,130 @@ section("The ERT responds, and the clock stops while it does");
     check(`${scenarioId}: it does not replay`, t.state.cutscene === false);
     instance.dispose();
   }
+}
+
+section("People pick things up, carry them, and stand about like people");
+
+/* "The human character is still similar, and the actions — when they
+ * take something — are not right." A labourer crouched like somebody
+ * sitting on a chair that was not there, with empty hands, while the bag
+ * appeared in mid-air at chest height; the ERT carried the stretcher out
+ * in front like a tray; every figure stood the same way, arms at the
+ * sides; and a figure changing pose snapped from one to the next. */
+{
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium" });
+  const mat = kit.createMaterials(stage.cfg);
+  const geo = kit.createGeometries(stage.cfg);
+  const at = (o, obj) => {
+    o.updateMatrixWorld(true);
+    return new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld);
+  };
+
+  // Standing about.
+  const kinds = new Set();
+  for (let i = 0; i < 40; i++) kinds.add(kit.buildWorker(geo, mat, { seed: 6100 + i, detail: "low" }).userData.stance);
+  check("a crowd stands about in different ways", kinds.size >= 3, [...kinds].join(", "));
+  const stood = (stance) => {
+    const w = kit.buildWorker(geo, mat, { seed: 6200, stance });
+    kit.poseWorker(w, { pose: "stand" });
+    const rig = w.userData.rig;
+    return {
+      hands: [at(w, rig.armL.userData.hand), at(w, rig.armR.userData.hand)],
+      hips: [at(w, rig.legL), at(w, rig.legR)],
+      shoulders: [at(w, rig.armL), at(w, rig.armR)],
+    };
+  };
+  const hips = stood("hips");
+  check("hands on hips: each hand is on its own hip",
+    hips.hands.every((h, i) => Math.sign(h.x) === Math.sign(hips.hips[i].x) && Math.abs(h.x) > 0.1 && Math.abs(h.x) < 0.32
+      && Math.abs(h.y - hips.hips[i].y) < 0.22 && Math.abs(h.z) < 0.14),
+    hips.hands.map((h) => `${h.x.toFixed(2)},${h.y.toFixed(2)},${h.z.toFixed(2)}`).join(" / "));
+  const folded = stood("folded");
+  check("arms folded: each hand is across the chest, in front",
+    folded.hands.every((h, i) => h.z > 0.08 && Math.sign(h.x) !== Math.sign(folded.shoulders[i].x)
+      && h.y < folded.shoulders[i].y - 0.1 && h.y > folded.shoulders[i].y - 0.5),
+    folded.hands.map((h) => `${h.x.toFixed(2)},${h.y.toFixed(2)},${h.z.toFixed(2)}`).join(" / "));
+  const behind = stood("behind");
+  check("hands behind the back: both behind, near the middle",
+    behind.hands.every((h) => h.z < -0.08 && Math.abs(h.x) < 0.2),
+    behind.hands.map((h) => `${h.x.toFixed(2)},${h.y.toFixed(2)},${h.z.toFixed(2)}`).join(" / "));
+
+  // Carrying.
+  const carrier = kit.buildWorker(geo, mat, { seed: 6201, stance: "relaxed" });
+  const crig = carrier.userData.rig;
+  kit.poseWorker(carrier, { pose: "carry", carrying: "shoulder" });
+  const shoulderR = at(carrier, crig.armR);
+  const handR = at(carrier, crig.armR.userData.hand);
+  check("a sack on the shoulder has that hand up on it",
+    handR.y > shoulderR.y - 0.05 && Math.abs(handR.x - shoulderR.x) < 0.2,
+    `hand ${handR.y.toFixed(2)} m against the shoulder at ${shoulderR.y.toFixed(2)} m`);
+  kit.poseWorker(carrier, { pose: "carry", carrying: "ahead" });
+  const aheadHands = [at(carrier, crig.armL.userData.hand), at(carrier, crig.armR.userData.hand)];
+  kit.poseWorker(carrier, { pose: "carry", carrying: "behind" });
+  const behindHands = [at(carrier, crig.armL.userData.hand), at(carrier, crig.armR.userData.hand)];
+  check("a stretcher is held low, a handle each side, not out in front like a tray",
+    aheadHands.every((h) => h.y < 1.0 && h.z > 0.05 && Math.abs(h.x) > 0.15)
+      && behindHands.every((h) => h.y < 1.0 && h.z < 0 && Math.abs(h.x) > 0.15),
+    `ahead ${aheadHands.map((h) => h.y.toFixed(2)).join("/")} m, behind ${behindHands.map((h) => h.z.toFixed(2)).join("/")} m`);
+
+  // The lift.
+  kit.poseWorker(carrier, { pose: "lift" });
+  const head = at(carrier, crig.head);
+  const pelvis = at(carrier, crig.hips);
+  const lowHands = [at(carrier, crig.armL.userData.hand), at(carrier, crig.armR.userData.hand)];
+  check("bending to lift leans the back in over the load, not bolt upright",
+    head.z > pelvis.z + 0.3, `head ${(head.z - pelvis.z).toFixed(2)} m in front of the hips`);
+  check("and takes the hands down to it", lowHands.every((h) => h.y < 0.7 && h.z > 0.15),
+    lowHands.map((h) => `${h.y.toFixed(2)} m up, ${h.z.toFixed(2)} m out`).join(" / "));
+
+  // Changing pose takes a moment.
+  const kneeler = kit.buildWorker(geo, mat, { seed: 6202, stance: "relaxed" });
+  for (let i = 0; i < 30; i++) kit.animateWorker(kneeler, { dt: 1 / 60, pose: "stand", t: i / 60 });
+  const standing = kneeler.userData.rig.hips.position.y;
+  kit.animateWorker(kneeler, { dt: 1 / 60, pose: "kneel", t: 0.5 });
+  const firstFrame = kneeler.userData.rig.hips.position.y;
+  for (let i = 0; i < 45; i++) kit.animateWorker(kneeler, { dt: 1 / 60, pose: "kneel", t: 0.5 + i / 60 });
+  const knelt = kneeler.userData.rig.hips.position.y;
+  check("going down on one knee takes a moment, it does not snap",
+    standing - firstFrame < (standing - knelt) * 0.2 && knelt < standing - 0.2,
+    `${standing.toFixed(2)} → ${firstFrame.toFixed(2)} after a frame → ${knelt.toFixed(2)} m`);
+  stage.dispose();
+
+  // The labourer and the cement bag.
+  const { instance } = await boot("safetyMission");
+  const walker = instance.__test.walkers[0];
+  const w = walker.worker;
+  const bag = w.children.find((c) => c.isGroup && !c.userData?.rig && c !== w.userData.rig?.hips);
+  runFrames(2);
+  const piles = w.parent.children.filter((c) => c.userData?.loadStack);
+  const bagAt = () => {
+    w.parent.updateMatrixWorld(true);
+    return new THREE.Vector3().setFromMatrixPosition(bag.matrixWorld);
+  };
+  check("a bag comes from a stack and goes to one", piles.length >= 2, `${piles.length} stacks`);
+  runFrames(20);
+  const onStack = bagAt();
+  const nearest = (p) => Math.min(...piles.map((pile) => Math.hypot(pile.position.x - p.x, pile.position.z - p.z)));
+  check("before the hands are on it, it is on top of the stack, not in mid-air",
+    nearest(onStack) < 0.4 && onStack.y < 0.7, `${onStack.y.toFixed(2)} m up, ${nearest(onStack).toFixed(2)} m from a stack`);
+  let highest = 0;
+  let heldWhileWalking = Infinity;
+  let putDown = null;
+  for (let i = 0; i < 2400; i++) {
+    runFrames(1);
+    const p = bagAt();
+    highest = Math.max(highest, p.y);
+    if (walker.carrying && w.userData.gait?.blend > 0.9) heldWhileWalking = Math.min(heldWhileWalking, p.y);
+    if (!walker.carrying && bag.parent !== w && highest > 1) { putDown = p; break; }
+  }
+  check("it is lifted onto the shoulder and carried there",
+    heldWhileWalking > 1.35 && heldWhileWalking < 1.9, `carried at ${heldWhileWalking.toFixed(2)} m`);
+  check("and put down on the other stack, where it stays",
+    !!putDown && putDown.y < 0.7 && nearest(putDown) < 0.4,
+    putDown ? `${putDown.y.toFixed(2)} m up, ${nearest(putDown).toFixed(2)} m from a stack` : "never put down");
+  instance.dispose();
 }
 
 section("People on site walk about, and walk like people");

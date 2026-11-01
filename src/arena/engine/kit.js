@@ -2575,9 +2575,26 @@ export {
  * with the band of print across it.
  */
 export function buildCementBag(geo, mat) {
+  // A filled paper sack, not a box: full in the middle, pinched thin at
+  // the seams, with the printed panel on top.
+  const sack = new THREE.BoxGeometry(0.48, 0.15, 0.33, 8, 2, 6);
+  const p = sack.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const fx = Math.pow(Math.abs(p.getX(i)) / 0.24, 4);
+    const fz = Math.pow(Math.abs(p.getZ(i)) / 0.165, 4);
+    p.setY(i, p.getY(i) * (0.3 + 0.7 * (1 - fx) * (1 - fz)));
+  }
+  sack.computeVertexNormals();
   const group = new THREE.Group();
-  group.add(box(geo, mat.concrete, 0.46, 0.13, 0.32, 0, 0, 0));
-  group.add(box(geo, mat.white, 0.47, 0.135, 0.1, 0, 0, 0, { shadow: false }));
+  const body = new THREE.Mesh(sack, mat.concrete);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+  const label = new THREE.Mesh(geo.plane, mat.white);
+  label.scale.set(0.2, 0.16, 1);
+  label.rotation.x = -Math.PI / 2;
+  label.position.y = 0.0755;
+  group.add(label);
   return group;
 }
 

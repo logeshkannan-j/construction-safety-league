@@ -1317,7 +1317,7 @@ export function buildWorker(geo, mat, {
   role = "worker", vestColor = null, detail = "high",
   seed = null, shirt = null, trousers = null, sleeves = null,
   gloves = null, hair = null, moustache = null, build = null,
-  gender = "male", badge = null, braid = null, bindi = null,
+  gender = "male", badge = null, braid = null, bindi = null, stance = null,
 } = {}) {
   const r = rng(seed ?? nextSeed++);
   // "any" lets the seed decide, about one in three a woman, for crowds.
@@ -1691,6 +1691,12 @@ export function buildWorker(geo, mat, {
   // Each figure's own offset into the idle cycle, so a yard full of
   // people does not breathe in unison.
   group.userData.idleOffset = r() * 12;
+  // How they stand about when there is nothing to do. Somebody holding
+  // a clipboard keeps their arms down; everybody else is one of the
+  // usual ways, so a yard of people does not stand like dummies.
+  const roll = r();
+  group.userData.stance = stance || (arms[0].userData.board ? "relaxed"
+    : roll < 0.4 ? "relaxed" : roll < 0.6 ? "hips" : roll < 0.8 ? "folded" : "behind");
   group.userData.worker = { helmet, vest, harness, boots };
   group.userData.person = {
     gender: female ? "female" : "male",
@@ -1825,6 +1831,123 @@ function setArm(p, side, { flex = 0, out = 0.1, twist = 0, elbow = 0.15, wrist =
   p[`hand${L}`] = wrist;
 }
 
+/*
+ * An arm placed by where its hand goes, for poses where the hand has to
+ * land ON something — a hip, the other arm, a sack on the shoulder —
+ * which joint angles guessed one at a time never quite reach. `to` is
+ * the wrist relative to the shoulder joint and `pole` the way the elbow
+ * points, both written for the +X arm in the chest's frame; the -X arm
+ * mirrors them. Solved as a two-bone chain and turned into the angles
+ * the rig takes: the arm hangs down its local -Y and the elbow bends
+ * towards its local +Z.
+ */
+const UPPER_ARM = 0.29;
+const FOREARM = 0.255;
+const ik = {
+  t: new THREE.Vector3(), dir: new THREE.Vector3(), pole: new THREE.Vector3(),
+  n: new THREE.Vector3(), u: new THREE.Vector3(), f: new THREE.Vector3(),
+  w: new THREE.Vector3(), x: new THREE.Vector3(), y: new THREE.Vector3(),
+  m: new THREE.Matrix4(), q: new THREE.Quaternion(), e: new THREE.Euler(),
+};
+function reachArm(p, side, to, pole) {
+  const { t, dir, n, u, f, w, x, y, m, q, e } = ik;
+  t.set(to[0] * side, to[1], to[2]);
+  ik.pole.set(pole[0] * side, pole[1], pole[2]);
+  const a = UPPER_ARM;
+  const b = FOREARM;
+  const d = clamp(t.length(), Math.abs(a - b) + 0.01, (a + b) * 0.995);
+  dir.copy(t).normalize();
+  // How far the upper arm turns off the line to the hand, towards the pole.
+  const turn = Math.acos(clamp((a * a + d * d - b * b) / (2 * a * d), -1, 1));
+  n.crossVectors(dir, ik.pole).normalize();
+  u.copy(dir).applyAxisAngle(n, turn);
+  f.copy(dir).multiplyScalar(d).addScaledVector(u, -a).normalize();
+  const elbow = Math.acos(clamp(u.dot(f), -1, 1));
+  w.copy(f).addScaledVector(u, -u.dot(f)).normalize();
+  y.copy(u).negate();
+  x.crossVectors(y, w);
+  m.makeBasis(x, y, w);
+  q.setFromRotationMatrix(m);
+  e.setFromQuaternion(q, "XYZ");
+  const L = side < 0 ? "L" : "R";
+  p[`arm${L}x`] = e.x;
+  p[`arm${L}y`] = e.y;
+  p[`arm${L}z`] = e.z;
+  p[`elbow${L}`] = -elbow;
+}
+
+/** The ways people stand about, and how often. */
+export const STANCES = ["relaxed", "hips", "folded", "behind"];
+
+/*
+ * How somebody stands about. Not everybody hangs their arms at their
+ * sides: hands on hips, arms folded and hands clasped behind the back
+ * are all common on a site, and a yard of people all standing the same
+ * way reads as a yard of dummies.
+ */
+function applyStance(p, stance) {
+  switch (stance) {
+    case "hips":
+      reachArm(p, -1, [-0.03, -0.37, -0.05], [1, 0.15, -0.4]);
+      reachArm(p, 1, [-0.03, -0.37, -0.05], [1, 0.15, -0.4]);
+      p.spineX -= 0.04;
+      break;
+    case "folded":
+      // One forearm over the other in front of the chest.
+      reachArm(p, 1, [-0.21, -0.16, 0.19], [0.3, -1, 0.05]);
+      reachArm(p, -1, [-0.21, -0.2, 0.23], [0.3, -1, 0.05]);
+      p.headX -= 0.04;
+      break;
+    case "behind":
+      reachArm(p, -1, [-0.13, -0.45, -0.17], [0.5, -0.25, -1]);
+      reachArm(p, 1, [-0.12, -0.47, -0.17], [0.5, -0.25, -1]);
+      p.spineX -= 0.05;
+      p.headX -= 0.03;
+      break;
+    default:
+      break;
+  }
+}
+
+/*
+ * The arms (and the lean that goes with them) for holding a load:
+ *   front    in both hands at the chest — a box, a block
+ *   hug      clutched to the chest in both arms, a sack on its way up
+ *   shoulder a sack across the +X shoulder, that hand up on top of it,
+ *            the body leaning and the head tipping away from the weight
+ *   ahead    a stretcher handle in each hand, the stretcher in front
+ *   behind   the same, the stretcher behind: the one leading the carry
+ * Returns which arm is left free to swing (0 if none).
+ */
+function holdLoad(p, style) {
+  switch (style) {
+    case "shoulder":
+      reachArm(p, 1, [-0.02, 0.07, 0.15], [0.45, -1, 0.55]);
+      p.spineZ += 0.07;
+      p.spineX += 0.05;
+      p.headZ += 0.1;
+      return -1;
+    case "hug":
+      setArm(p, -1, { flex: 0.75, out: -0.1, elbow: 1.35 });
+      setArm(p, 1, { flex: 0.75, out: -0.1, elbow: 1.35 });
+      return 0;
+    case "ahead":
+      setArm(p, -1, { flex: 0.42, out: 0.16, elbow: 0.22 });
+      setArm(p, 1, { flex: 0.42, out: 0.16, elbow: 0.22 });
+      p.spineX += 0.06;
+      return 0;
+    case "behind":
+      setArm(p, -1, { flex: -0.26, out: 0.17, elbow: 0.1 });
+      setArm(p, 1, { flex: -0.26, out: 0.17, elbow: 0.1 });
+      p.spineX += 0.04;
+      return 0;
+    default:
+      setArm(p, -1, { flex: 1.2, out: -0.28, elbow: 0.85 });
+      setArm(p, 1, { flex: 1.2, out: -0.28, elbow: 0.85 });
+      return 0;
+  }
+}
+
 /** One frame of walking or running. `run` blends walk (0) to run (1). */
 function gaitPose(phase, { run = 0, carrying = false, crouch = false, stride = 1 }) {
   const p = blankPose();
@@ -1860,9 +1983,13 @@ function gaitPose(phase, { run = 0, carrying = false, crouch = false, stride = 1
   p.headX = -lerp(0.02, 0.14, run) - (crouch ? 0.2 : 0);
 
   if (carrying) {
-    setArm(p, -1, { flex: 1.15, out: -0.28, elbow: 0.85 });
-    setArm(p, 1, { flex: 1.15, out: -0.28, elbow: 0.85 });
-    p.spineX -= 0.1;
+    const style = carrying === true ? "front" : carrying;
+    const free = holdLoad(p, style);
+    if (style === "front") p.spineX -= 0.1;
+    if (!free) return p;
+    // The hand that is not on the load swings, less than it would.
+    const swing = (free < 0 ? -0.24 : 0.24) * c + 0.05;
+    setArm(p, free, { flex: swing, out: 0.12, elbow: 0.22 + Math.max(0, swing) });
     return p;
   }
   // Arms swing against the legs: the -X arm goes back as the -X leg
@@ -1880,8 +2007,12 @@ function gaitPose(phase, { run = 0, carrying = false, crouch = false, stride = 1
   return p;
 }
 
-/** A pose held still: standing, working, crouching and the rest. */
-function stillPose(pose, phase = 0) {
+/**
+ * A pose held still: standing, working, crouching and the rest. `carry`
+ * is how the "carry" pose holds its load, and `stance` how this person
+ * stands about in the "stand" one.
+ */
+function stillPose(pose, phase = 0, { carry = "front", stance = "relaxed" } = {}) {
   const p = blankPose();
   setLeg(p, -1, { hip: 1 * D, knee: 3 * D, out: 0.035 });
   setLeg(p, 1, { hip: -1 * D, knee: 3 * D, out: 0.035 });
@@ -1889,6 +2020,9 @@ function stillPose(pose, phase = 0) {
   setArm(p, 1, { flex: -0.02, out: 0.1, elbow: 0.13 });
 
   switch (pose) {
+    case "stand":
+      applyStance(p, stance);
+      break;
     case "work":
       // Hands together in front at waist height, head down at the job.
       setLeg(p, -1, { hip: 6 * D, knee: 9 * D, out: 0.06 });
@@ -1905,18 +2039,21 @@ function stillPose(pose, phase = 0) {
       p.headX = -0.32;
       break;
     case "carry":
-      setArm(p, -1, { flex: 1.25, out: -0.28, elbow: 0.85 });
-      setArm(p, 1, { flex: 1.25, out: -0.28, elbow: 0.85 });
-      p.spineX = -0.07;
+      holdLoad(p, carry);
+      if (carry === "front") p.spineX = -0.07;
       break;
     case "lift":
-      // A proper lift: knees bent, back straight, the load held close.
-      setLeg(p, -1, { hip: 72 * D, knee: 98 * D, ankle: 26 * D, out: 0.14 });
-      setLeg(p, 1, { hip: 72 * D, knee: 98 * D, ankle: 26 * D, out: 0.14 });
-      setArm(p, -1, { flex: 0.62, out: 0.05, elbow: 0.45 });
-      setArm(p, 1, { flex: 0.62, out: 0.05, elbow: 0.45 });
-      p.spineX = 0.36;
-      p.headX = -0.18;
+      // Bent to a load on the ground, the way lifting is taught: hips
+      // back, knees bent, the back straight but leaning in over the load,
+      // both hands down to it and the head up. It was a squat with the
+      // body bolt upright, like sitting on a chair that was not there.
+      p.hipsRotX = 0.45;
+      setLeg(p, -1, { hip: 91 * D, knee: 95 * D, ankle: 28 * D, out: 0.13 });
+      setLeg(p, 1, { hip: 88 * D, knee: 92 * D, ankle: 27 * D, out: 0.13 });
+      p.spineX = 0.35;
+      setArm(p, -1, { flex: 0.95, out: 0.07, elbow: 0.15 });
+      setArm(p, 1, { flex: 0.95, out: 0.07, elbow: 0.15 });
+      p.headX = -0.45;
       break;
     case "crouch":
       setLeg(p, -1, { hip: 88 * D, knee: 118 * D, ankle: 30 * D, out: 0.16 });
@@ -2070,27 +2207,38 @@ function mixPoses(a, b, w) {
  *                 easing in and out of a stride (default: all or none)
  * @param runBlend 0-1 walk to run, the same way
  * @param stride   longer steps for a faster walk (1 = normal)
+ * @param carrying how a load is held: true or "front", "shoulder",
+ *                 "ahead"/"behind" for the two ends of a stretcher
+ * @param from     a pose to come from (what this returned last time),
+ *                 and `mix` 0-1 how far from it into this one
+ * @returns        the still pose it applied, to come from next time
  */
 export function poseWorker(worker, {
   phase = 0, moving = false, pose = "stand", running = false, carrying = false,
-  t = null, blend = null, runBlend = null, stride = 1,
+  t = null, blend = null, runBlend = null, stride = 1, from = null, mix = 1,
 } = {}) {
   const rig = worker?.userData?.rig;
-  if (!rig) return;
+  if (!rig) return null;
 
-  const still = stillPose(pose, phase);
+  let still = stillPose(pose, phase, {
+    carry: typeof carrying === "string" ? carrying : "front",
+    stance: worker.userData.stance || "relaxed",
+  });
+  // On the way from another pose: part of the way there.
+  if (from && mix < 1) still = mixPoses(from, still, smooth(0, 1, mix));
   if (t !== null && Number.isFinite(t) && pose !== "climb") addLife(still, pose, t);
 
   const w = blend === null ? (moving ? 1 : 0) : clamp(blend, 0, 1);
   if (w <= 0 || pose === "climb") {
     applyPose(rig, still);
-    return;
+    return still;
   }
   const run = runBlend === null ? (running ? 1 : 0) : clamp(runBlend, 0, 1);
   const stepping = gaitPose(phase, { run, carrying, crouch: pose === "crouch", stride });
   // A little air under a runner at the top of each stride.
   stepping.lift = run * 0.03 * Math.max(0, Math.sin(2 * (phase + TAU * PHASE_OFFSET) - 0.6));
   applyPose(rig, mixPoses(still, stepping, w));
+  return still;
 }
 
 /*
@@ -2123,17 +2271,27 @@ export function animateWorker(worker, {
     g.climb += climbRate * step * 3.2;
     g.blend = 0;
     poseWorker(worker, { pose: "climb", phase: g.climb });
+    g.pose = "climb";
+    g.last = null;
     return;
   }
+  // A change of pose is a movement, not a cut: kneeling down, getting up
+  // or turning to fold the arms takes about half a second.
+  if (g.pose !== pose) {
+    g.from = g.pose === undefined ? null : g.last;
+    g.mix = 0;
+    g.pose = pose;
+  }
+  g.mix = Math.min(1, (g.mix ?? 1) + step / 0.5);
   const moving = speed > 0.25;
   g.blend += ((moving ? 1 : 0) - g.blend) * Math.min(1, step * 9);
   g.run += ((running && moving ? 1 : 0) - g.run) * Math.min(1, step * 5);
   if (g.blend < 0.003) g.blend = 0;
   g.phase += (speed / strideLength(speed, g.run)) * TAU * step;
   const stride = clamp(0.85 + speed * 0.07, 0.9, 1.15);
-  poseWorker(worker, {
+  g.last = poseWorker(worker, {
     phase: g.phase, moving: g.blend > 0, blend: g.blend, runBlend: g.run,
-    running, carrying, pose, t, stride,
+    running, carrying, pose, t, stride, from: g.from, mix: g.mix,
   });
 }
 
@@ -2154,13 +2312,23 @@ export function turnToward(object, heading, dt, rate = 10) {
  * rather than standing posed. The figure is marked self-animated so
  * the crowd animator leaves it alone.
  *
+ * With a `load`, a stop marked `carry: true` is where one is picked up
+ * and `carry: false` where it is put down, and both are done properly:
+ * a stack of the same thing stands in front of each, the figure bends
+ * to it (hips back, knees bent), takes the top one and lifts it onto
+ * the shoulder — the load following the hands up — and at the other
+ * end lowers it onto the stack and straightens up. It used to crouch
+ * with empty hands while the load appeared in mid-air at chest height.
+ *
  * @param route  [{x, z, pause?, pose?, carry?}] — pause in seconds at
- *               that stop, what to do while there ("work", "lift"...),
- *               and whether to carry something from there on
- * @param load   an object to hold in both hands while carrying — a
- *               bag of cement, a block — so carrying is not mime
+ *               that stop, what to do while there ("work"...), and
+ *               whether a load is picked up (true) or put down (false)
+ * @param load   the thing carried — a bag of cement, a block
+ * @param carryStyle "shoulder" (a sack) or "front" (in both hands)
  */
-export function createWalker(worker, route, { speed = 1.35, carrying = false, y = 0, load = null } = {}) {
+export function createWalker(worker, route, {
+  speed = 1.35, carrying = false, y = 0, load = null, carryStyle = "shoulder",
+} = {}) {
   worker.userData.selfAnimated = true;
   const stops = route.filter(Boolean);
   let index = 0;
@@ -2168,27 +2336,174 @@ export function createWalker(worker, route, { speed = 1.35, carrying = false, y 
   let carryNow = carrying;
   if (stops[0]) worker.position.set(stops[0].x, y, stops[0].z);
   if (stops[1]) worker.rotation.y = Math.atan2(stops[1].x - stops[0].x, stops[1].z - stops[0].z);
+
+  // Where the load rides, in the figure's own frame (it faces +Z). The
+  // shoulder is measured off the rig, so a shorter figure carries lower.
+  let held = null;
+  let size = null;
+  let piles = null;
+  let action = null;
   if (load) {
-    // Held at chest height in front, where the carry pose puts the hands.
-    load.position.set(0, 1.2, 0.36);
-    load.visible = false;
+    size = new THREE.Box3().setFromObject(load).getSize(new THREE.Vector3());
+    poseWorker(worker, { pose: "stand" });
+    worker.updateMatrixWorld(true);
+    const shoulder = worker.worldToLocal(new THREE.Vector3().setFromMatrixPosition(worker.userData.rig.armR.matrixWorld));
+    held = carryStyle === "shoulder"
+      ? {
+        at: new THREE.Vector3(shoulder.x - 0.03, shoulder.y + 0.05 + size.y / 2, 0.01),
+        rot: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2, -0.12)),
+      }
+      : { at: new THREE.Vector3(0, shoulder.y - 0.3, 0.34), rot: new THREE.Quaternion() };
     worker.add(load);
+    load.visible = carryNow;
+    load.position.copy(held.at);
+    load.quaternion.copy(held.rot);
   }
+
+  // A stack of loads in front of each stop where one is picked up or
+  // put down, cross-stacked the way bags are, so a load comes from
+  // somewhere and goes somewhere.
+  function stackPiles() {
+    const out = new Map();
+    stops.forEach((stop, i) => {
+      if (stop.carry === undefined) return;
+      const prev = stops[(i - 1 + stops.length) % stops.length];
+      const heading = Math.atan2(stop.x - prev.x, stop.z - prev.z);
+      const pile = new THREE.Group();
+      const layers = stop.carry ? 3 : 1;
+      for (let l = 0; l < layers; l++) {
+        [-1, 1].forEach((sign) => {
+          const bag = load.clone(true);
+          bag.visible = true;
+          if (l % 2 === 0) bag.position.set(sign * size.x * 0.52, size.y * (l + 0.5), 0);
+          else {
+            bag.position.set(0, size.y * (l + 0.5), sign * size.x * 0.52);
+            bag.rotation.y = Math.PI / 2;
+          }
+          pile.add(bag);
+        });
+      }
+      const reach = 0.62;
+      pile.position.set(stop.x + Math.sin(heading) * reach, y, stop.z + Math.cos(heading) * reach);
+      pile.rotation.y = heading;
+      pile.userData.loadStack = true;
+      worker.parent.add(pile);
+      // Which way to face it, and where the next load sits on top.
+      out.set(i, { pile, heading, top: new THREE.Vector3(pile.position.x, y + size.y * (layers + 0.5), pile.position.z) });
+    });
+    return out;
+  }
+
+  const ease = (v) => smooth(0, 1, v);
+  const carryPose = () => stillPose("carry", 0, { carry: carryStyle });
+
+  // Where a load is while it is in both hands: between the palms.
+  const palm = new THREE.Vector3();
+  const palms = new THREE.Vector3();
+  const sag = new THREE.Vector3(0, -0.03, 0);
+  function betweenHands() {
+    const rig = worker.userData.rig;
+    worker.updateMatrixWorld(true);
+    palms.set(0, 0, 0);
+    [rig.armL, rig.armR].forEach((arm) => {
+      palm.set(0, -0.07, 0.02);
+      arm.userData.hand.localToWorld(palm);
+      palms.add(worker.worldToLocal(palm));
+    });
+    return palms.multiplyScalar(0.5).add(sag);
+  }
+
+  // One frame of picking up (or, run backwards, putting down) at the
+  // pile in front: bend, take hold, bring it up to the chest in both
+  // arms, then swing it onto the shoulder — the way a sack is lifted.
+  function handle(k, spot, t) {
+    const bend = stillPose("lift");
+    const hug = stillPose("carry", 0, { carry: "hug" });
+    let p;
+    if (k < 0.32) p = mixPoses(stillPose("stand"), bend, ease(k / 0.32));
+    else if (k < 0.45) p = bend;
+    else if (k < 0.65) p = mixPoses(bend, hug, ease((k - 0.45) / 0.2));
+    else p = mixPoses(hug, carryPose(), ease((k - 0.65) / 0.2));
+    addLife(p, "lift", t);
+    applyPose(worker.userData.rig, p);
+    // The load stays on the stack until the hands are on it, then goes
+    // where they go — up to the chest — and over onto the shoulder.
+    if (k < 0.45) {
+      load.position.copy(spot);
+      load.quaternion.identity();
+      return p;
+    }
+    const inHands = betweenHands();
+    const over = ease((k - 0.65) / 0.2);
+    if (over > 0) {
+      load.position.lerpVectors(inHands, held.at, over);
+      load.position.y += Math.sin(Math.PI * over) * 0.08;
+    } else {
+      load.position.lerpVectors(spot, inHands, ease((k - 0.45) / 0.06));
+    }
+    load.quaternion.identity().slerp(held.rot, over);
+    return p;
+  }
+
   return {
     worker,
     get carrying() { return carryNow; },
     update(dt, t) {
       if (!stops.length) return;
+      if (load && !piles && worker.parent) piles = stackPiles();
       const here = stops[index];
+      const g = worker.userData.gait || (worker.userData.gait = { phase: 0, blend: 0, run: 0, climb: 0 });
       if (wait > 0) {
         wait -= dt;
-        // Picked up at the end of a stop, put down at the start of one.
-        if (load) load.visible = carryNow && wait < (here.pause ?? 1) * 0.35;
-        animateWorker(worker, { dt, speed: 0, pose: here.pose || "stand", t });
-        if (wait <= 0 && here.carry !== undefined) carryNow = here.carry;
+        const pause = here.pause ?? 1;
+        const k = clamp(1 - wait / pause, 0, 1);
+        if (load && piles?.has(index)) {
+          // Square up to the stack, and reach for where its top really is.
+          const { top, heading } = piles.get(index);
+          turnToward(worker, heading, dt, 6);
+          worker.updateMatrixWorld(true);
+          const spot = worker.worldToLocal(top.clone());
+          if (action === null) action = here.carry && !carryNow ? "pick" : !here.carry && carryNow ? "drop" : "none";
+          if (action === "pick") {
+            if (load.parent !== worker) worker.attach(load);
+            load.visible = true;
+            if (k >= 0.45) carryNow = true;
+            g.last = handle(k, spot, t);
+            g.pose = carryNow ? "carry" : "lift";
+            g.blend = 0;
+            if (wait <= 0) action = null;
+            return;
+          }
+          if (action === "drop") {
+            if (k < 0.45) {
+              g.last = handle(0.45 + (0.45 - k) / 0.45 * 0.4, spot, t);
+            } else {
+              // Let go: the load stays on the stack, and the figure
+              // straightens up without it.
+              if (carryNow) {
+                carryNow = false;
+                load.position.copy(spot);
+                load.quaternion.identity();
+                worker.parent.attach(load);
+              }
+              const p = mixPoses(stillPose("lift"), stillPose("stand"), ease((k - 0.5) / 0.35));
+              addLife(p, "lift", t);
+              applyPose(worker.userData.rig, p);
+              g.last = p;
+            }
+            g.pose = carryNow ? "carry" : "stand";
+            g.blend = 0;
+            if (wait <= 0) action = null;
+            return;
+          }
+        }
+        animateWorker(worker, {
+          dt, speed: 0, pose: carryNow ? "carry" : here.pose || "stand",
+          carrying: carryNow ? carryStyle : false, t,
+        });
+        if (wait <= 0) action = null;
         return;
       }
-      if (load) load.visible = carryNow;
       const next = stops[(index + 1) % stops.length];
       const dx = next.x - worker.position.x;
       const dz = next.z - worker.position.z;
@@ -2196,7 +2511,10 @@ export function createWalker(worker, route, { speed = 1.35, carrying = false, y 
       if (dist < 0.12) {
         index = (index + 1) % stops.length;
         wait = next.pause ?? 1.5;
-        animateWorker(worker, { dt, speed: 0, pose: next.pose || "stand", t });
+        action = null;
+        animateWorker(worker, {
+          dt, speed: 0, pose: carryNow ? "carry" : "stand", carrying: carryNow ? carryStyle : false, t,
+        });
         return;
       }
       const heading = Math.atan2(dx, dz);
@@ -2208,7 +2526,9 @@ export function createWalker(worker, route, { speed = 1.35, carrying = false, y 
       const v = Math.min(dist / Math.max(dt, 1e-3), speed * (0.25 + 0.75 * Math.max(0, Math.cos(off))));
       worker.position.x += Math.sin(worker.rotation.y) * v * dt;
       worker.position.z += Math.cos(worker.rotation.y) * v * dt;
-      animateWorker(worker, { dt, speed: v, carrying: carryNow, t });
+      animateWorker(worker, {
+        dt, speed: v, pose: carryNow ? "carry" : "stand", carrying: carryNow ? carryStyle : false, t,
+      });
     },
   };
 }

@@ -224,6 +224,16 @@ export function createERT(ctx) {
   let boardCarried = false;
   let casualtyOnBoard = false;
 
+  // Which end of the stretcher a rescuer has, the board ahead of them or
+  // behind. Each holds a handle low at either side, arms down, the way a
+  // stretcher is carried — not out in front of the chest like a tray.
+  const stretcherEnd = (w) => {
+    if (!boardCarried || (w !== bearerA && w !== bearerB)) return false;
+    const ahead = (board.position.x - w.position.x) * Math.sin(w.rotation.y)
+      + (board.position.z - w.position.z) * Math.cos(w.rotation.y);
+    return ahead > 0 ? "ahead" : "behind";
+  };
+
   /* ---- the beats of each response ---- */
   const inc = ctx.incident.position;
   const P = post;
@@ -434,10 +444,10 @@ export function createERT(ctx) {
           w.position.y += d.y * (step / flat);
           turnToward(w, Math.atan2(d.x, d.z), dt, 10);
         }
-        animateWorker(w, { dt, speed: m.speed, running: m.run, carrying: boardCarried && (w === bearerA || w === bearerB), t: t + w.userData.idleOffset });
+        animateWorker(w, { dt, speed: m.speed, running: m.run, carrying: stretcherEnd(w), t: t + w.userData.idleOffset });
       } else {
         if (Number.isFinite(m.face)) turnToward(w, m.face, dt, 6);
-        animateWorker(w, { dt, speed: 0, pose: m.pose, t: t + w.userData.idleOffset });
+        animateWorker(w, { dt, speed: 0, pose: m.pose, carrying: stretcherEnd(w), t: t + w.userData.idleOffset });
         if (m.cpr) {
           // Chest compressions: about two a second, arms locked straight.
           const rig = w.userData.rig;
