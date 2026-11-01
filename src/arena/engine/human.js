@@ -1744,7 +1744,7 @@ function stillPose(pose, phase = 0) {
       // Hands together in front at waist height, head down at the job.
       setLeg(p, -1, { hip: 6 * D, knee: 9 * D, out: 0.06 });
       setLeg(p, 1, { hip: 2 * D, knee: 7 * D, out: 0.06 });
-      setArm(p, -1, { flex: 0.62, out: -0.1, elbow: 1.05 });
+      setArm(p, -1, { flex: 0.7, out: -0.1, elbow: 1.05 });
       setArm(p, 1, { flex: 0.52, out: -0.16, elbow: 1.2 });
       p.spineX = 0.32;
       p.headX = 0.36;
@@ -2005,26 +2005,41 @@ export function turnToward(object, heading, dt, rate = 10) {
  * rather than standing posed. The figure is marked self-animated so
  * the crowd animator leaves it alone.
  *
- * @param route  [{x, z, pause?, pose?}] — pause in seconds at that stop,
- *               and what to do while there ("work", "stand"...)
+ * @param route  [{x, z, pause?, pose?, carry?}] — pause in seconds at
+ *               that stop, what to do while there ("work", "lift"...),
+ *               and whether to carry something from there on
+ * @param load   an object to hold in both hands while carrying — a
+ *               bag of cement, a block — so carrying is not mime
  */
-export function createWalker(worker, route, { speed = 1.35, carrying = false, y = 0 } = {}) {
+export function createWalker(worker, route, { speed = 1.35, carrying = false, y = 0, load = null } = {}) {
   worker.userData.selfAnimated = true;
   const stops = route.filter(Boolean);
   let index = 0;
   let wait = stops[0]?.pause ?? 1;
+  let carryNow = carrying;
   if (stops[0]) worker.position.set(stops[0].x, y, stops[0].z);
   if (stops[1]) worker.rotation.y = Math.atan2(stops[1].x - stops[0].x, stops[1].z - stops[0].z);
+  if (load) {
+    // Held at chest height in front, where the carry pose puts the hands.
+    load.position.set(0, 1.2, 0.36);
+    load.visible = false;
+    worker.add(load);
+  }
   return {
     worker,
+    get carrying() { return carryNow; },
     update(dt, t) {
       if (!stops.length) return;
       const here = stops[index];
       if (wait > 0) {
         wait -= dt;
+        // Picked up at the end of a stop, put down at the start of one.
+        if (load) load.visible = carryNow && wait < (here.pause ?? 1) * 0.35;
         animateWorker(worker, { dt, speed: 0, pose: here.pose || "stand", t });
+        if (wait <= 0 && here.carry !== undefined) carryNow = here.carry;
         return;
       }
+      if (load) load.visible = carryNow;
       const next = stops[(index + 1) % stops.length];
       const dx = next.x - worker.position.x;
       const dz = next.z - worker.position.z;
@@ -2044,7 +2059,7 @@ export function createWalker(worker, route, { speed = 1.35, carrying = false, y 
       const v = Math.min(dist / Math.max(dt, 1e-3), speed * (0.25 + 0.75 * Math.max(0, Math.cos(off))));
       worker.position.x += Math.sin(worker.rotation.y) * v * dt;
       worker.position.z += Math.cos(worker.rotation.y) * v * dt;
-      animateWorker(worker, { dt, speed: v, carrying, t });
+      animateWorker(worker, { dt, speed: v, carrying: carryNow, t });
     },
   };
 }

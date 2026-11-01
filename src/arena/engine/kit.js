@@ -1878,6 +1878,17 @@ export {
 } from "./human.js";
 
 /**
+ * A bag of cement, for somebody to carry: a sack, sagging a little,
+ * with the band of print across it.
+ */
+export function buildCementBag(geo, mat) {
+  const group = new THREE.Group();
+  group.add(box(geo, mat.concrete, 0.46, 0.13, 0.32, 0, 0, 0));
+  group.add(box(geo, mat.white, 0.47, 0.135, 0.1, 0, 0, 0, { shadow: false }));
+  return group;
+}
+
+/**
  * A door key, big enough to spot across a room.
  *
  * Deliberately oversized and bright: it is a thing the player has to

@@ -24,7 +24,7 @@ import {
   buildBarrier, buildSign, buildFireExtinguisher, buildElectricalPanel,
   buildExcavation, buildMaterialPallet, buildDebris, buildCableRun, buildPuddle,
   buildPPEStation, buildMaterialHoist, buildZoneMarker, buildSiteHut, makeHighlight,
-  collectWorkers, idleWorkers, animateWorker, turnToward,
+  collectWorkers, idleWorkers, animateWorker, turnToward, createWalker, buildCementBag,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { HAZARDS, SCORING, categoryOptions, actionOptions } from "./hazards.js";
@@ -451,6 +451,39 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   looseLadder.position.set(slabEdgeX - looseLength * Math.sin(LOOSE_LEAN) - 0.03, 0, 15.6);
   looseLadder.rotation.y = Math.PI / 2;
   scene.add(looseLadder);
+
+  /* --------------------------- people at work ---------------------------
+   * A site is not a set of statues. A labourer carries cement from the
+   * laydown area to the building and goes back for more; the site
+   * supervisor does the rounds between the welfare huts and the PPE
+   * store. Both are in full PPE, so neither is ever mistaken for one of
+   * the hazards, and their routes keep clear of every hazard spot. */
+  const walkers = [
+    createWalker(
+      buildWorker(geo, mat, { helmet: true, vest: true, sleeves: "long", gloves: true, seed: 4021 }),
+      [
+        { x: 12, z: -22.5, pause: 2.6, pose: "lift", carry: true },
+        { x: 7, z: -15 },
+        { x: 2.5, z: -8 },
+        { x: -1, z: -2.5, pause: 2.4, pose: "lift", carry: false },
+        { x: 3, z: -9.5 },
+        { x: 8, z: -16.5 },
+      ],
+      { speed: 1.25, load: buildCementBag(geo, mat) }
+    ),
+    createWalker(
+      buildWorker(geo, mat, { role: "officer", seed: 4022 }),
+      [
+        { x: -31, z: -21, pause: 3.5, pose: "stand" },
+        { x: -20, z: -26 },
+        { x: -10, z: -27.5, pause: 4, pose: "stand" },
+        { x: -15, z: -19 },
+        { x: -25, z: -16.5, pause: 2.5, pose: "stand" },
+      ],
+      { speed: 1.15 }
+    ),
+  ];
+  walkers.forEach((w) => scene.add(w.worker));
 
   /* ------------------------------ workers ------------------------------ */
 
@@ -1143,6 +1176,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       sun.target.updateMatrixWorld();
     }
 
+    walkers.forEach((w) => w.update(dt, stage.elapsed));
+
     // Cheap idle life: workers sway, beacons pulse and rotate.
     for (let i = 0; i < animated.length; i++) {
       const item = animated[i];
@@ -1213,7 +1248,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs to drive a real
     // playthrough headlessly. Nothing in the app reads this.
     __test: {
-      state, controller, hazards, scene, colliders, avatar,
+      state, controller, hazards, scene, colliders, avatar, walkers,
       zoomFov: () => camera.fov,
     },
   };

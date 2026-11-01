@@ -31,7 +31,7 @@ import {
   buildExcavation, buildGuardrail, buildLadder, buildLadderAgainst, buildScaffold,
   buildCableRun, buildPuddle, buildElectricalPanel, buildZoneMarker, buildDebris,
   collider,
-  collectWorkers, idleWorkers,
+  collectWorkers, idleWorkers, createWalker, buildCementBag,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { cameraScale } from "../../identity.js";
@@ -163,6 +163,34 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const muster = buildSign(geo, mat, { text: "MUSTER POINT", kind: "emergency", height: 2.4, width: 1.1 });
   muster.position.set(-16, 0, -22);
   scene.add(muster);
+
+  /* People going about their work, on routes well clear of all ten
+   * hazards so none of them is ever taken for one. */
+  const walkers = [
+    createWalker(
+      buildWorker(geo, mat, { helmet: true, vest: true, gloves: true, seed: 5031 }),
+      [
+        { x: -26, z: -20, pause: 2.5, pose: "lift", carry: true },
+        { x: -26.5, z: -4 },
+        { x: -25, z: 9 },
+        { x: -23.5, z: 21, pause: 3, pose: "lift", carry: false },
+        { x: -26, z: 4 },
+      ],
+      { speed: 1.25, load: buildCementBag(geo, mat) }
+    ),
+    createWalker(
+      buildWorker(geo, mat, { helmet: true, vest: true, helmetColor: "white", seed: 5032 }),
+      [
+        { x: 27, z: 14, pause: 3, pose: "stand" },
+        { x: 27.5, z: 0 },
+        { x: 26, z: -10, pause: 2.5, pose: "work" },
+        { x: 28, z: 4 },
+        { x: 23, z: 22, pause: 3, pose: "stand" },
+      ],
+      { speed: 1.2 }
+    ),
+  ];
+  walkers.forEach((w) => scene.add(w.worker));
 
   const animated = [];
   [[-18, 12, 0.6], [20, 4, 2.2], [11, -18, -1.1]].forEach(([wx, wz, rot]) => {
@@ -1034,6 +1062,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Nobody on this site stands perfectly still.
     idleWorkers(people, stage.elapsed);
+    walkers.forEach((w) => w.update(dt, stage.elapsed));
 
     input.endFrame();
   });
@@ -1079,7 +1108,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     __test: {
       camDistance: () => cam.distance,
       state, hazards, hazardById, inspect, answer, nextUnsolved,
-      walker, avatar, checkApproach, APPROACH_RADIUS,
+      walker, avatar, checkApproach, APPROACH_RADIUS, walkers,
       HAZARD_COUNT,
     },
   };

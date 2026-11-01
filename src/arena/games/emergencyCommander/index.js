@@ -498,6 +498,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const startZ = -18 + Math.random() * 40;
     worker.position.set(startX, 0, startZ);
     worker.rotation.y = Math.random() * 6;
+    // Walked by the evacuation below, so the idle animator leaves them be.
+    worker.userData.selfAnimated = true;
     scene.add(worker);
     const angle = (i / 16) * Math.PI * 2;
     crowd.push({
@@ -1243,27 +1245,32 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       casualty.rotation.z = 0.22 + Math.sin(stage.elapsed * 1.4) * 0.05 * (state.casualty / 100);
     }
 
-    // Workers walk to the muster point once the alarm has been raised.
+    // Workers walk to the muster point once the alarm has been raised —
+    // WALK: turning towards it, legs and arms going, at their own pace.
+    // They used to slide there bobbing up and down with their legs still.
     if (state.evacuating) {
       let arrived = 0;
       crowd.forEach((person) => {
-        if (person.arrived) { arrived += 1; return; }
         const object = person.object;
+        if (person.arrived) {
+          arrived += 1;
+          // Face the muster point, as a roll call does.
+          turnToward(object, Math.atan2(MUSTER.x - object.position.x, MUSTER.z - object.position.z), dt, 3);
+          animateWorker(object, { dt, speed: 0, t: stage.elapsed + person.phase });
+          return;
+        }
         const dx = person.target.x - object.position.x;
         const dz = person.target.z - object.position.z;
         const distance = Math.hypot(dx, dz);
         if (distance < 0.5) {
           person.arrived = true;
           arrived += 1;
-          object.rotation.y = Math.atan2(MUSTER.x - object.position.x, MUSTER.z - object.position.z) + Math.PI;
           return;
         }
+        turnToward(object, Math.atan2(dx, dz), dt, 6);
         object.position.x += (dx / distance) * person.speed * dt;
         object.position.z += (dz / distance) * person.speed * dt;
-        object.rotation.y = Math.atan2(dx, dz);
-        // A simple walk bob so they read as moving people.
-        person.phase += dt * 7;
-        object.position.y = Math.abs(Math.sin(person.phase)) * 0.05;
+        animateWorker(object, { dt, speed: person.speed, t: stage.elapsed + person.phase });
       });
       // The meter follows the actual crowd, so the number on screen is
       // the truth about the scene rather than a decoration.
@@ -1295,6 +1302,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Nobody on this site stands perfectly still.
     idleWorkers(people, stage.elapsed);
+    // Before the alarm the crowd is at work: alive, but not walking.
+    if (!state.evacuating) {
+      crowd.forEach((person) => animateWorker(person.object, { dt, speed: 0, t: stage.elapsed + person.phase }));
+    }
 
     input.endFrame();
   });

@@ -1052,6 +1052,65 @@ section("A walking character faces the way it is going");
   }
 }
 
+section("People on site walk about, and walk like people");
+
+/* "Make the game realistic with human movement." A site is people
+ * going about their work, not statues — and the evacuation crowd in
+ * Emergency Response did not walk at all: it slid to the muster point
+ * with the whole body bobbing up and down and the legs still. */
+{
+  for (const path of ["safetyMission", "safestTower"]) {
+    const { instance } = await boot(path);
+    const walkers = instance.__test.walkers || [];
+    check(`${path}: there are people going about their work`, walkers.length >= 2,
+      `${walkers.length} walking`);
+    const w = walkers[0]?.worker;
+    if (w) {
+      const from = w.position.clone();
+      let lo = Infinity;
+      let hi = -Infinity;
+      let carried = false;
+      let lowest = Infinity;
+      for (let i = 0; i < 600; i += 1) {
+        runFrames(1);
+        const leg = w.userData.rig.legL.rotation.x;
+        lo = Math.min(lo, leg);
+        hi = Math.max(hi, leg);
+        lowest = Math.min(lowest, w.position.y);
+        if (walkers[0].carrying && w.children.some((c) => !c.userData?.rig && c.visible && c.isGroup && c !== w.userData.rig?.hips)) carried = true;
+      }
+      const travelled = w.position.distanceTo(from);
+      check(`${path}: they cover ground`, travelled > 2, `${travelled.toFixed(1)} m in 10 s`);
+      check(`${path}: their legs stride as they go`, hi - lo > 0.5,
+        `legs swing ${(hi - lo).toFixed(2)} rad`);
+      check(`${path}: they stay on the ground`, Math.abs(lowest) < 0.001, `y ${lowest.toFixed(3)}`);
+      check(`${path}: what they carry is in their hands`, carried);
+    }
+    instance.dispose();
+  }
+
+  const { instance } = await boot("emergencyCommander");
+  const t = instance.__test;
+  t.state.evacuating = true;
+  const person = t.crowd[0].object;
+  const from = person.position.clone();
+  let lo = Infinity;
+  let hi = -Infinity;
+  let bob = 0;
+  for (let i = 0; i < 120; i += 1) {
+    runFrames(1);
+    const leg = person.userData.rig.legL.rotation.x;
+    lo = Math.min(lo, leg);
+    hi = Math.max(hi, leg);
+    bob = Math.max(bob, Math.abs(person.position.y));
+  }
+  check("the evacuating crowd moves off", person.position.distanceTo(from) > 1,
+    `${person.position.distanceTo(from).toFixed(1)} m`);
+  check("it walks — the legs stride", hi - lo > 0.5, `legs swing ${(hi - lo).toFixed(2)} rad`);
+  check("it does not bounce along with its legs still", bob < 0.001, `bobbed ${bob.toFixed(3)} m`);
+  instance.dispose();
+}
+
 section("Nobody on site stands perfectly still");
 
 {
@@ -1059,10 +1118,14 @@ section("Nobody on site stands perfectly still");
     const { instance } = await boot(path);
     runFrames(10);
 
+    // Everybody on screen except the player: the crowd animator's
+    // figures, AND the ones that animate themselves — people walking
+    // their rounds, an evacuating crowd. They all have to be alive.
     const scene = lastRenderer?.lastScene;
+    const player = instance.__test?.avatar;
     const people = [];
     scene?.traverse((o) => {
-      if (o.userData?.rig && !o.userData.selfAnimated) people.push(o);
+      if (o.userData?.rig && o !== player && o.visible) people.push(o);
     });
     check(`${id}: there are people in the scene`, people.length > 0, `${people.length}`);
 
