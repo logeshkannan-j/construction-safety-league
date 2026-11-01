@@ -995,7 +995,7 @@ section("The 3D model viewer has every model it lists, at a size a phone can tak
   const manifest = JSON.parse(fs.readFileSync(new URL("../src/arena/models.json", import.meta.url), "utf8"));
   const root = fileURLToPath(new URL(`../public/${manifest.base}`, import.meta.url));
   const files = [
-    manifest.worker.file, manifest.animated.file, manifest.rubble.obj, manifest.rubble.mtl,
+    manifest.animated.file, ...manifest.characters.map((c) => c.file), manifest.rubble.obj, manifest.rubble.mtl,
     ...Object.values(manifest.rubble.maps), ...manifest.props.map((p) => p.file),
   ];
   const missing = files.filter((f) => !fs.existsSync(path.join(root, f)));
@@ -1011,8 +1011,9 @@ section("The 3D model viewer has every model it lists, at a size a phone can tak
     /^public\/models\/$/m.test(fs.readFileSync(new URL("../.gitignore", import.meta.url), "utf8")));
   check("the four animations are the four clips of one rig",
     manifest.animated.clips.join(",") === "Walking,Fast Run,Angry,Snatch");
-  check("the worker scan is recorded as having no skeleton, with the fix",
-    manifest.worker.skeleton === false && manifest.worker.fix.length >= 2);
+  check("the worker scan is gone from the viewer, and its copy with it",
+    !("worker" in manifest) && !fs.existsSync(path.join(root, "worker.glb"))
+      && !/worker\.glb|WorkerScan/.test(fs.readFileSync(new URL("../src/arena/ModelViewer.jsx", import.meta.url), "utf8")));
 
   // The helper every model is placed with: real size, on the ground.
   const { fitTo } = await server.ssrLoadModule("/src/arena/ModelViewer.jsx");
@@ -1028,6 +1029,55 @@ section("The 3D model viewer has every model it lists, at a size a phone can tak
   check("and stood on the ground where it was put",
     Math.abs(b.min.y) < 1e-6 && Math.abs(c.x - 3) < 1e-6 && Math.abs(c.z + 2) < 1e-6,
     `foot ${b.min.y.toFixed(3)}, centre ${c.x.toFixed(2)}, ${c.z.toFixed(2)}`);
+
+  // Clips from one Mixamo rig on another: what lets a second character
+  // play Walking, Fast Run, Angry and Snatch off the same buttons.
+  const { retargetClips, boneBase } = await server.ssrLoadModule("/src/arena/ModelViewer.jsx");
+  check("Mixamo bones are matched on their name without the rig's prefix",
+    ["mixamorigLeftArm", "mixamorig1:LeftArm", "mixamorig7LeftArm", "mixamorigLeftArm_1", "LeftArm"]
+      .every((n) => boneBase(n) === "LeftArm"));
+  const makeRig = (prefix, hips, extra = []) => {
+    const rig = new THREE.Group();
+    const bone = (name, y, parent) => {
+      const b = new THREE.Bone();
+      b.name = `${prefix}${name}`;
+      b.position.set(0, y, 0);
+      parent.add(b);
+      return b;
+    };
+    const spine = bone("Spine", hips * 0.1, bone("Hips", hips, rig));
+    extra.forEach((n) => bone(n, hips * 0.05, spine));
+    return rig;
+  };
+  const source = makeRig("mixamorig", 100, ["LeftHandThumb4"]); // centimetres, with fingers
+  const target = makeRig("mixamorig1", 0.9); // metres, a shorter rig, no fingers
+  const bend = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4, 0, 0));
+  const walk = new THREE.AnimationClip("Walking", 1, [
+    new THREE.VectorKeyframeTrack("mixamorigHips.position", [0, 1], [0, 100, 0, 0, 96, 30]),
+    new THREE.QuaternionKeyframeTrack("mixamorigSpine.quaternion", [0, 1], [0, 0, 0, 1, ...bend.toArray()]),
+    new THREE.VectorKeyframeTrack("mixamorigSpine.position", [0, 1], [0, 10, 0, 0, 10, 0]),
+    new THREE.QuaternionKeyframeTrack("mixamorigLeftHandThumb4.quaternion", [0, 1], [0, 0, 0, 1, 0, 0, 0, 1]),
+  ]);
+  const moved = retargetClips([walk], source, target);
+  const [onTarget] = moved.clips;
+  check("the clip keeps its name and length on the other rig",
+    onTarget.name === "Walking" && onTarget.duration === 1);
+  check("its tracks drive the other rig's bones, by their own names",
+    onTarget.tracks.map((t) => t.name).sort().join(",") === "mixamorig1Hips.position,mixamorig1Spine.quaternion",
+    onTarget.tracks.map((t) => t.name).join(", "));
+  check("a bone the other rig does not have is left out, and counted",
+    moved.matched === 2 && moved.of === 3, `${moved.matched} of ${moved.of}`);
+  const mixer = new THREE.AnimationMixer(target);
+  mixer.clipAction(onTarget).play();
+  mixer.setTime(0.5);
+  const hips = target.getObjectByName("mixamorig1Hips");
+  const spine = target.getObjectByName("mixamorig1Spine");
+  check("the hips move to the other rig's scale, so a shorter rig in metres keeps its feet down",
+    Math.abs(hips.position.y - 0.882) < 1e-4 && Math.abs(hips.position.z - 0.135) < 1e-4,
+    `hips at ${hips.position.y.toFixed(4)}, ${hips.position.z.toFixed(4)}`);
+  check("each bone turns as the clip turns it",
+    spine.quaternion.angleTo(new THREE.Quaternion().slerp(bend, 0.5)) < 1e-4);
+  check("and keeps its own length", Math.abs(spine.position.y - 0.09) < 1e-9, `${spine.position.y}`);
 
   // The way in, from the Arena home.
   const { default: ArenaHome } = await server.ssrLoadModule("/src/arena/ui/ArenaHome.jsx");

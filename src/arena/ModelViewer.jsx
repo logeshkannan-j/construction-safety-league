@@ -7,13 +7,13 @@
  *
  *  What is in the scene comes from models.json:
  *
- *    the Mixamo character   the rig and mesh the four animations came
- *                           with, playing Walking, Fast Run, Angry or
- *                           Snatch — the buttons switch between them,
+ *    the Mixamo characters  the rig and mesh the four animations came
+ *                           with, and every rigged Mixamo character
+ *                           listed under "characters", which gets the
+ *                           same clips retargeted onto its own bones.
+ *                           One set of buttons switches all of them
+ *                           between Walking, Fast Run, Angry and Snatch,
  *                           with a short crossfade
- *    the worker scan        worker.glb. It has NO skeleton, so it is
- *                           shown standing, with what it would take to
- *                           animate it
  *    the rubble scan        model.obj through MTLLoader and OBJLoader,
  *                           then given a MeshStandardMaterial with the
  *                           diffuse, normal, roughness and AO maps
@@ -36,6 +36,9 @@ import MANIFEST from "./models.json";
 
 const BASE = `${import.meta.env?.BASE_URL || "/"}${MANIFEST.base}`;
 const urlOf = (file) => `${BASE}${file}`;
+
+/** The character the clips came with, then the others beside it. */
+const CHARACTERS = [MANIFEST.animated, ...(MANIFEST.characters || [])];
 
 /**
  * Scales an object so its height (or its largest footprint side) is
@@ -67,23 +70,115 @@ const shadowsOn = (object) => {
   return object;
 };
 
+/* --------------------- clips from one rig on another --------------------- */
+
+/**
+ * A Mixamo bone's name without the rig's prefix or the "_1" a loader
+ * gives a duplicate: "mixamorigLeftArm", "mixamorig1:LeftArm" and
+ * "mixamorigLeftArm_1" are all "LeftArm".
+ */
+export const boneBase = (name) => String(name).replace(/^mixamorig\d*[:_]?/i, "").replace(/_\d+$/, "");
+
+/**
+ * A rig's bones by base name. Where a loader has duplicated a bone the
+ * first is kept: it is the one a clip drives, and the copy hangs under it.
+ */
+function bonesByBase(root) {
+  const bones = new Map();
+  root.traverse((o) => {
+    if (o.isBone && !bones.has(boneBase(o.name))) bones.set(boneBase(o.name), o);
+  });
+  return bones;
+}
+
+/**
+ * How far a rig's hips stand from where they hang at rest. Read once and
+ * kept, because once a clip plays the hips are wherever it puts them.
+ */
+function restHips(root) {
+  if (root.userData.restHips === undefined) {
+    root.userData.restHips = bonesByBase(root).get("Hips")?.position.length() ?? 0;
+  }
+  return root.userData.restHips;
+}
+
+/** Without these a rig is not a Mixamo body the clips can move. */
+const CORE_BONES = ["Hips", "Spine", "Head", "LeftArm", "RightArm", "LeftUpLeg", "RightUpLeg"];
+
+/**
+ * Puts clips recorded on one Mixamo rig onto another. Mixamo names every
+ * bone the same way, so tracks are matched on the name without the rig's
+ * prefix. Every bone takes the clip's rotations; only the hips take its
+ * movement, scaled by how high the two rigs' hips stand, so a shorter or
+ * taller character keeps its feet on the ground. Tracks for bones the
+ * target does not have are left out.
+ *
+ * @returns {{ clips: THREE.AnimationClip[], matched: number, of: number }}
+ *          the clips, and how many of the bones they move were found
+ */
+export function retargetClips(clips, source, target) {
+  const from = bonesByBase(source);
+  const to = bonesByBase(target);
+  const k = restHips(source) > 0 ? restHips(target) / restHips(source) : 0;
+  const moved = new Set();
+  const found = new Set();
+  const out = clips.map((clip) => {
+    const tracks = [];
+    clip.tracks.forEach((track) => {
+      const { nodeName, propertyName } = THREE.PropertyBinding.parseTrackName(track.name);
+      const base = boneBase(nodeName);
+      if (from.has(base)) moved.add(base);
+      const bone = to.get(base);
+      const hipsMove = propertyName === "position" && base === "Hips" && k > 0;
+      if (!bone || (propertyName !== "quaternion" && !hipsMove)) return;
+      const copy = track.clone();
+      copy.name = `${bone.name}.${propertyName}`;
+      if (hipsMove) copy.values = copy.values.map((v) => v * k);
+      tracks.push(copy);
+      found.add(base);
+    });
+    return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+  });
+  return { clips: out, matched: found.size, of: moved.size };
+}
+
 /* ------------------------------ the models ------------------------------ */
 
-/** The Mixamo rig, playing whichever clip is chosen. */
-function MixamoCharacter({ clip, onRig }) {
-  const { scene, animations } = useGLTF(urlOf(MANIFEST.animated.file), false, true);
+/**
+ * A Mixamo character playing whichever clip is chosen. The clips are the
+ * four in mixamo-character.glb: that character plays them as they are,
+ * and any other gets them retargeted onto its own bones.
+ */
+function MixamoCharacter({ spec, clip, onRig }) {
+  const own = useGLTF(urlOf(spec.file), false, true);
+  const lib = useGLTF(urlOf(MANIFEST.animated.file), false, true);
   const root = useRef();
-  const object = useMemo(() => shadowsOn(fitTo(scene, { size: 1.8, by: "height", at: [0, 0, 0] })), [scene]);
-  const { actions, names } = useAnimations(animations, root);
+  const object = useMemo(() => {
+    restHips(own.scene); // before a clip moves them
+    return shadowsOn(fitTo(own.scene, { size: spec.size ?? 1.8, by: "height", at: spec.at ?? [0, 0, 0] }));
+  }, [own.scene, spec]);
+  const rig = useMemo(() => {
+    if (own.scene === lib.scene) {
+      const n = bonesByBase(own.scene).size;
+      return { clips: lib.animations, matched: n, of: n };
+    }
+    return retargetClips(lib.animations, lib.scene, own.scene);
+  }, [own.scene, lib.scene, lib.animations]);
+  const { actions } = useAnimations(rig.clips, root);
 
   useEffect(() => {
-    // Each of the character's two skinned meshes carries its own copy
-    // of the skeleton, and the loader keeps node names unique by adding
-    // "_1" to the copies — so bones are counted by their base name.
-    const bones = new Set();
-    object.traverse((o) => { if (o.isBone) bones.add(o.name.replace(/_\d+$/, "")); });
-    onRig?.({ clips: names, bones: [...bones] });
-  }, [object, names, onRig]);
+    // Each of a character's skinned meshes can carry its own copy of the
+    // skeleton, and the loader keeps node names unique by adding "_1" to
+    // the copies — so bones are counted once, by their base name.
+    const bones = bonesByBase(object);
+    onRig?.(spec.id, {
+      bones: [...bones.values()].map((b) => b.name),
+      clips: rig.clips.filter((c) => c.tracks.length).map((c) => c.name),
+      matched: rig.matched,
+      of: rig.of,
+      plays: CORE_BONES.every((b) => bones.has(b)),
+    });
+  }, [object, rig, spec.id, onRig]);
 
   useEffect(() => {
     const action = actions?.[clip];
@@ -93,27 +188,6 @@ function MixamoCharacter({ clip, onRig }) {
   }, [clip, actions]);
 
   return <primitive ref={root} object={object} />;
-}
-
-/** The worker scan: shown as it is, and checked for a skeleton. */
-function WorkerScan({ onChecked }) {
-  const { scene } = useGLTF(urlOf(MANIFEST.worker.file), false, true);
-  const object = useMemo(() => shadowsOn(fitTo(scene, { size: 1.75, by: "height", at: [2.4, 0, 0.2] })), [scene]);
-  useEffect(() => {
-    let bones = 0;
-    let skinned = 0;
-    let triangles = 0;
-    object.traverse((o) => {
-      if (o.isBone) bones += 1;
-      if (o.isSkinnedMesh) skinned += 1;
-      if (o.isMesh) {
-        const g = o.geometry;
-        triangles += (g.index ? g.index.count : g.attributes.position.count) / 3;
-      }
-    });
-    onChecked?.({ bones, skinned, triangles: Math.round(triangles) });
-  }, [object, onChecked]);
-  return <primitive object={object} />;
 }
 
 /**
@@ -223,11 +297,19 @@ function Progress() {
 }
 
 const LIST = [
-  { id: MANIFEST.animated.id, label: MANIFEST.animated.label, mb: MANIFEST.animated.mb },
-  { id: MANIFEST.worker.id, label: MANIFEST.worker.label, mb: MANIFEST.worker.mb },
+  ...CHARACTERS.map((c) => ({ id: c.id, label: c.label, mb: c.mb })),
   { id: MANIFEST.rubble.id, label: MANIFEST.rubble.label, mb: MANIFEST.rubble.mb },
   ...MANIFEST.props.map((p) => ({ id: p.id, label: p.label, mb: p.mb })),
 ];
+
+/** What the panel says about one character's rig. */
+function rigLine(spec, r) {
+  if (spec.id === MANIFEST.animated.id) return `${r.bones.length} bones, ${r.clips.length} clips.`;
+  if (!r.plays) return `${r.bones.length} bones, not a Mixamo skeleton, so the clips cannot move it.`;
+  return r.matched < r.of
+    ? `${r.bones.length} bones, plays the same ${r.clips.length} clips (${r.matched} of the ${r.of} bones they move are on this rig).`
+    : `${r.bones.length} bones, plays the same ${r.clips.length} clips.`;
+}
 
 /**
  * @param onBack   back to the Arena home
@@ -236,12 +318,13 @@ export default function ModelViewer({ onBack }) {
   const [clip, setClip] = useState(MANIFEST.animated.clips[0]);
   const [ao, setAo] = useState(true);
   const [status, setStatus] = useState({});
-  const [rig, setRig] = useState(null);
-  const [worker, setWorker] = useState(null);
+  const [rigs, setRigs] = useState({});
   const [showBones, setShowBones] = useState(false);
   const onStatus = useMemo(() => (id, value, detail) => {
     setStatus((s) => (s[id]?.value === value ? s : { ...s, [id]: { value, detail } }));
   }, []);
+  const onRig = useMemo(() => (id, info) => setRigs((r) => ({ ...r, [id]: info })), []);
+  const rigged = CHARACTERS.filter((c) => rigs[c.id]);
   const mobile = typeof window !== "undefined" && window.innerWidth < 760;
 
   const btn = (active) => ({
@@ -273,12 +356,11 @@ export default function ModelViewer({ onBack }) {
         </mesh>
         <ContactShadows position={[0, 0.01, 0]} scale={14} blur={2.4} opacity={0.5} far={6} />
 
-        <Slot id={MANIFEST.animated.id} onStatus={onStatus}>
-          <MixamoCharacter clip={clip} onRig={setRig} />
-        </Slot>
-        <Slot id={MANIFEST.worker.id} onStatus={onStatus}>
-          <WorkerScan onChecked={setWorker} />
-        </Slot>
+        {CHARACTERS.map((c) => (
+          <Slot key={c.id} id={c.id} onStatus={onStatus}>
+            <MixamoCharacter spec={c} clip={clip} onRig={onRig} />
+          </Slot>
+        ))}
         <Slot id={MANIFEST.rubble.id} onStatus={onStatus}>
           <RubbleScan ao={ao} />
         </Slot>
@@ -314,7 +396,7 @@ export default function ModelViewer({ onBack }) {
       }}>
         <section aria-label="Animations">
           <div style={{ fontWeight: 900, letterSpacing: 1, fontSize: 11, color: C.yellow, marginBottom: 8 }}>
-            ANIMATION · {MANIFEST.animated.label}
+            ANIMATION · {CHARACTERS.length > 1 ? "every character" : MANIFEST.animated.label}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {MANIFEST.animated.clips.map((name) => (
@@ -323,38 +405,27 @@ export default function ModelViewer({ onBack }) {
               </button>
             ))}
           </div>
-          {rig && (
+          {rigged.length > 0 && (
             <div style={{ color: C.muted, marginTop: 8, lineHeight: 1.5 }}>
-              <Bone size={13} style={{ verticalAlign: -2 }} /> Mixamo rig: {rig.bones.length} bones, {rig.clips.length} clips.{" "}
+              {rigged.map((c) => (
+                <div key={c.id} style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                  {rigs[c.id].plays
+                    ? <Bone size={13} style={{ flexShrink: 0, marginTop: 3 }} />
+                    : <AlertTriangle size={13} color={C.orange} style={{ flexShrink: 0, marginTop: 3 }} />}
+                  <span>{c.label}: {rigLine(c, rigs[c.id])}</span>
+                </div>
+              ))}
               <button type="button" onClick={() => setShowBones((v) => !v)}
                 style={{ background: "none", border: 0, color: C.blue || C.yellow, cursor: "pointer", padding: 0, fontSize: 12 }}>
                 {showBones ? "Hide bone names" : "Show bone names"}
               </button>
-              {showBones && (
-                <div style={{ marginTop: 6, fontFamily: "ui-monospace, monospace", fontSize: 11, lineHeight: 1.5 }}>
-                  {rig.bones.join(", ")}
+              {showBones && rigged.map((c) => (
+                <div key={c.id} style={{ marginTop: 6, fontFamily: "ui-monospace, monospace", fontSize: 11, lineHeight: 1.5 }}>
+                  {rigged.length > 1 && `${c.label}: `}{rigs[c.id].bones.join(", ")}
                 </div>
-              )}
+              ))}
             </div>
           )}
-        </section>
-
-        <section aria-label="The worker scan">
-          <div style={{ fontWeight: 900, letterSpacing: 1, fontSize: 11, color: C.orange, marginBottom: 6 }}>
-            WORKER.GLB · CAN IT ANIMATE?
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", lineHeight: 1.5 }}>
-            <AlertTriangle size={15} color={C.orange} style={{ flexShrink: 0, marginTop: 2 }} />
-            <span>
-              No skeleton.{" "}
-              {worker
-                ? `Checked in this browser: ${worker.bones} bones, ${worker.skinned} skinned meshes, ${worker.triangles.toLocaleString()} triangles.`
-                : `${MANIFEST.worker.triangles.toLocaleString()} triangles, 0 bones.`}
-            </span>
-          </div>
-          <ol style={{ margin: "8px 0 0", paddingLeft: 18, color: C.muted, lineHeight: 1.5 }}>
-            {MANIFEST.worker.fix.map((line) => <li key={line} style={{ marginBottom: 4 }}>{line}</li>)}
-          </ol>
         </section>
 
         <section aria-label="Rubble scan">
