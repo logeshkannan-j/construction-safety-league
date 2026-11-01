@@ -235,7 +235,10 @@ export function createERT(ctx) {
    * and walks or runs along it, turning to face where they go; at the
    * end they hold a pose. */
   const moves = new Map();
-  team.forEach((w) => moves.set(w, { route: [], speed: 0, run: false, pose: "stand", face: null, cpr: false }));
+  // On standby at the post: the leader on the radio, the others going over
+  // the kit together — not standing about.
+  const standby = new Map([[leader, "radio"], [medic, "talk"], [bearerA, "talk"], [bearerB, "talk"]]);
+  team.forEach((w) => moves.set(w, { route: [], speed: 0, run: false, pose: standby.get(w) || "stand", face: null, cpr: false }));
   const send = (w, route, { run = true, pose = "stand", face = null } = {}) => {
     const m = moves.get(w);
     m.route = route.map((p) => new THREE.Vector3(p[0], p[1] ?? 0, p[2]));
@@ -273,7 +276,8 @@ export function createERT(ctx) {
       : kind === "electrical"
         ? [[P.x + 4, 0, P.z - 7], [-20.5, 0, 0.6]]
         : [[P.x + 3, 0, P.z - 8], [-21.5, 0, -6.5]];
-    team.forEach((w, i) => send(w, [...wp, targets[i]], { pose: "stand" }));
+    // There: the leader reports in on the radio, the rest size it up together.
+    team.forEach((w, i) => send(w, [...wp, targets[i]], { pose: w === leader ? "radio" : "talk" }));
   };
 
   // Where the fall casualty is laid down: clear of the scaffold, on the
@@ -302,7 +306,8 @@ export function createERT(ctx) {
     place(leader, [aid.x + 6, 0, aid.z - 1.4]);
     const gate = ctx.gate || { x: aid.x + 40, z: aid.z };
     send(leader, [[aid.x + 2.4, 0, aid.z + 1.5]], {
-      run: false, pose: "stand", face: Math.atan2(gate.x - (aid.x + 2.4), gate.z - (aid.z + 1.5)),
+      // Watching the gate, on the radio to the ambulance.
+      run: false, pose: "radio", face: Math.atan2(gate.x - (aid.x + 2.4), gate.z - (aid.z + 1.5)),
     });
     ctx.shot({ center: [aid.x + 1, 0.7, aid.z + 0.3], yaw: -2.35, pitch: 0.36, distance: 9.5 });
   };
@@ -324,9 +329,10 @@ export function createERT(ctx) {
         board.position.set(ground.x + 1.3, 0.04, ground.z - 0.9);
         board.rotation.set(0, 0, 0);
         send(medic, [[ground.x - 0.72, 0, ground.z - 0.95]], { run: false, pose: "kneel", face: Math.PI / 2 });
-        send(leader, [[ground.x - 1.9, 0, ground.z - 2.2]], { run: false, pose: "stand", face: 0.7 });
-        send(bearerA, [[ground.x + 2.1, 0, ground.z - 2.4]], { run: false, pose: "stand", face: -0.6 });
-        send(bearerB, [[ground.x + 2.1, 0, ground.z + 0.3]], { run: false, pose: "stand", face: -2.4 });
+        // The leader calls the ambulance; the bearers get the board ready.
+        send(leader, [[ground.x - 1.9, 0, ground.z - 2.2]], { run: false, pose: "radio", face: 0.7 });
+        send(bearerA, [[ground.x + 2.1, 0, ground.z - 2.4]], { run: false, pose: "talk", face: -0.6 });
+        send(bearerB, [[ground.x + 2.1, 0, ground.z + 0.3]], { run: false, pose: "talk", face: -2.4 });
         ctx.shot({ center: [ground.x, 0.5, ground.z - 0.9], yaw: Math.PI - 0.45, pitch: 0.42, distance: 7.5 });
       },
       () => {
@@ -357,7 +363,8 @@ export function createERT(ctx) {
         extinguishers.forEach((e) => { e.visible = true; });
         send(bearerA, [[inc.x - 0.8, 0, inc.z + 5.8]], { run: false, pose: "work", face: Math.PI });
         send(bearerB, [[inc.x + 1.4, 0, inc.z + 5.8]], { run: false, pose: "work", face: Math.PI });
-        send(leader, [[inc.x + 4.6, 0, inc.z + 6.6]], { run: false, pose: "stand", face: Math.PI });
+        // The leader points them at the base of the fire.
+        send(leader, [[inc.x + 4.6, 0, inc.z + 6.6]], { run: false, pose: "point", face: Math.PI });
         ctx.shot({ center: [inc.x + 0.3, 1.6, inc.z + 4], yaw: 0.5, pitch: 0.3, distance: 13 });
       },
       () => {
@@ -366,7 +373,8 @@ export function createERT(ctx) {
       },
       () => {
         sprays.forEach((spray) => { spray.visible = false; });
-        send(leader, [[inc.x + 6.5, 0, inc.z + 4.6]], { run: false, pose: "stand", face: -Math.PI / 2 });
+        // Out: the leader reports it on the radio.
+        send(leader, [[inc.x + 6.5, 0, inc.z + 4.6]], { run: false, pose: "radio", face: -Math.PI / 2 });
         ctx.shot({ center: [inc.x + 1, 2, inc.z + 2], yaw: 0.3, pitch: 0.45, distance: 20 });
       },
       () => {
@@ -375,7 +383,9 @@ export function createERT(ctx) {
         extinguishers.forEach((e) => { e.visible = false; });
         team.forEach((w, i) => {
           place(w, [muster.x - 5 + i * 0.9, 0, muster.z - 9 - i * 0.5]);
-          send(w, [[muster.x - 1.8 + i * 1.2, 0, muster.z - 2.6]], { run: false, pose: "stand", face: 0 });
+          send(w, [[muster.x - 1.8 + i * 1.2, 0, muster.z - 2.6]], {
+            run: false, pose: w === leader ? "radio" : "talk", face: 0,
+          });
         });
         ctx.shot({ center: [muster.x, 1, muster.z - 2.4], yaw: Math.PI - 0.35, pitch: 0.3, distance: 13 });
       },
@@ -391,9 +401,10 @@ export function createERT(ctx) {
         const top = ctx.stair.top;
         team.forEach((w, i) => place(w, [top.x + 0.6, top.y, top.z + i * 0.5]));
         send(leader, [[top.x + 3, top.y, inc.z - 3], [inc.x + 6.2, inc.y, inc.z - 2]], { pose: "work", face: Math.PI / 2 });
-        send(medic, [[top.x + 3, top.y, inc.z - 2], [inc.x - 2.2, inc.y, inc.z - 1.2]], { pose: "stand", face: 1.2 });
-        send(bearerA, [[top.x + 3, top.y, inc.z - 1], [inc.x - 3, inc.y, inc.z + 1.6]], { pose: "stand", face: 1.6 });
-        send(bearerB, [[top.x + 3, top.y, inc.z], [inc.x - 3.4, inc.y, inc.z - 0.4]], { pose: "stand", face: 1.4 });
+        // The rest keep everyone back until the power is off.
+        send(medic, [[top.x + 3, top.y, inc.z - 2], [inc.x - 2.2, inc.y, inc.z - 1.2]], { pose: "talk", face: 1.2 });
+        send(bearerA, [[top.x + 3, top.y, inc.z - 1], [inc.x - 3, inc.y, inc.z + 1.6]], { pose: "talk", face: 1.6 });
+        send(bearerB, [[top.x + 3, top.y, inc.z], [inc.x - 3.4, inc.y, inc.z - 0.4]], { pose: "talk", face: 1.4 });
         // The two who were about to grab him step back.
         (ctx.mates || []).forEach((m, i) => {
           m.position.x -= 1.6;
@@ -470,6 +481,8 @@ export function createERT(ctx) {
       c.rotation.order = "YXZ";
       c.rotation.set(-Math.PI / 2, 0, 0);
       c.position.set(ground.x, 0.14, ground.z);
+      // Down, and still: no more struggling.
+      c.userData.pose = "stand";
       if (ctx.lanyard) ctx.lanyard.visible = false;
     }
     if (kind === "fire" && b >= 2 && ctx.fire) {
@@ -488,13 +501,13 @@ export function createERT(ctx) {
     }
     if (kind !== "fire" && b === 4 && boardCarried
       && !moves.get(bearerA).route.length && !moves.get(bearerB).route.length) {
-      // At the post: the board down on the ground, and the bearers stand
+      // At the post: the board down on the ground, and the bearers step
       // back. The first aider is already on her knees beside him.
       boardCarried = false;
       board.position.set(aid.x, 0.04, aid.z);
       board.rotation.set(0, Math.PI / 2, 0);
-      send(bearerA, [[aid.x - 1.6, 0, aid.z - 1.2]], { run: false, pose: "stand", face: 0.8 });
-      send(bearerB, [[aid.x + 1.5, 0, aid.z - 1.3]], { run: false, pose: "stand", face: -0.7 });
+      send(bearerA, [[aid.x - 1.6, 0, aid.z - 1.2]], { run: false, pose: "talk", face: 0.8 });
+      send(bearerB, [[aid.x + 1.5, 0, aid.z - 1.3]], { run: false, pose: "talk", face: -0.7 });
       if (aed) {
         aed.visible = true;
         aed.position.set(aid.x + 0.25, 0.02, aid.z + 0.62);

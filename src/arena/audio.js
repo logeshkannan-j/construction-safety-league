@@ -63,6 +63,7 @@ export function setVolume(v) {
 }
 
 export function isSoundEnabled() { return enabled; }
+export function getVolume() { return volume; }
 
 /* --------------------------- primitives --------------------------- */
 

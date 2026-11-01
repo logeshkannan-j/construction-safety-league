@@ -478,11 +478,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       // The site's safety engineer doing her rounds.
       buildWorker(geo, mat, { role: "officer", gender: "female", seed: 4022 }),
       [
-        { x: -31, z: -21, pause: 3.5, pose: "stand" },
+        { x: -31, z: -21, pause: 3.5, pose: "write" },
         { x: -20, z: -26 },
-        { x: -10, z: -27.5, pause: 4, pose: "stand" },
+        { x: -10, z: -27.5, pause: 4, pose: "radio" },
         { x: -15, z: -19 },
-        { x: -25, z: -16.5, pause: 2.5, pose: "stand" },
+        { x: -25, z: -16.5, pause: 2.5, pose: "write" },
       ],
       { speed: 1.15 }
     ),
@@ -523,15 +523,16 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     -12, scaffold.platforms[2].y, BUILDING.z - BUILDING.depth / 2 - 1.4, 0
   );
   const workerUnderLoad = placeWorker(
-    { helmet: true, vest: true, pose: "stand" }, 22, 0, 2, 1.1
+    // The banksman, signalling the lift — from right under the load.
+    { helmet: true, vest: true, pose: "signal" }, 22, 0, 2, 1.1
   );
 
   // Compliant workers, so "missing PPE" is a judgement and not just
   // "the only person on site".
   placeWorker({ helmet: true, vest: true, task: "carpentry", helmetColor: "blue" }, 6, 0, -18, -1.2);
-  placeWorker({ helmet: true, vest: true, pose: "stand", helmetColor: "white", skin: "dark" }, -30, 0, 10, 0.6);
+  placeWorker({ helmet: true, vest: true, pose: "write", helmetColor: "white", skin: "dark" }, -30, 0, 10, 0.6);
   placeWorker({ helmet: true, vest: true, harness: true, task: "rebar" }, -14, frame.floors[1].y, 14, 1.8);
-  placeWorker({ helmet: true, vest: true, pose: "stand", helmetColor: "orange" }, 16, 0, 18, -2.4);
+  placeWorker({ helmet: true, vest: true, pose: "radio", helmetColor: "orange" }, 16, 0, 18, -2.4);
 
   // The site's debris is where a tidy site keeps it: in marked scrap
   // yards by the hoarding, well clear of every hazard, so a heap of

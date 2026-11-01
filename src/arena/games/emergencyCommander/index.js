@@ -43,6 +43,7 @@ import {
 import { buildTask, placeTask } from "../../engine/tasks.js";
 import { debrisYard, scatterDebris } from "../../engine/debris.js";
 import { sfx } from "../../audio.js";
+import { createVoices } from "../../voice.js";
 import { PHASES, SCORING, pickScenario } from "./scenarios.js";
 import { createERT } from "./ert.js";
 import {
@@ -432,7 +433,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     incident.position.set(BUILDING.x + 4, liftY, BUILDING.z - BUILDING.depth / 2 - 1.4);
 
     // The casualty hanging in his harness below the lift.
-    casualty = buildWorker(geo, mat, { helmet: true, vest: true, harness: true, pose: "stand" });
+    // Conscious, hanging in his harness: struggling, and shouting for help.
+    casualty = buildWorker(geo, mat, { helmet: true, vest: true, harness: true, pose: "struggle" });
     casualty.position.set(incident.position.x, incident.position.y - 2.4, incident.position.z - 1.4);
     casualty.rotation.z = 0.22;
     incident.objects.add(casualty);
@@ -539,6 +541,33 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
   }
 
+  /* What the workforce is doing when the player arrives: the incident has
+   * just happened, and nobody is just standing about. The nearest few saw
+   * it and are calling for help — waving, pointing, shouting. The rest
+   * have stopped to look: on the phone, on the radio, talking about it
+   * with whoever is nearest. Once the ERT is on it they stop calling for
+   * help and talk it over; once the alarm goes they point the way out,
+   * and when the evacuation is called they walk to the muster point. */
+  const fromIncident = (p) => Math.hypot(p.x - incident.position.x, p.z - incident.position.z);
+  const REACTIONS = ["phone", "talk", "radio", "talk", "point", "phone", "talk", "radio"];
+  [...crowd]
+    .sort((a, b) => fromIncident(a.object.position) - fromIncident(b.object.position))
+    .forEach((person, i) => {
+      person.witness = i < 4;
+      person.action = person.witness ? (i % 2 === 0 ? "wave" : "point") : REACTIONS[i % REACTIONS.length];
+      person.afterAlarm = i % 2 === 0 ? "point" : "talk";
+      // At the muster point, waiting for the roll call: talking it over,
+      // phoning the office, home.
+      person.atMuster = i % 3 === 1 ? "phone" : "talk";
+      person.shoutIn = 0.8 + Math.random() * 5;
+    });
+  crowd.forEach((person) => {
+    person.partner = crowd
+      .filter((other) => other !== person)
+      .reduce((best, other) => (!best || other.object.position.distanceTo(person.object.position)
+        < best.object.position.distanceTo(person.object.position) ? other : best), null);
+  });
+
   // The ambulance, which drives in through the nominated gate once the
   // emergency services have been called properly.
   const ambulance = new THREE.Group();
@@ -607,6 +636,45 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     muster: MUSTER,
     shot: (s) => siteView.playTour([{ ...s, seconds: 1.6, step: null }], { loop: true }),
   });
+
+  // What people shout, in the player's language, louder the nearer they are.
+  const voices = createVoices({ lang: getLang });
+  let casualtyShoutIn = 1.2;
+  const mateShoutIn = [2.2, 4.4];
+
+  /** Who shouts what, while it matters. */
+  function shoutAbout(dt) {
+    if (state.finished || state.cutscene) return;
+    const me = commander.position;
+    const from = (p) => Math.hypot(p.x - me.x, p.z - me.z);
+    // The man in the harness, until the ERT gets to him.
+    if (scenario.scene === "fall" && casualty && !ert.played) {
+      casualtyShoutIn -= dt;
+      if (casualtyShoutIn <= 0) casualtyShoutIn = voices.shout("help", from(casualty.position), { pitch: 1.35, now: stage.elapsed * 1000 }) ? 5 + Math.random() * 3 : 0.7;
+    }
+    // The two beside the electrical casualty.
+    if (scenario.scene === "electrical" && !ert.played) {
+      mates.forEach((mate, i) => {
+        mateShoutIn[i] -= dt;
+        if (mateShoutIn[i] <= 0) mateShoutIn[i] = voices.shout("help", from(mate.getWorldPosition(new THREE.Vector3())), { now: stage.elapsed * 1000 }) ? 6 + Math.random() * 4 : 0.9;
+      });
+    }
+    // Witnesses, until help comes — the ERT, or the alarm; then
+    // "Emergency!" as people go.
+    crowd.forEach((person) => {
+      person.shoutIn -= dt;
+      if (person.shoutIn > 0) return;
+      let kind = null;
+      if (!state.alarmRaised && !ert.played && person.witness) {
+        kind = scenario.scene === "fire"
+          ? (Math.random() < 0.55 ? "fire" : "emergency")
+          : (Math.random() < 0.6 ? "help" : "emergency");
+      } else if (state.alarmRaised && !person.arrived && Math.random() < 0.3) {
+        kind = "emergency";
+      }
+      person.shoutIn = kind && voices.shout(kind, from(person.object.position), { now: stage.elapsed * 1000 }) ? 6 + Math.random() * 6 : 1 + Math.random() * 2;
+    });
+  }
 
   /* ============================ game state ============================ */
 
@@ -961,6 +1029,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     });
     if (!started) return;
     state.cutscene = true;
+    voices.stop();
     showMarkers(false);
     input.setEnabled(false);
   }
@@ -1312,7 +1381,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
           arrived += 1;
           // Face the muster point, as a roll call does.
           turnToward(object, Math.atan2(MUSTER.x - object.position.x, MUSTER.z - object.position.z), dt, 3);
-          animateWorker(object, { dt, speed: 0, t: stage.elapsed + person.phase });
+          animateWorker(object, { dt, speed: 0, pose: person.atMuster, t: stage.elapsed + person.phase });
           return;
         }
         const dx = person.target.x - object.position.x;
@@ -1365,8 +1434,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     idleWorkers(people, stage.elapsed);
     // Before the alarm the crowd is at work: alive, but not walking.
     if (!state.evacuating) {
-      crowd.forEach((person) => animateWorker(person.object, { dt, speed: 0, t: stage.elapsed + person.phase }));
+      crowd.forEach((person) => {
+        const o = person.object;
+        // What they first did, until help comes; then the next thing.
+        const pose = state.alarmRaised || ert.played ? person.afterAlarm : person.action;
+        // Facing what has happened — or the one they are talking to — and
+        // once the alarm goes, the way out.
+        const look = state.alarmRaised ? MUSTER
+          : pose === "talk" && person.partner ? person.partner.object.position : incident.position;
+        turnToward(o, Math.atan2(look.x - o.position.x, look.z - o.position.z), dt, 2.5);
+        animateWorker(o, { dt, speed: 0, pose, t: stage.elapsed + person.phase });
+      });
     }
+    shoutAbout(dt);
 
     input.endFrame();
   });
@@ -1401,10 +1481,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       // decision timer automatically and no adjustment is needed here.
       stage.setPaused(!!value);
       input.setEnabled(!value && !state.cutscene);
+      if (value) voices.stop();
     },
 
     dispose() {
       stopLangWatch();
+      voices.dispose();
       state.disposed = true;
       clearPendingTimers();
       siteView.dispose();
@@ -1417,9 +1499,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       walker: commander, avatar, bearingToNext, stationMarkers, camera,
       camDistance: () => boom,
       zoomFov: () => camera.fov,
-      state, scenario, crowd, ert, casualty,
+      state, scenario, crowd, ert, casualty, incident, MUSTER,
       fire: fireGroup,
-      STATIONS, STATION_COUNT,
+      STATIONS, STATION_COUNT, mates,
       actOnStation, enterHazard, nextRequiredPhase,
       stationMarkers,
     },

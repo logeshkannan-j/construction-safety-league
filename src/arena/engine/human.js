@@ -1686,6 +1686,9 @@ export function buildWorker(geo, mat, {
     hips, spine, neck, head,
     legL: legs[0], legR: legs[1], armL: arms[0], armR: arms[1],
   };
+  // What a radio, phone or clipboard is made from, if an action calls
+  // for one (see HELD).
+  group.userData.kit = { geo, mat };
   group.userData.role = role;
   group.userData.pose = pose;
   // Each figure's own offset into the idle cycle, so a yard full of
@@ -1948,6 +1951,62 @@ function holdLoad(p, style) {
   }
 }
 
+/*
+ * What some actions are done with, made the first time they are needed
+ * and shown only while that action is: a radio, a phone, a clipboard. A
+ * worker built by buildWorker carries the kit to make them.
+ */
+const HELD = {
+  radio(geo, mat) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(geo.box, mat.black);
+    body.scale.set(0.055, 0.13, 0.035);
+    body.position.set(0, -0.11, 0.02);
+    g.add(body);
+    const aerial = new THREE.Mesh(geo.cylLow || geo.cyl, mat.black);
+    aerial.scale.set(0.012, 0.09, 0.012);
+    aerial.position.set(0.015, -0.21, 0.02);
+    g.add(aerial);
+    return { hand: "R", object: g };
+  },
+  phone(geo, mat) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(geo.box, mat.black);
+    body.scale.set(0.07, 0.14, 0.012);
+    body.position.set(0, -0.1, 0.035);
+    g.add(body);
+    return { hand: "R", object: g };
+  },
+  write(geo, mat, worker) {
+    // An officer already carries a clipboard.
+    if (worker.userData.rig.armL.userData.board) return null;
+    const g = new THREE.Group();
+    const board = new THREE.Mesh(geo.box, mat.timber);
+    board.scale.set(0.22, 0.3, 0.012);
+    board.position.set(0, -0.15, 0.04);
+    g.add(board);
+    const paper = new THREE.Mesh(geo.box, mat.white);
+    paper.scale.set(0.19, 0.24, 0.004);
+    paper.position.set(0, -0.16, 0.049);
+    g.add(paper);
+    return { hand: "L", object: g };
+  },
+};
+
+function syncHeld(worker, pose) {
+  const held = worker.userData.held || (worker.userData.held = {});
+  const kit = worker.userData.kit;
+  if (HELD[pose] && held[pose] === undefined && kit) {
+    const made = HELD[pose](kit.geo, kit.mat, worker);
+    held[pose] = made ? made.object : null;
+    if (made) {
+      const arm = made.hand === "L" ? worker.userData.rig.armL : worker.userData.rig.armR;
+      arm.userData.hand.add(made.object);
+    }
+  }
+  for (const k in held) if (held[k]) held[k].visible = k === pose;
+}
+
 /** One frame of walking or running. `run` blends walk (0) to run (1). */
 function gaitPose(phase, { run = 0, carrying = false, crouch = false, stride = 1 }) {
   const p = blankPose();
@@ -2063,6 +2122,55 @@ function stillPose(pose, phase = 0, { carry = "front", stance = "relaxed" } = {}
       p.spineX = 0.42;
       p.headX = -0.25;
       break;
+    case "wave":
+      // Calling for help: both arms up and waving over the head.
+      setArm(p, -1, { flex: 2.75, out: 0.5, elbow: 0.25 });
+      setArm(p, 1, { flex: 2.75, out: 0.5, elbow: 0.25 });
+      p.headX = -0.18;
+      break;
+    case "point":
+      // Pointing at it, the other hand cupped at the mouth, shouting.
+      setArm(p, 1, { flex: 1.45, out: 0.14, elbow: 0.06 });
+      reachArm(p, -1, [-0.15, 0.17, 0.13], [0.6, -1, 0.3]);
+      p.headX = -0.1;
+      break;
+    case "signal":
+      // A banksman's signal to the crane: the hand up over the head, finger
+      // up, circling for "hoist", eyes on the load.
+      reachArm(p, 1, [0.06, 0.46, 0.08], [1, -0.25, 0]);
+      p.headX = -0.42;
+      break;
+    case "write":
+      // Checking a clipboard: held up in one hand, writing with the other,
+      // head down over it.
+      reachArm(p, -1, [0.05, -0.24, 0.29], [0.35, -1, -0.2]);
+      reachArm(p, 1, [-0.19, -0.2, 0.3], [0.45, -1, -0.1]);
+      p.headX = 0.42;
+      p.spineX = 0.06;
+      break;
+    case "radio":
+      // Talking on a radio, held up at the mouth.
+      reachArm(p, 1, [-0.16, 0.17, 0.13], [0.5, -1, 0.4]);
+      p.headX = 0.04;
+      break;
+    case "phone":
+      // On the phone, at the ear, head tipped to it.
+      reachArm(p, 1, [-0.09, 0.22, 0.03], [0.6, -1, 0.1]);
+      p.headZ = 0.12;
+      break;
+    case "talk":
+      // Talking with somebody: a hand up, making the point.
+      setArm(p, 1, { flex: 0.6, out: 0.14, elbow: 1.3 });
+      break;
+    case "struggle":
+      // Hanging in a harness: arms up for the lanyard, legs looking for
+      // something to stand on.
+      setArm(p, -1, { flex: 2.6, out: 0.3, elbow: 0.5 });
+      setArm(p, 1, { flex: 2.7, out: 0.25, elbow: 0.4 });
+      setLeg(p, -1, { hip: 20 * D, knee: 32 * D, out: 0.05 });
+      setLeg(p, 1, { hip: 6 * D, knee: 16 * D, out: 0.05 });
+      p.headX = -0.42;
+      break;
     case "tie":
       // Crouched over work on the ground — tying bars, nailing a sheet:
       // the back leaning in and both hands down at it.
@@ -2139,6 +2247,49 @@ function addLife(p, pose, t) {
   } else if (pose === "reach") {
     p.armLx += Math.sin(t * 1.7) * 0.08;
     p.armRx -= Math.sin(t * 1.7 + 1) * 0.08;
+  } else if (pose === "wave") {
+    // Frantic: both arms sweeping across over the head.
+    const sweep = Math.sin(t * 7.5);
+    p.armLz -= sweep * 0.32;
+    p.armRz -= sweep * 0.32;
+    p.headY += sweep * 0.08;
+  } else if (pose === "point") {
+    // Jabbing at it while shouting.
+    const jab = Math.max(0, Math.sin(t * 5.5));
+    p.armRx -= jab * 0.12;
+    p.headX -= jab * 0.05;
+  } else if (pose === "signal") {
+    // Small circles with the raised hand: "hoist".
+    p.armRx += Math.sin(t * 6) * 0.12;
+    p.armRz += Math.cos(t * 6) * 0.12;
+  } else if (pose === "write") {
+    // Writing, in bursts, and now and then looking up from the board.
+    const busy = smooth(-0.2, 0.4, Math.sin(t * 0.7));
+    p.elbowR -= Math.max(0, Math.sin(t * 9)) * 0.12 * busy;
+    p.headX -= smooth(0.6, 0.95, Math.sin(t * 0.31)) * 0.5;
+  } else if (pose === "talk") {
+    // Making a point, with pauses for the other one to answer.
+    const speaking = smooth(-0.3, 0.3, Math.sin(t * 0.45));
+    p.elbowR -= Math.sin(t * 2.6) * 0.32 * speaking;
+    p.armRz += Math.sin(t * 1.3) * 0.08 * speaking;
+    p.headX += Math.sin(t * 2.6 + 1) * 0.05 * speaking;
+  } else if (pose === "radio" || pose === "phone") {
+    // Listening, then talking: a nod, a look round, and the free hand
+    // making the point while they speak.
+    const speaking = smooth(-0.2, 0.4, Math.sin(t * 0.55 + 1));
+    p.headY += Math.sin(t * 0.8) * 0.12;
+    p.headX += Math.sin(t * 3.1) * 0.06 * speaking;
+    p.elbowL -= Math.max(0, Math.sin(t * 2.2)) * 0.55 * speaking;
+    p.armLx -= Math.max(0, Math.sin(t * 2.2)) * 0.15 * speaking;
+  } else if (pose === "struggle") {
+    // Kicking for a foothold and pulling on the lanyard.
+    const kick = Math.sin(t * 4.2);
+    p.legL -= kick * 0.35;
+    p.legR += kick * 0.35;
+    p.kneeL = Math.max(0, p.kneeL + kick * 0.3);
+    p.kneeR = Math.max(0, p.kneeR - kick * 0.3);
+    p.armLx -= Math.max(0, Math.sin(t * 2.1)) * 0.25;
+    p.armRx -= Math.max(0, Math.sin(t * 2.1 + 1.5)) * 0.25;
   } else if (pose === "crouch" || pose === "tie") {
     // Tying wire or driving nails down there: the working hand busy, in
     // bursts, rather than resting on the knee.
@@ -2216,7 +2367,9 @@ function mixPoses(a, b, w) {
  * @param phase    walk cycle phase in radians
  * @param moving   true to walk (or run), false to hold `pose`
  * @param pose     "stand" | "work" | "reach" | "carry" | "lift" |
- *                 "crouch" | "kneel" | "climb"
+ *                 "crouch" | "kneel" | "climb" | "tie" — and the things
+ *                 people do instead of standing about: "wave", "point",
+ *                 "signal", "write", "radio", "phone", "talk", "struggle"
  * @param running  run rather than walk
  * @param carrying both hands on a load while walking
  * @param t        elapsed seconds, for the living layer on a still pose
@@ -2236,6 +2389,7 @@ export function poseWorker(worker, {
 } = {}) {
   const rig = worker?.userData?.rig;
   if (!rig) return null;
+  if (worker.userData.kit || worker.userData.held) syncHeld(worker, pose);
 
   let still = stillPose(pose, phase, {
     carry: typeof carrying === "string" ? carrying : "front",
@@ -2338,8 +2492,10 @@ export function turnToward(object, heading, dt, rate = 10) {
  * with empty hands while the load appeared in mid-air at chest height.
  *
  * @param route  [{x, z, pause?, pose?, carry?}] — pause in seconds at
- *               that stop, what to do while there ("work"...), and
- *               whether a load is picked up (true) or put down (false)
+ *               that stop, what to do while there ("write", "radio"...),
+ *               and whether a load is picked up (true) or put down
+ *               (false). A stop with neither a pause nor a pose is a
+ *               corner, walked round without stopping.
  * @param load   the thing carried — a bag of cement, a block
  * @param carryStyle "shoulder" (a sack) or "front" (in both hands)
  */
@@ -2527,10 +2683,12 @@ export function createWalker(worker, route, {
       const dist = Math.hypot(dx, dz);
       if (dist < 0.12) {
         index = (index + 1) % stops.length;
-        wait = next.pause ?? 1.5;
+        // A stop with nothing to do there is a corner, walked round
+        // without stopping; people do not halt at every turn.
+        wait = next.pause ?? (next.pose ? 1.5 : 0);
         action = null;
         animateWorker(worker, {
-          dt, speed: 0, pose: carryNow ? "carry" : "stand", carrying: carryNow ? carryStyle : false, t,
+          dt, speed: wait > 0 ? 0 : speed, pose: carryNow ? "carry" : "stand", carrying: carryNow ? carryStyle : false, t,
         });
         return;
       }

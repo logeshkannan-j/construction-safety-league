@@ -291,7 +291,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   }
   placeWorker({ helmet: true, vest: true, task: "rebar" }, 7, -5, 1.2);
   placeWorker({ helmet: true, vest: true, task: "carpentry", skin: "dark" }, 10, -8, -0.7);
-  placeWorker({ helmet: true, vest: true, pose: "stand", helmetColor: "white", gender: "female" }, -1, 21, 2.4);
+  placeWorker({ helmet: true, vest: true, pose: "write", helmetColor: "white", gender: "female" }, -1, 21, 2.4);
   placeWorker({ helmet: true, vest: true, task: "bricklaying", helmetColor: "blue" }, 25, -1, 0.3);
 
   // The debris a site makes, seen from the cab: a scrap yard by the
@@ -301,7 +301,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     { x: -40, z: -36, kind: "timber" }, { x: 40, z: 36, kind: "concrete" },
     { x: -40, z: 35, kind: "heap" }, { x: 2, z: -38, kind: "timber" },
   ], { seed: 42 });
-  placeWorker({ helmet: true, vest: true, harness: true, pose: "stand" }, -9, 15, Math.PI, frame.floors[2].y);
+  // The signaller on the landing floor, talking the crane in.
+  placeWorker({ helmet: true, vest: true, harness: true, pose: "signal" }, -9, 15, Math.PI, frame.floors[2].y);
 
   /* ------------------------------- loads ------------------------------- */
 

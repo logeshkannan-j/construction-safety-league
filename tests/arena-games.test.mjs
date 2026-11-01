@@ -1308,6 +1308,7 @@ section("The ERT responds, and the clock stops while it does");
       c.updateMatrixWorld(true);
       check("fall: he is brought down to the ground, not left hanging",
         new THREE.Box3().setFromObject(c).min.y < 1.2, `${new THREE.Box3().setFromObject(c).min.y.toFixed(2)} m`);
+      check("fall: and lies still on the board, no longer struggling", c.userData.pose === "stand", c.userData.pose);
     }
     // "After the response they have to take the victim on the stretcher to
     // the first-aid area and wait for the ambulance — or go to the
@@ -1713,6 +1714,390 @@ section("Nobody on site stands perfectly still");
     }
 
     instance.dispose();
+  }
+}
+
+section("Nobody just stands there: people do things");
+
+/* "Give an action movement to every character — don't make them simply
+ * stand. Based on the situation the character reacts, with sound: help
+ * help, or emergency emergency." */
+{
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium" });
+  const mat = kit.createMaterials(stage.cfg);
+  const geo = kit.createGeometries(stage.cfg);
+
+  // Every posed figure in every game is doing something.
+  for (const [path, id] of GAMES) {
+    const { instance } = await boot(path);
+    runFrames(10);
+    const scene = lastRenderer?.lastScene;
+    const player = instance.__test?.avatar;
+    const standing = [];
+    scene?.traverse((o) => {
+      if (o.userData?.rig && o !== player && o.visible && !o.userData.selfAnimated
+        && (o.userData.pose || "stand") === "stand") standing.push(o);
+    });
+    check(`${id}: nobody on site is just standing there`, standing.length === 0,
+      `${standing.length} standing, at ${standing.map((w) => `${w.position.x.toFixed(0)},${w.position.z.toFixed(0)}`).join(" ")}`);
+    instance.dispose();
+  }
+
+  // What each action looks like, in the figure's own frame (it faces +Z).
+  const local = (w, o) => {
+    w.updateMatrixWorld(true);
+    return w.worldToLocal(new THREE.Vector3().setFromMatrixPosition(o.matrixWorld));
+  };
+  const joints = (w) => {
+    const r = w.userData.rig;
+    return [r.hips, r.spine, r.neck, r.head, r.armL, r.armR, r.legL, r.legR,
+      r.armL.userData.elbow, r.armR.userData.elbow, r.legL.userData.knee, r.legR.userData.knee]
+      .filter(Boolean).flatMap((o) => [o.rotation.x, o.rotation.y, o.rotation.z]);
+  };
+  const apart = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+  const atFace = (hand, head) => hand.distanceTo(head) < 0.18 && hand.z > head.z + 0.06;
+  const LOOKS = {
+    wave: ["both hands up over the head", (L, R, head) => L.y > head.y && R.y > head.y],
+    point: ["one arm out in front, the other hand at the mouth",
+      (L, R, head) => R.z > 0.4 && R.y > 1.1 && R.y < head.y && atFace(L, head)],
+    signal: ["one hand up over the head, the other down", (L, R, head) => R.y > head.y && L.y < 1.0],
+    write: ["both hands in front at the chest, together",
+      (L, R) => L.z > 0.2 && R.z > 0.2 && L.y > 1.0 && L.y < 1.4 && L.distanceTo(R) < 0.35],
+    radio: ["the hand up at the mouth", (L, R, head) => atFace(R, head)],
+    phone: ["the hand at the side of the head",
+      (L, R, head) => Math.abs(R.y - head.y) < 0.1 && R.x > 0.05 && R.x < 0.16 && Math.abs(R.z - head.z) < 0.08],
+    talk: ["a hand up in front, making the point", (L, R) => R.z > 0.25 && R.y > 1.15 && L.y < 1.0],
+    struggle: ["both hands up for the lanyard, the knees bent",
+      (L, R, head, w) => L.y > head.y && R.y > head.y && w.userData.rig.legR.userData.knee.rotation.x > 0.3],
+  };
+  const TIMES = [0.3, 0.71, 1.37, 1.9, 2.53, 3.11, 3.62, 4.4, 5.05, 5.83];
+  const liveliness = (w, pose) => {
+    let last = null;
+    let most = 0;
+    for (const t of TIMES) {
+      kit.poseWorker(w, { pose, t });
+      const now = joints(w);
+      if (last) most = Math.max(most, apart(now, last));
+      last = now;
+    }
+    return most;
+  };
+  const standing = kit.buildWorker(geo, mat, { seed: 9300 });
+  kit.poseWorker(standing, { pose: "stand", t: 1.1 });
+  const still = joints(standing);
+  const standMoves = liveliness(standing, "stand");
+  for (const [pose, [looks, test]] of Object.entries(LOOKS)) {
+    const w = kit.buildWorker(geo, mat, { seed: 9300 });
+    kit.poseWorker(w, { pose, t: 1.1 });
+    const r = w.userData.rig;
+    const L = local(w, r.armL.userData.hand);
+    const R = local(w, r.armR.userData.hand);
+    const head = local(w, r.head);
+    check(`${pose}: ${looks}`, test(L, R, head, w),
+      `left ${L.x.toFixed(2)},${L.y.toFixed(2)},${L.z.toFixed(2)} right ${R.x.toFixed(2)},${R.y.toFixed(2)},${R.z.toFixed(2)} head ${head.y.toFixed(2)}`);
+    check(`${pose}: is nothing like standing`, apart(joints(w), still) > 1, `${apart(joints(w), still).toFixed(2)} rad from it`);
+    const moves = liveliness(w, pose);
+    check(`${pose}: and it is done, not held — it moves more than standing does`, moves > 0.1 && moves > standMoves * 2,
+      `${moves.toFixed(2)} rad against standing's ${standMoves.toFixed(2)}`);
+  }
+
+  // What they do it with: in the hand while they do it, put away after.
+  const w = kit.buildWorker(geo, mat, { seed: 9301 });
+  const handR = w.userData.rig.armR.userData.hand;
+  const handL = w.userData.rig.armL.userData.hand;
+  kit.poseWorker(w, { pose: "radio", t: 1 });
+  const radio = w.userData.held?.radio;
+  check("on the radio, there is a radio in the hand", !!radio && radio.visible && radio.parent === handR);
+  kit.poseWorker(w, { pose: "phone", t: 1 });
+  const phone = w.userData.held?.phone;
+  const fromHead = phone ? local(w, phone).distanceTo(local(w, w.userData.rig.head)) : Infinity;
+  check("on the phone, a phone at the ear, and the radio put away",
+    !!phone && phone.visible && phone.parent === handR && !radio.visible && fromHead < 0.22,
+    `${fromHead.toFixed(2)} m from the head`);
+  kit.poseWorker(w, { pose: "write", t: 1 });
+  const board = w.userData.held?.write;
+  check("writing, a clipboard in the other hand", !!board && board.visible && board.parent === handL && !phone.visible);
+  kit.poseWorker(w, { pose: "stand", t: 1 });
+  check("and nothing in the hands when they stop", [radio, phone, board].every((o) => o && !o.visible));
+  kit.poseWorker(w, { pose: "radio", t: 2 });
+  check("each is made once and kept, not made again every time",
+    w.userData.held?.radio === radio && handR.children.filter((c) => c === radio).length === 1 && radio.visible);
+  const officer = kit.buildWorker(geo, mat, { role: "officer", seed: 9302 });
+  const meshes = countMeshes(officer);
+  kit.poseWorker(officer, { pose: "write", t: 1 });
+  check("an officer writes on the clipboard she carries, not on a second one",
+    countMeshes(officer) === meshes && officer.userData.held?.write === null);
+
+  // Somebody walking their rounds goes round corners without stopping,
+  // and does the job at each stop.
+  const walker = kit.createWalker(kit.buildWorker(geo, mat, { seed: 9303 }), [
+    { x: 0, z: 0, pause: 1.5, pose: "radio" },
+    { x: 3, z: 0 },
+    { x: 3, z: 3, pause: 1.5, pose: "write" },
+  ], { speed: 1.4 });
+  new THREE.Scene().add(walker.worker);
+  let stood = 0;
+  let longest = 0;
+  const did = new Set();
+  const held = new Set();
+  const last = walker.worker.position.clone();
+  for (let i = 0; i < 60 * 14; i++) {
+    walker.update(1 / 60, i / 60);
+    const moved = walker.worker.position.distanceTo(last) > 1e-4;
+    last.copy(walker.worker.position);
+    const pose = walker.worker.userData.gait?.pose;
+    if (!moved) did.add(pose);
+    stood = !moved && pose === "stand" ? stood + 1 : 0;
+    longest = Math.max(longest, stood);
+    Object.entries(walker.worker.userData.held || {}).forEach(([k, o]) => { if (o?.visible) held.add(k); });
+  }
+  check("somebody on their rounds never stops just to stand", longest < 15, `stood still for ${longest} frames`);
+  check("they stop to do the job: on the radio at one stop, writing at the next",
+    did.has("radio") && did.has("write"), [...did].join(", "));
+  check("with the radio and the clipboard in hand", held.has("radio") && held.has("write"), [...held].join(", "));
+  stage.dispose();
+
+  // In the games, people on their rounds keep moving the same way.
+  for (const path of ["safetyMission", "safestTower"]) {
+    const { instance } = await boot(path);
+    const walkers = instance.__test.walkers || [];
+    const runs = walkers.map(() => 0);
+    const worst = walkers.map(() => 0);
+    const at = walkers.map((x) => x.worker.position.clone());
+    for (let i = 0; i < 900; i++) {
+      runFrames(1);
+      walkers.forEach((x, k) => {
+        const moved = x.worker.position.distanceTo(at[k]) > 1e-4;
+        at[k].copy(x.worker.position);
+        runs[k] = !moved && x.worker.userData.gait?.pose === "stand" ? runs[k] + 1 : 0;
+        worst[k] = Math.max(worst[k], runs[k]);
+      });
+    }
+    check(`${path}: nobody on their rounds stops just to stand`, walkers.length >= 2 && worst.every((n) => n < 15),
+      worst.map((n) => `${n} frames`).join(", "));
+    instance.dispose();
+  }
+}
+
+section("In an emergency the site reacts, and people shout for help");
+
+{
+  const audio = await import(`${SRC}/audio.js`);
+  const voice = await import(`${SRC}/voice.js`);
+
+  // The device's speech, recorded rather than spoken.
+  const spoken = [];
+  let cancels = 0;
+  let voiceList = [{ lang: "en-US", name: "US" }, { lang: "en-IN", name: "India" }, { lang: "ta-IN", name: "Tamil" }];
+  const voiceListeners = new Set();
+  window.speechSynthesis = {
+    getVoices: () => voiceList,
+    speak(u) { spoken.push({ text: u.text, volume: u.volume, pitch: u.pitch, lang: u.lang, voice: u.voice }); },
+    cancel() { cancels += 1; },
+    addEventListener(type, fn) { if (type === "voiceschanged") voiceListeners.add(fn); },
+    removeEventListener(type, fn) { voiceListeners.delete(fn); },
+  };
+  window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+  audio.setSoundEnabled(true);
+  audio.setVolume(1);
+
+  // The voice itself.
+  const ta = voice.createVoices({ lang: () => "ta" });
+  check("a Tamil player hears it in Tamil, in a Tamil voice",
+    ta.shout("help", 5, { now: 0 }) === "உதவி! உதவி!" && spoken.at(-1)?.voice?.lang === "ta-IN" && spoken.at(-1)?.lang === "ta-IN",
+    JSON.stringify(spoken.at(-1)));
+  check("one shout at a time: another straight after is not spoken",
+    ta.shout("emergency", 5, { now: 1000 }) === null && spoken.length === 1);
+  check("but a moment later it is", ta.shout("emergency", 5, { now: 2400 }) === "அவசரம்! அவசரம்!");
+  ta.dispose();
+  const en = voice.createVoices({ lang: () => "en" });
+  check("an English player hears English, in an Indian English voice, even with a Tamil voice on the device",
+    en.shout("fire", 5, { now: 0 }) === "Fire! Fire!" && spoken.at(-1)?.voice?.lang === "en-IN");
+  en.dispose();
+  voiceList = [{ lang: "en-GB" }, { lang: "en-IN" }];
+  const noTamil = voice.createVoices({ lang: () => "ta" });
+  check("with no Tamil voice on the device, a Tamil player still hears it, in English",
+    noTamil.shout("help", 5, { now: 0 }) === "Help! Help!" && spoken.at(-1)?.voice?.lang === "en-IN");
+  noTamil.dispose();
+  voiceList = [];
+  const late = voice.createVoices({ lang: () => "ta" });
+  voiceList = [{ lang: "ta-IN" }];
+  voiceListeners.forEach((fn) => fn());
+  check("voices the device loads late (as Android does) are used when they come",
+    late.shout("fire", 5, { now: 0 }) === "தீ! தீ!" && spoken.at(-1)?.voice?.lang === "ta-IN");
+  const listening = voiceListeners.size;
+  late.dispose();
+  check("and it stops listening for them when the mission ends", voiceListeners.size === listening - 1);
+  voiceList = [{ lang: "en-IN" }, { lang: "ta-IN" }];
+  const loud = voice.createVoices();
+  const volumeAt = (d, now) => (loud.shout("help", d, { now }) ? spoken.at(-1).volume : NaN);
+  const near = volumeAt(2, 0);
+  const far = volumeAt(25, 5000);
+  const farther = volumeAt(400, 10000);
+  check("louder the nearer they are, and never inaudible", near > far && far > farther && farther === 0.15 && near <= 1,
+    `${near.toFixed(2)} at 2 m, ${far.toFixed(2)} at 25 m, ${farther.toFixed(2)} at 400 m`);
+  audio.setVolume(0.5);
+  check("at the game's volume", Math.abs(volumeAt(2, 15000) - near / 2) < 1e-9);
+  audio.setVolume(0);
+  check("silent at volume 0 (iOS ignores a quiet voice, so it is not spoken at all)",
+    loud.shout("help", 2, { now: 20000 }) === null);
+  audio.setVolume(1);
+  audio.setSoundEnabled(false);
+  check("silent with the sound off", loud.shout("help", 2, { now: 25000 }) === null);
+  audio.setSoundEnabled(true);
+  check("anything but a known shout says nothing", loud.shout("boo", 2, { now: 30000 }) === null);
+  const synth = window.speechSynthesis;
+  delete window.speechSynthesis;
+  let threw = false;
+  let silent = false;
+  try {
+    silent = voice.createVoices().shout("help", 2) === null;
+  } catch { threw = true; }
+  check("a device without speech says nothing, and does not break", silent && !threw);
+  window.speechSynthesis = synth;
+  loud.dispose();
+
+  // Seeded chance, so what is heard does not depend on luck.
+  const realRandom = Math.random;
+  let seed = 20261101;
+  Math.random = () => {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+  const heard = (from) => spoken.slice(from).map((u) => u.text);
+  const listen = (seconds, until = () => false) => {
+    for (let i = 0; i < seconds * 2 && !until(); i++) runFrames(30);
+  };
+  const angleTo = (o, p) => {
+    let d = (Math.atan2(p.x - o.position.x, p.z - o.position.z) - o.rotation.y) % (2 * Math.PI);
+    if (d > Math.PI) d -= 2 * Math.PI;
+    if (d < -Math.PI) d += 2 * Math.PI;
+    return Math.abs(d);
+  };
+  try {
+    for (const scenarioId of ["fall", "fire", "electrical"]) {
+      const { instance } = await boot("emergencyCommander", { settings: { ...SETTINGS, scenarioId } });
+      const t = instance.__test;
+      const from = spoken.length;
+      runFrames(200);
+      const inc = t.incident.position;
+      const crowd = t.crowd;
+      const dist = (p) => Math.hypot(p.object.position.x - inc.x, p.object.position.z - inc.z);
+      const nearest = [...crowd].sort((a, b) => dist(a) - dist(b)).slice(0, 4);
+      const pose = (p) => p.object.userData.gait?.pose;
+      check(`${scenarioId}: the four nearest saw it and are calling for help, waving and pointing`,
+        nearest.every((p) => p.witness && ["wave", "point"].includes(pose(p))),
+        nearest.map((p) => `${pose(p)} at ${dist(p).toFixed(0)} m`).join(", "));
+      check(`${scenarioId}: and they have turned to it`, nearest.every((p) => angleTo(p.object, inc) < 0.3),
+        nearest.map((p) => angleTo(p.object, inc).toFixed(2)).join(", "));
+      const others = crowd.filter((p) => !nearest.includes(p));
+      check(`${scenarioId}: everybody else has stopped to deal with it: on the phone, on the radio, talking`,
+        others.length > 0 && others.every((p) => ["phone", "radio", "talk", "point"].includes(pose(p))),
+        others.map(pose).join(", "));
+      const talkers = others.filter((p) => pose(p) === "talk");
+      check(`${scenarioId}: talking to somebody, facing them`,
+        talkers.length > 0 && talkers.every((p) => angleTo(p.object, p.partner.object.position) < 0.3),
+        talkers.map((p) => angleTo(p.object, p.partner.object.position).toFixed(2)).join(", "));
+      const team = [t.ert.medic, t.ert.bearerA, t.ert.bearerB];
+      check(`${scenarioId}: the ERT on standby: the leader on the radio, the others going over it together`,
+        t.ert.leader.userData.gait?.pose === "radio" && !!t.ert.leader.userData.held?.radio?.visible
+          && team.every((x) => x.userData.gait?.pose === "talk"),
+        [t.ert.leader, ...team].map((x) => x.userData.gait?.pose).join(", "));
+
+      // What they shout.
+      if (scenarioId === "fire") {
+        listen(40, () => heard(from).includes("Fire! Fire!"));
+        check("fire: they shout \"Fire! Fire!\"", heard(from).includes("Fire! Fire!"), heard(from).join(" / "));
+        check("fire: or \"Emergency! Emergency!\", and nothing else",
+          heard(from).every((x) => x === "Fire! Fire!" || x === "Emergency! Emergency!"), heard(from).join(" / "));
+      } else {
+        listen(20, () => heard(from).includes("Help! Help!"));
+        check(`${scenarioId}: somebody shouts "Help! Help!"`, heard(from).includes("Help! Help!"), heard(from).join(" / "));
+        check(`${scenarioId}: or "Emergency! Emergency!", and never fire`,
+          heard(from).every((x) => x === "Help! Help!" || x === "Emergency! Emergency!"), heard(from).join(" / "));
+      }
+      check(`${scenarioId}: every shout is loud enough to hear and no louder than the game`,
+        spoken.slice(from).every((u) => u.volume >= 0.15 && u.volume <= 1));
+
+      if (scenarioId === "fall") {
+        const c = t.casualty;
+        check("fall: the man in the harness is struggling, not hanging still", c.userData.pose === "struggle");
+        const legs = [];
+        for (let i = 0; i < 8; i++) {
+          runFrames(9);
+          legs.push(c.userData.rig.legL.rotation.x);
+        }
+        check("fall: his legs kick for a foothold", Math.max(...legs) - Math.min(...legs) > 0.2,
+          `${(Math.max(...legs) - Math.min(...legs)).toFixed(2)} rad`);
+
+        // Sending the ERT: quiet while the response plays, and no more
+        // calls for help once they have him.
+        const cancelled = cancels;
+        t.actOnStation(t.STATIONS.find((st) => st.id === "casualty"));
+        check("fall: the shouting stops when the response starts", t.state.cutscene && cancels > cancelled);
+        const during = spoken.length;
+        for (let i = 0; i < 160 && t.state.cutscene; i++) runFrames(30);
+        check("fall: nobody shouts over the response while it plays", spoken.length === during,
+          heard(during).join(" / "));
+        check("fall: once he is down, he lies still", c.userData.pose !== "struggle", c.userData.pose);
+        const after = spoken.length;
+        listen(12);
+        check("fall: and with the ERT there, nobody is still calling for help", !heard(after).includes("Help! Help!"),
+          heard(after).join(" / "));
+        check("fall: the witnesses stop waving and talk it over instead",
+          nearest.every((p) => ["point", "talk"].includes(pose(p))), nearest.map(pose).join(", "));
+      }
+
+      if (scenarioId === "fire") {
+        // The alarm: everyone turns to the way out, and it is "Emergency!" now.
+        t.actOnStation(t.STATIONS.find((st) => st.id === "alarm"));
+        const after = spoken.length;
+        listen(20, () => heard(after).includes("Emergency! Emergency!"));
+        runFrames(120);
+        check("fire: once the alarm goes it is \"Emergency! Emergency!\"", heard(after).includes("Emergency! Emergency!"),
+          heard(after).join(" / "));
+        check("fire: and only that", heard(after).every((x) => x === "Emergency! Emergency!"), heard(after).join(" / "));
+        check("fire: they point the way out and talk it over, facing the muster point",
+          crowd.every((p) => ["point", "talk"].includes(pose(p)) && angleTo(p.object, t.MUSTER) < 0.3),
+          crowd.map((p) => `${pose(p)} ${angleTo(p.object, t.MUSTER).toFixed(2)}`).join(", "));
+
+        // At the muster point, waiting for the roll call.
+        t.state.evacuating = true;
+        crowd.forEach((p) => p.object.position.set(p.target.x, p.object.position.y, p.target.z));
+        runFrames(30);
+        check("fire: at the muster point they talk and phone, waiting for the roll call",
+          crowd.every((p) => p.arrived && ["talk", "phone"].includes(pose(p))), crowd.map(pose).join(", "));
+        const quiet = spoken.length;
+        listen(8);
+        check("fire: and nobody there is still shouting", spoken.length === quiet, heard(quiet).join(" / "));
+      }
+
+      if (scenarioId === "electrical") {
+        // Pausing quietens it; turning the sound off keeps it quiet.
+        const cancelled = cancels;
+        instance.setPaused(true);
+        check("electrical: pausing stops the shouting", cancels > cancelled);
+        instance.setPaused(false);
+        audio.setSoundEnabled(false);
+        const quiet = spoken.length;
+        listen(12);
+        check("electrical: with the sound off, nobody is heard", spoken.length === quiet);
+        audio.setSoundEnabled(true);
+      }
+      const disposed = cancels;
+      instance.dispose();
+      check(`${scenarioId}: and it is quiet when the mission ends`, cancels > disposed);
+    }
+  } finally {
+    Math.random = realRandom;
+    delete window.speechSynthesis;
+    delete window.SpeechSynthesisUtterance;
+    audio.setSoundEnabled(true);
+    audio.setVolume(1);
   }
 }
 

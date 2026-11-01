@@ -183,11 +183,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     createWalker(
       buildWorker(geo, mat, { helmet: true, vest: true, helmetColor: "white", gender: "female", seed: 5032 }),
       [
-        { x: 27, z: 14, pause: 3, pose: "stand" },
+        { x: 27, z: 14, pause: 3, pose: "write" },
         { x: 27.5, z: 0 },
-        { x: 26, z: -10, pause: 2.5, pose: "stand" },
+        { x: 26, z: -10, pause: 2.5, pose: "radio" },
         { x: 28, z: 4 },
-        { x: 23, z: 22, pause: 3, pose: "stand" },
+        { x: 23, z: 22, pause: 3, pose: "write" },
       ],
       { speed: 1.2 }
     ),

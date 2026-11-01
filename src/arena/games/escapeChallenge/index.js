@@ -1122,8 +1122,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // building — which is the whole reason this mission is set here.
     const development = buildBrandedTower(geo, mat, { x: 165, z: last.centreZ, rotY: -Math.PI / 2 });
     scene.add(development.group);
-    [[-3, -3], [-3, 3], [3, -3]].forEach(([ox, oz]) => {
-      const worker = buildWorker(geo, mat, { helmet: true, vest: true, pose: "stand" });
+    // At the muster point: the warden taking the roll call, one waving
+    // the player in, one talking.
+    [[-3, -3, "write"], [-3, 3, "wave"], [3, -3, "talk"]].forEach(([ox, oz, pose]) => {
+      const worker = buildWorker(geo, mat, { helmet: true, vest: true, pose });
       worker.position.set(yardX + 6 + ox, 0, last.centreZ + oz);
       worker.rotation.y = Math.random() * 6;
       scene.add(worker);
