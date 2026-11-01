@@ -31,6 +31,8 @@ import {
   buildNameplate, buildIsolatorPanel,
   collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
+import { buildTask, placeTask } from "../../engine/tasks.js";
+import { debrisYard, scatterDebris } from "../../engine/debris.js";
 import { sfx } from "../../audio.js";
 import { PUZZLES, SCORING, AREA_ORDER } from "./puzzles.js";
 import { shuffledOrder } from "../../shuffle.js";
@@ -824,11 +826,16 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     wallLadder.group.rotation.y = Math.PI;
     scene.add(wallLadder.group);
 
-    const worker = buildWorker(geo, mat, { helmet: true, vest: true, harness: true, pose: "work" });
-    worker.position.set(room.x0 + 8, 0, room.z1 - 3.4);
-    worker.rotation.y = 1.2;
-    scene.add(worker);
+    // Building a block wall across the floor, with the bricks and mortar
+    // to hand — clear of the route, the drop zone and the open edge.
+    const worker = placeTask(scene, buildTask(geo, mat, "bricklaying", { helmet: true, vest: true, harness: true }),
+      room.x0 + 8, 0, room.z1 - 3.4, 1.2, { colliders });
     animated.push({ kind: "worker", object: worker, phase: 1 });
+    // And what a working floor collects in its corners.
+    scatterDebris(scene, [
+      { x: room.x0 + 4, z: room.z1 - 1.1, kind: "timber", size: 0.8 },
+      { x: room.x0 + 1.5, z: room.z0 + 4, kind: "concrete", size: 0.7 },
+    ], { seed: 21 });
 
     /* ---- the overhead work, and what comes off it ----
      *
@@ -851,12 +858,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     scene.add(buildGuardrail(mat, {
       x: dropX + 1.6, y: DECK_Y + 0.11, z: dropZ - 2.1, length: 5.5, axis: "x", compliant: true,
     }));
-    const above = buildWorker(geo, mat, {
-      helmet: true, vest: true, harness: true, pose: "work", detail: "low",
-    });
-    above.position.set(dropX + 2.2, DECK_Y + 0.11, dropZ + 0.6);
-    above.rotation.y = -2.2;
-    scene.add(above);
+    // Nailing down formwork at the edge, which is where the offcuts
+    // come from.
+    const above = placeTask(scene, buildTask(geo, mat, "formwork", {
+      helmet: true, vest: true, harness: true, detail: "low",
+    }), dropX + 2.2, DECK_Y + 0.11, dropZ + 0.6, -2.2);
 
     // The exclusion zone it all lands in.
     const dropZone = buildZoneMarker(mat, { radius: 2.1 });

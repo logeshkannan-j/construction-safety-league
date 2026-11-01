@@ -27,6 +27,8 @@ import {
   buildPPEStation, buildMaterialHoist, buildZoneMarker, buildSiteHut, makeHighlight,
   collectWorkers, idleWorkers, animateWorker, turnToward, createWalker, buildCementBag,
 } from "../../engine/kit.js";
+import { buildTask, placeTask } from "../../engine/tasks.js";
+import { debrisYard, scatterDebris } from "../../engine/debris.js";
 import { sfx } from "../../audio.js";
 import { HAZARDS, SCORING, categoryOptions, actionOptions } from "./hazards.js";
 import { t, tAlt, getLang, onLangChange } from "../../language.js";
@@ -489,28 +491,35 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   /* ------------------------------ workers ------------------------------ */
 
-  function placeWorker(opts, x, y, z, rotY) {
-    const worker = buildWorker(geo, mat, opts);
-    worker.position.set(x, y, z);
-    worker.rotation.y = rotY || 0;
-    scene.add(worker);
+  // A worker with a `task` is doing that job, with its tool and material
+  // in front of them (engine/tasks.js) — not miming at nothing.
+  function placeWorker({ task = null, ...opts }, x, y, z, rotY) {
+    let worker;
+    if (task) {
+      worker = placeTask(scene, buildTask(geo, mat, task, opts), x, y, z, rotY || 0, { colliders });
+    } else {
+      worker = buildWorker(geo, mat, opts);
+      worker.position.set(x, y, z);
+      worker.rotation.y = rotY || 0;
+      scene.add(worker);
+    }
     animated.push({ kind: "worker", object: worker, phase: Math.random() * Math.PI * 2 });
     return worker;
   }
 
   // Hazard workers.
   const workerNoHelmet = placeWorker(
-    { helmet: false, vest: true, pose: "work", skin: "dark" }, -16, 0, -4, 2.2
+    { helmet: false, vest: true, task: "bricklaying", skin: "dark" }, -16, 0, -4, 2.2
   );
   // Standing at the unprotected south edge of Level 2 in a harness that
   // is not clipped to anything.
   const HARNESS_WORKER = { x: -7, z: 16.2, anchorX: -10.5, anchorZ: 14 };
   const workerNoHarness = placeWorker(
-    { helmet: true, vest: true, harness: true, pose: "reach" },
+    { helmet: true, vest: true, harness: true, task: "drilling" },
     HARNESS_WORKER.x, frame.floors[2].y, HARNESS_WORKER.z, 0
   );
   const workerOnScaffold = placeWorker(
-    { helmet: true, vest: true, pose: "work", helmetColor: "white" },
+    { helmet: true, vest: true, task: "plastering", helmetColor: "white" },
     -12, scaffold.platforms[2].y, BUILDING.z - BUILDING.depth / 2 - 1.4, 0
   );
   const workerUnderLoad = placeWorker(
@@ -519,10 +528,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   // Compliant workers, so "missing PPE" is a judgement and not just
   // "the only person on site".
-  placeWorker({ helmet: true, vest: true, pose: "work", helmetColor: "blue" }, 6, 0, -18, -1.2);
+  placeWorker({ helmet: true, vest: true, task: "carpentry", helmetColor: "blue" }, 6, 0, -18, -1.2);
   placeWorker({ helmet: true, vest: true, pose: "stand", helmetColor: "white", skin: "dark" }, -30, 0, 10, 0.6);
-  placeWorker({ helmet: true, vest: true, harness: true, pose: "work" }, -14, frame.floors[1].y, 14, 1.8);
+  placeWorker({ helmet: true, vest: true, harness: true, task: "rebar" }, -14, frame.floors[1].y, 14, 1.8);
   placeWorker({ helmet: true, vest: true, pose: "stand", helmetColor: "orange" }, 16, 0, 18, -2.4);
+
+  // The site's debris is where a tidy site keeps it: in marked scrap
+  // yards by the hoarding, well clear of every hazard, so a heap of
+  // rubble is never mistaken for one of them.
+  [[38, -28], [-38, 30]].forEach(([x, z], i) => {
+    colliders.push(...debrisYard(scene, geo, mat, { x, z, rotY: Math.atan2(-x, -z), seed: 11 + i }).colliders);
+  });
 
   /* ============================== hazards ============================== */
 

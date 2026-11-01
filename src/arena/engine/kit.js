@@ -248,6 +248,29 @@ function brickTexture(repeat, aniso) {
 }
 
 /**
+ * A stretch of brick wall with bricks of a real size, however long or
+ * high it is: the texture is laid in metres instead of being stretched
+ * over the box. One tile of the brick texture is four bricks by eight
+ * courses, 0.96 m by 0.6 m.
+ */
+let brickWallMaterial = null;
+export function brickWall(w, h, d, { aniso = 4 } = {}) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  const uv = g.attributes.uv;
+  const n = g.attributes.normal;
+  for (let i = 0; i < uv.count; i++) {
+    const across = Math.abs(n.getX(i)) > 0.5 ? d : w;
+    const up = Math.abs(n.getY(i)) > 0.5 ? d : h;
+    uv.setXY(i, (uv.getX(i) * across) / 0.96, (uv.getY(i) * up) / 0.6);
+  }
+  if (!brickWallMaterial) brickWallMaterial = new THREE.MeshLambertMaterial({ map: brickTexture([1, 1], aniso) });
+  const mesh = new THREE.Mesh(g, brickWallMaterial);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/**
  * Builds a texture for a safety sign face. Cached per text+kind so the
  * same sign repeated across a site costs one texture.
  */

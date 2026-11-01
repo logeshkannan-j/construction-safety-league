@@ -40,6 +40,8 @@ import {
   buildSiteHut, buildBarrier, buildZoneMarker, buildCableRun, buildPuddle, buildNameplate,
   collectWorkers, idleWorkers, animateWorker, turnToward,
 } from "../../engine/kit.js";
+import { buildTask, placeTask } from "../../engine/tasks.js";
+import { debrisYard, scatterDebris } from "../../engine/debris.js";
 import { sfx } from "../../audio.js";
 import { PHASES, SCORING, pickScenario } from "./scenarios.js";
 import { createERT } from "./ert.js";
@@ -704,6 +706,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   const boom = 4.2 * cameraScale(settings);
   const zoom = createZoom(camera, input, { baseFov: camera.fov, minFov: 26 });
 
+  // The site's debris: a marked scrap yard by the hoarding and a few heaps
+  // round the edges, all of it well clear of the stations and the
+  // incident. Solid to the commander.
+  const siteDebris = [
+    ...debrisYard(scene, geo, mat, { x: -38, z: -32, rotY: Math.atan2(38, 32), seed: 51 }).colliders,
+    ...scatterDebris(scene, [
+      { x: 40, z: 34, kind: "timber" }, { x: -40, z: 36, kind: "concrete" },
+      { x: 12, z: -36, kind: "timber" }, { x: 42, z: -6, kind: "heap" },
+    ], { seed: 52 }).colliders,
+  ];
+
   /* --------------------------- the commander ---------------------------
    * The commander is a person standing on the site, not a floating
    * point of view. They walk with the joystick and look by dragging,
@@ -722,7 +735,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    */
   const spawnAt = { x: incident.position.x + 10, y: 0, z: incident.position.z + 14 };
   const commander = createFirstPerson(camera, input, {
-    colliders: [...hoarding.colliders, ...frame.colliders, ...scaffold.colliders],
+    colliders: [...hoarding.colliders, ...frame.colliders, ...scaffold.colliders, ...siteDebris],
     spawn: spawnAt,
     // Facing the incident, so the emergency is the first thing in view.
     yaw: Math.atan2(spawnAt.x - incident.position.x, spawnAt.z - incident.position.z),

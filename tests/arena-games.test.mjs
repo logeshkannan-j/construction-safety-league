@@ -1471,6 +1471,137 @@ section("People pick things up, carry them, and stand about like people");
   instance.dispose();
 }
 
+section("Everybody at work is doing a job, with the material for it");
+
+/* "In every game the labour are working but nothing looks proper — make
+ * everyone work with proper material in a proper place. See the
+ * reference: the person is doing nothing." He was posed "at work" with
+ * his arms out, palms up, at nothing. */
+{
+  const EXPECT = { safetyMission: 5, escapeChallenge: 2, safestTower: 3, craneMaster: 3, emergencyCommander: 0 };
+  for (const [path, least] of Object.entries(EXPECT)) {
+    const { instance } = await boot(path);
+    runFrames(2);
+    const scene = lastRenderer.lastScene;
+    const people = [];
+    scene?.traverse((o) => { if (o.userData?.rig) people.push(o); });
+    const miming = people.filter((w) => w.userData.pose === "work" && !w.userData.task && !w.userData.ert);
+    check(`${path}: nobody is posed at work with nothing to work on`, miming.length === 0,
+      `${miming.length} miming, at ${miming.map((w) => `${w.position.x.toFixed(0)},${w.position.z.toFixed(0)}`).join(" ")}`);
+    const working = people.filter((w) => w.userData.task);
+    check(`${path}: people are at real jobs`, working.length >= least,
+      `${working.length}: ${working.map((w) => w.userData.task).join(", ")}`);
+    const props = [];
+    scene?.traverse((o) => { if (o.userData?.task && !o.userData.rig) props.push(o); });
+    const unequipped = working.filter((w) => {
+      const kit = props.find((p) => p.userData.task === w.userData.task && p.position.distanceTo(w.position) < 0.01);
+      let meshes = 0;
+      kit?.traverse((o) => { if (o.isMesh) meshes += 1; });
+      const tool = w.userData.rig.armR.userData.hand.children.some((c) => c.isGroup);
+      return !kit || (meshes === 0 && !tool) || (w.userData.task !== "rebar" && !tool);
+    });
+    check(`${path}: each of them has the job's material in front of them, and the tool in hand`,
+      unequipped.length === 0, unequipped.map((w) => w.userData.task).join(", "));
+    instance.dispose();
+  }
+
+  // The jobs themselves.
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const tasks = await import(`${SRC}/engine/tasks.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium" });
+  const mat = kit.createMaterials(stage.cfg);
+  const geo = kit.createGeometries(stage.cfg);
+  check("there is more than one kind of job", tasks.TASKS.length >= 5, tasks.TASKS.join(", "));
+  const solid = [];
+  const scene = new THREE.Scene();
+  const mason = tasks.placeTask(scene, tasks.buildTask(geo, mat, "bricklaying", { seed: 9001 }), 4, 0, -3, 0.7, { colliders: solid });
+  check("the bricklayer's wall is solid to somebody walking", solid.length >= 1, `${solid.length} solid parts`);
+  check("and the worker is where the game put him", mason.position.distanceTo(new THREE.Vector3(4, 0, -3)) < 1e-6 && mason.parent === scene);
+  const hand = mason.userData.rig.armR.userData.hand;
+  const other = mason.userData.rig.armL.userData.hand;
+  check("a trowel in one hand and a brick in the other", hand.children.some((c) => c.isGroup) && other.children.some((c) => c.isMesh));
+  kit.poseWorker(mason, { pose: mason.userData.pose });
+  scene.updateMatrixWorld(true);
+  const wallBox = new THREE.Box3();
+  scene.traverse((o) => { if (o.userData?.solid) wallBox.expandByObject(o); });
+  const trowelAt = new THREE.Vector3().setFromMatrixPosition(hand.matrixWorld);
+  check("and he works at it: his hand is over the wall he is building",
+    trowelAt.distanceTo(wallBox.getCenter(new THREE.Vector3())) < 1.4 && trowelAt.y > wallBox.max.y - 0.2,
+    `hand ${trowelAt.distanceTo(wallBox.getCenter(new THREE.Vector3())).toFixed(2)} m from the wall, at ${trowelAt.y.toFixed(2)} m against its top at ${wallBox.max.y.toFixed(2)} m`);
+  const fixer = tasks.buildTask(geo, mat, "rebar", { seed: 9002 });
+  tasks.placeTask(scene, fixer, -4, 0, 3, 0);
+  kit.poseWorker(fixer.worker, { pose: fixer.worker.userData.pose });
+  scene.updateMatrixWorld(true);
+  const tyingHands = [fixer.worker.userData.rig.armL.userData.hand, fixer.worker.userData.rig.armR.userData.hand]
+    .map((h) => new THREE.Vector3().setFromMatrixPosition(h.matrixWorld));
+  check("the steel fixer is down at the mat, both hands at the bars", tyingHands.every((h) => h.y < 0.6),
+    tyingHands.map((h) => h.y.toFixed(2)).join(" / ") + " m");
+  stage.dispose();
+}
+
+section("Debris from the 3D models, kept where a tidy site keeps it");
+
+/* "Add debris from the 3D models to every game, to make it realistic."
+ * Timber offcuts from the planks pack and broken concrete from the stones
+ * pack. In the games about spotting hazards it is kept in marked scrap
+ * yards — debris lying about IS a hazard there, and one of them is a
+ * housekeeping hazard on purpose. */
+{
+  const debris = await import(`${SRC}/engine/debris.js`);
+  // Stand-in pieces, so the layout can be checked without fetching.
+  const piece = (w, h, d, material) => {
+    const g = new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0);
+    return { geometry: g, material, size: new THREE.Vector3(w, h, d), long: Math.max(w, h, d) };
+  };
+  const wood = new THREE.MeshStandardMaterial();
+  const stone = new THREE.MeshStandardMaterial();
+  const pieces = {
+    timber: [piece(0.2, 0.04, 2.4, wood), piece(0.25, 0.05, 1.6, wood)],
+    concrete: [piece(0.5, 0.4, 0.6, stone), piece(0.3, 0.3, 0.3, stone)],
+  };
+  const spots = [{ x: 0, z: 0, kind: "heap" }, { x: 8, z: 0, kind: "timber" }, { x: -8, z: 0, kind: "concrete" }];
+  const meshes = debris.layDebris(spots, pieces, { seed: 4 });
+  const again = debris.layDebris(spots, pieces, { seed: 4 });
+  check("it is a handful of meshes for the whole site: one per material",
+    meshes.length <= 5 && meshes.length >= 3, `${meshes.length} meshes`);
+  check("the same site lays the same debris every time",
+    meshes.map((m) => m.geometry.attributes.position.count).join() === again.map((m) => m.geometry.attributes.position.count).join());
+  const all = new THREE.Box3();
+  meshes.forEach((m) => all.expandByObject(m));
+  check("nothing is buried or floating: it lies on the ground", all.min.y > -0.12 && all.min.y < 0.05,
+    `lowest point ${all.min.y.toFixed(3)} m`);
+  check("and nothing lands far from where it was put", all.min.x > -10.5 && all.max.x < 10.5 && Math.abs(all.min.z) < 2.6 && all.max.z < 2.6,
+    `${all.min.x.toFixed(1)}..${all.max.x.toFixed(1)} by ${all.min.z.toFixed(1)}..${all.max.z.toFixed(1)}`);
+  const heapOnly = debris.layDebris([{ x: 0, z: 0, kind: "heap" }], pieces, { seed: 4 });
+  const heapBox = new THREE.Box3();
+  heapOnly.forEach((m) => heapBox.expandByObject(m));
+  check("a heap is piled up, not spread flat", heapBox.max.y > 0.45, `${heapBox.max.y.toFixed(2)} m high`);
+
+  const scene = new THREE.Scene();
+  const offline = debris.scatterDebris(scene, spots);
+  await offline.ready;
+  check("if the models cannot be fetched, the mission goes on with a tidier site",
+    offline.group.parent === scene && offline.colliders.length === 1, `${offline.colliders.length} colliders`);
+
+  // In the hazard-spotting games, debris is in yards, clear of every hazard.
+  for (const path of ["safetyMission", "safestTower"]) {
+    const { instance } = await boot(path);
+    runFrames(2);
+    const sceneOf = lastRenderer.lastScene;
+    const yards = [];
+    sceneOf?.traverse((o) => { if (o.name === "scrap yard") yards.push(o); });
+    const hazards = (instance.__test.hazards || instance.__test.HAZARDS || [])
+      .map((h) => h.world || h.position || h.object?.position || h.group?.position || h)
+      .filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.z));
+    const nearest = Math.min(...yards.flatMap((y) => hazards.map((p) => Math.hypot(p.x - y.position.x, p.z - y.position.z))));
+    check(`${path}: the site's debris is in a marked scrap yard`, yards.length >= 1, `${yards.length} yards`);
+    check(`${path}: and every yard is well clear of the hazards, so it is never taken for one`,
+      hazards.length > 0 && nearest > 8, `nearest hazard ${nearest.toFixed(1)} m`);
+    instance.dispose();
+  }
+}
+
 section("People on site walk about, and walk like people");
 
 /* "Make the game realistic with human movement." A site is people

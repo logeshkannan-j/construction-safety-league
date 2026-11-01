@@ -2063,6 +2063,16 @@ function stillPose(pose, phase = 0, { carry = "front", stance = "relaxed" } = {}
       p.spineX = 0.42;
       p.headX = -0.25;
       break;
+    case "tie":
+      // Crouched over work on the ground — tying bars, nailing a sheet:
+      // the back leaning in and both hands down at it.
+      setLeg(p, -1, { hip: 88 * D, knee: 118 * D, ankle: 30 * D, out: 0.16 });
+      setLeg(p, 1, { hip: 88 * D, knee: 118 * D, ankle: 30 * D, out: 0.16 });
+      p.spineX = 0.62;
+      setArm(p, -1, { flex: 1.05, out: 0.12, elbow: 0.35 });
+      setArm(p, 1, { flex: 1.15, out: 0.08, elbow: 0.4 });
+      p.headX = -0.3;
+      break;
     case "kneel":
       // Down on the +X knee, the -X foot planted in front.
       setLeg(p, -1, { hip: 84 * D, knee: 88 * D, ankle: 4 * D, out: 0.1 });
@@ -2129,6 +2139,13 @@ function addLife(p, pose, t) {
   } else if (pose === "reach") {
     p.armLx += Math.sin(t * 1.7) * 0.08;
     p.armRx -= Math.sin(t * 1.7 + 1) * 0.08;
+  } else if (pose === "crouch" || pose === "tie") {
+    // Tying wire or driving nails down there: the working hand busy, in
+    // bursts, rather than resting on the knee.
+    const beat = Math.sin(t * 6.4);
+    const busy = smooth(-0.2, 0.4, Math.sin(t * 0.5 + 1));
+    p.elbowR -= Math.max(0, beat) * 0.3 * busy;
+    p.armRx -= Math.max(0, beat) * 0.1 * busy;
   }
 }
 

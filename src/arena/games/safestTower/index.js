@@ -33,6 +33,8 @@ import {
   collider,
   collectWorkers, idleWorkers, createWalker, buildCementBag,
 } from "../../engine/kit.js";
+import { buildTask, placeTask } from "../../engine/tasks.js";
+import { debrisYard, scatterDebris } from "../../engine/debris.js";
 import { sfx } from "../../audio.js";
 import { cameraScale, avatarGender } from "../../identity.js";
 import { HAZARDS, HAZARD_COUNT, SCORING } from "./hazards.js";
@@ -183,7 +185,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       [
         { x: 27, z: 14, pause: 3, pose: "stand" },
         { x: 27.5, z: 0 },
-        { x: 26, z: -10, pause: 2.5, pose: "work" },
+        { x: 26, z: -10, pause: 2.5, pose: "stand" },
         { x: 28, z: 4 },
         { x: 23, z: 22, pause: 3, pose: "stand" },
       ],
@@ -193,13 +195,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   walkers.forEach((w) => scene.add(w.worker));
 
   const animated = [];
-  [[-18, 12, 0.6], [20, 4, 2.2], [11, -18, -1.1]].forEach(([wx, wz, rot]) => {
-    const worker = buildWorker(geo, mat, { helmet: true, vest: true, pose: "work" });
-    worker.position.set(wx, 0, wz);
-    worker.rotation.y = rot;
-    scene.add(worker);
+  // People at real jobs, with their tools and material (engine/tasks.js),
+  // and the site's debris kept in a marked scrap yard, clear of the
+  // hazards. The solid parts are solid to the player.
+  const siteColliders = [];
+  [[-18, 12, 0.6, "bricklaying"], [20, 4, 2.2, "carpentry"], [11, -18, -1.1, "rebar"]].forEach(([wx, wz, rot, kind]) => {
+    const worker = placeTask(scene, buildTask(geo, mat, kind, { helmet: true, vest: true }), wx, 0, wz, rot, { colliders: siteColliders });
     animated.push({ object: worker, phase: Math.random() * 6 });
   });
+  siteColliders.push(...debrisYard(scene, geo, mat, { x: 12, z: -24, rotY: Math.atan2(-12, 24), seed: 31 }).colliders);
 
   /* ============================ the hazards ============================ */
 
@@ -666,7 +670,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    * around (ownsCamera / ownsLook both off).
    */
   const walker = createFirstPerson(camera, input, {
-    colliders: hoarding.colliders,
+    colliders: [...hoarding.colliders, ...siteColliders],
     spawn: { x: 0, y: 0, z: COMPOUND.depth / 2 - 6 },
     yaw: 0,
     // Jump and run are on in every mission except the crane, where

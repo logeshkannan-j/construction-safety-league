@@ -28,6 +28,8 @@ import {
   buildMaterialPallet, buildZoneMarker, buildSiteHut, buildBarrier,
   collectWorkers, idleWorkers, animateWorker, turnToward,
 } from "../../engine/kit.js";
+import { buildTask, placeTask } from "../../engine/tasks.js";
+import { debrisYard, scatterDebris } from "../../engine/debris.js";
 import { sfx, setMotor, stopAllLoops } from "../../audio.js";
 
 /* ============================== metadata ============================== */
@@ -272,18 +274,33 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   // Workers inside the zones, so the stakes are visible, plus some
   // elsewhere on site.
   const animated = [];
-  function placeWorker(opts, x, z, rotY, y = 0) {
-    const worker = buildWorker(geo, mat, opts);
-    worker.position.set(x, y, z);
-    worker.rotation.y = rotY;
-    scene.add(worker);
+  // A worker with a `task` is doing that job, with its tool and material
+  // in front of them (engine/tasks.js).
+  function placeWorker({ task = null, ...opts }, x, z, rotY, y = 0) {
+    let worker;
+    if (task) {
+      worker = placeTask(scene, buildTask(geo, mat, task, opts), x, y, z, rotY);
+    } else {
+      worker = buildWorker(geo, mat, opts);
+      worker.position.set(x, y, z);
+      worker.rotation.y = rotY;
+      scene.add(worker);
+    }
     animated.push({ object: worker, phase: Math.random() * 6 });
     return worker;
   }
-  placeWorker({ helmet: true, vest: true, pose: "work" }, 7, -5, 1.2);
-  placeWorker({ helmet: true, vest: true, pose: "work", skin: "dark" }, 10, -8, -0.7);
+  placeWorker({ helmet: true, vest: true, task: "rebar" }, 7, -5, 1.2);
+  placeWorker({ helmet: true, vest: true, task: "carpentry", skin: "dark" }, 10, -8, -0.7);
   placeWorker({ helmet: true, vest: true, pose: "stand", helmetColor: "white", gender: "female" }, -1, 21, 2.4);
-  placeWorker({ helmet: true, vest: true, pose: "work", helmetColor: "blue" }, 25, -1, 0.3);
+  placeWorker({ helmet: true, vest: true, task: "bricklaying", helmetColor: "blue" }, 25, -1, 0.3);
+
+  // The debris a site makes, seen from the cab: a scrap yard by the
+  // hoarding and a few heaps waiting to go into it.
+  debrisYard(scene, geo, mat, { x: 38, z: -35, rotY: Math.atan2(-38, 35), seed: 41 });
+  scatterDebris(scene, [
+    { x: -40, z: -36, kind: "timber" }, { x: 40, z: 36, kind: "concrete" },
+    { x: -40, z: 35, kind: "heap" }, { x: 2, z: -38, kind: "timber" },
+  ], { seed: 42 });
   placeWorker({ helmet: true, vest: true, harness: true, pose: "stand" }, -9, 15, Math.PI, frame.floors[2].y);
 
   /* ------------------------------- loads ------------------------------- */
