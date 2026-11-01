@@ -14,12 +14,17 @@
  *  can be reviewed by a safety officer without reading any 3D code.
  * ------------------------------------------------------------------ */
 
+/* Sized for ten hazards. At 1200 a hazard (written when there were
+ * five) a good run passed the Arena's 12,000 ceiling before the time
+ * bonus, so every good run scored exactly 12,000 and the top of the
+ * leaderboard was a tie whatever the time or difficulty. Now a
+ * flawless Safety Manager run comes to about 11,400. */
 export const SCORING = {
-  solvedFirstTry: 1200,
-  solvedAfterMiss: 600,
-  wrongAnswer: -150,
-  allSolved: 2000,
-  accuracyMax: 2000,
+  solvedFirstTry: 600,
+  solvedAfterMiss: 300,
+  wrongAnswer: -75,
+  allSolved: 1000,
+  accuracyMax: 1000,
   timeBonusPerSecond: 3,
 };
 

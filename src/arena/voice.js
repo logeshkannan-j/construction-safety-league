@@ -22,10 +22,13 @@ export const SHOUTS = {
 };
 
 /**
- * @param lang  () => "en" | "ta", the player's language now
- * @param gap   the least time between two shouts, in ms
+ * @param lang     () => "en" | "ta", the player's language now
+ * @param gap      the least time between two shouts, in ms
+ * @param enabled  () => false silences this game's voices whatever the
+ *                 shared sound setting says — the mission demos play a
+ *                 game's world with its sound off
  */
-export function createVoices({ lang = () => "en", gap = 2200 } = {}) {
+export function createVoices({ lang = () => "en", gap = 2200, enabled = () => true } = {}) {
   const synth = typeof window !== "undefined" ? window.speechSynthesis || null : null;
   const Utterance = typeof window !== "undefined" ? window.SpeechSynthesisUtterance || null : null;
   let voices = [];
@@ -44,7 +47,7 @@ export function createVoices({ lang = () => "en", gap = 2200 } = {}) {
     shout(kind, distance = 10, { now = Date.now(), pitch = 1.25 } = {}) {
       const phrase = SHOUTS[kind];
       // Volume 0 is silence too: iOS ignores an utterance's own volume.
-      if (!phrase || !synth || !Utterance || !isSoundEnabled() || getVolume() <= 0) return null;
+      if (!phrase || !synth || !Utterance || !enabled() || !isSoundEnabled() || getVolume() <= 0) return null;
       if (now - last < gap) return null;
       const tamil = lang() === "ta" ? find((l) => l.startsWith("ta")) : null;
       const voice = tamil || find((l) => l === "en-in" || l === "en_in") || find((l) => l.startsWith("en"));

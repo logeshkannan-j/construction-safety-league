@@ -638,7 +638,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   });
 
   // What people shout, in the player's language, louder the nearer they are.
-  const voices = createVoices({ lang: getLang });
+  const voices = createVoices({ lang: getLang, enabled: () => settings?.sound !== false });
   let casualtyShoutIn = 1.2;
   const mateShoutIn = [2.2, 4.4];
 
@@ -675,6 +675,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       person.shoutIn = kind && voices.shout(kind, from(person.object.position), { now: stage.elapsed * 1000 }) ? 6 + Math.random() * 6 : 1 + Math.random() * 2;
     });
   }
+
+  // How fast an untreated casualty's condition falls, in % a second.
+  const CASUALTY_DECLINE_PER_SECOND = 0.2;
 
   /* ============================ game state ============================ */
 
@@ -739,7 +742,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     onPause: () => api.requestPause(),
     keymap: {
       Escape: "pause",
+      // One to eight, as the briefing says: one key per station.
       Digit1: "opt1", Digit2: "opt2", Digit3: "opt3", Digit4: "opt4",
+      Digit5: "opt5", Digit6: "opt6", Digit7: "opt7", Digit8: "opt8",
       KeyB: "brief",
       KeyZ: "zoom",
     },
@@ -1104,8 +1109,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const casualtySurvived = state.casualty >= 35;
     const controlled = state.control >= 60;
 
-    const survivalBonus = casualtySurvived ? STATION_SCORING.casualtySurvived : 0;
-    const controlBonus = controlled ? STATION_SCORING.siteControlled : 0;
+    // Earned by a response that was carried through, not by waiting for
+    // the clock to run out.
+    const survivalBonus = completed && casualtySurvived ? STATION_SCORING.casualtySurvived : 0;
+    const controlBonus = completed && controlled ? STATION_SCORING.siteControlled : 0;
     const completionBonus = completed ? STATION_SCORING.allStations : 0;
     const timeBonus = completed ? remainingSeconds * STATION_SCORING.timeBonusPerSecond : 0;
 
@@ -1140,9 +1147,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         scenario: scenario.id,
         steps: total,
         bestDecisions: state.best,
-        acceptable: state.acceptable,
-        wrongDecisions: state.wrong,
-        timeouts: state.timeouts,
+        // What actually went wrong: actions taken out of order, and
+        // walking into the incident. (The decision-tree counters these
+        // used to report are never set by this game.)
+        acceptable: state.outOfSequence,
+        wrongDecisions: state.outOfSequence + state.hazardEntries,
+        hazardEntries: state.hazardEntries,
+        timeouts: 0,
         casualties: casualtySurvived ? 0 : 1,
         casualtyCondition: Math.round(state.casualty),
         sceneControl: Math.round(state.control),
@@ -1151,9 +1162,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       breakdown: [
         { label: "Scenario", value: scenario.title, tone: "info" },
         { label: "Best decisions", value: `${state.best} / ${total}`, tone: state.best === total ? "good" : "info" },
-        { label: "Acceptable decisions", value: `${state.acceptable}`, tone: "info" },
-        { label: "Wrong decisions", value: `${state.wrong}`, tone: state.wrong ? "bad" : "good" },
-        { label: "Decision clocks missed", value: `${state.timeouts}`, tone: state.timeouts ? "bad" : "good" },
+        { label: "Actions out of order", value: `${state.outOfSequence}`, tone: state.outOfSequence ? "warn" : "good" },
+        { label: "Walked into the incident", value: `${state.hazardEntries}`, tone: state.hazardEntries ? "bad" : "good" },
         { label: "Casualty condition", value: `${Math.round(state.casualty)}%`, tone: casualtySurvived ? "good" : "bad" },
         { label: "Scene control", value: `${Math.round(state.control)}%`, tone: controlled ? "good" : "bad" },
         { label: "Workforce accounted for", value: `${Math.round(state.evacuation)}%`, tone: state.evacuation >= 80 ? "good" : "info" },
@@ -1210,7 +1220,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       objective: state.finished
         ? "Incident closed out"
         : nextStation
-          ? `${PHASES[nextStation.phase] || "Respond"} — ${objectiveFor(nextStation)}`
+          // The station's own name: the phase list is in a different
+          // order, and named the step before ("Raise the alarm — Isolate…").
+          ? `${t(nextStation, "label", lang) || nextStation.label} — ${objectiveFor(nextStation)}`
           : t(scenario, "title", lang),
       score: Math.max(0, state.score),
       timeMs: state.remainingMs,
@@ -1314,16 +1326,20 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Number keys jump the camera to a station, for desktop players who
     // would rather not hunt for the cone stack.
+    // None of this while the ERT's response is on screen: the camera and
+    // the screen belong to it (a resume after a pause turned the keys
+    // back on mid-scene).
+    const keysLive = !state.cutscene;
     for (let i = 0; i < 8; i++) {
-      if (input.wasPressed(`opt${i + 1}`) && STATIONS[i]) {
+      if (keysLive && input.wasPressed(`opt${i + 1}`) && STATIONS[i]) {
         frameForStation(STATIONS[i]);
         api.toast(`${STATIONS[i].label} — ${STATIONS[i].prompt}`, "info");
       }
     }
 
-    if (input.wasPressed("brief")) showBrief();
-    if (input.wasPressed("viewmode")) setFirstPerson(!state.firstPerson);
-    if (input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
+    if (keysLive && input.wasPressed("brief")) showBrief();
+    if (keysLive && input.wasPressed("viewmode")) setFirstPerson(!state.firstPerson);
+    if (keysLive && input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
 
     // ZOOM puts the long lens on and takes it off, as in the Safety
     // Mission. Wheel and pinch still give fine control.
@@ -1334,11 +1350,21 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     if (state.consequence && stage.elapsed > state.consequenceUntil) state.consequence = null;
 
+    /* ----- the casualty ----- */
+
+    // Untreated, the casualty gets worse until the ERT is sent: it was
+    // 100% from start to finish whatever the player did, so the survival
+    // bonus was free. Gently — a reasonable response is in time.
+    if (!state.finished && !state.cutscene && !state.doneStations.has("casualty")) {
+      state.casualty = clampMeter(state.casualty - dt * CASUALTY_DECLINE_PER_SECOND);
+    }
+
     /* ----- the scene reacts ----- */
 
     // Fire grows until the player commits to a defensive strategy.
     if (scenario.scene === "fire" && !state.finished) {
-      if (state.stepIndex < 5) state.fireIntensity += dt * 0.055;
+      // Until the area is isolated — not until any five actions are done.
+      if (!state.isolated) state.fireIntensity += dt * 0.055;
       fireGroup.children.forEach((flame, index) => {
         flame.scale.y = (1.6 + Math.sin(stage.elapsed * 7 + index) * 0.4) * state.fireIntensity;
         flame.scale.x = (0.8 + Math.sin(stage.elapsed * 5 + index) * 0.15) * Math.min(1.8, state.fireIntensity);
@@ -1358,7 +1384,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Sparks arc at the damaged cable until the supply is isolated.
     if (scenario.scene === "electrical") {
-      const live = state.stepIndex < 4;
+      // Live until the supply is isolated (by the player, or by the ERT,
+      // who isolate before they treat): not until any four actions.
+      const live = !state.isolated && !ert.played;
       sparkGroup.visible = live && Math.sin(stage.elapsed * 22) > 0.1;
       sparkGroup.children.forEach((spark, index) => {
         spark.position.y = incident.position.y + 0.2 + ((stage.elapsed * 3 + index) % 1) * 0.6;

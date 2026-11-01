@@ -193,7 +193,12 @@ export function createFirstPerson(camera, input, {
     const h = currentHeight();
 
     if (state.onLadder) {
+      // Holding on is not falling: a climb down and a step off at the
+      // bottom is not an 8 m drop, and a fall off the side is measured
+      // from where the ladder was let go.
       velocity.y = 0;
+      state.grounded = true;
+      state.airborneFrom = position.y;
       return;
     }
 
@@ -380,6 +385,10 @@ export function createFirstPerson(camera, input, {
 
     update(dt) {
       if (state.frozen) {
+        // Standing still while frozen: the last walking speed left the
+        // figure striding on the spot through the top view.
+        state.speed = 0;
+        state.running = false;
         controller.syncCamera();
         return;
       }

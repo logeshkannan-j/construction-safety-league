@@ -720,6 +720,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       return;
     }
     const ropeLength = Math.max(1.2, ropeLengthFor(lift));
+    // The first frame after a pause has no time in it. Measured over
+    // nothing, the hook's speed read as zero and the next frame took its
+    // whole speed as one frame's acceleration — the load was flung into a
+    // swing on every resume, and its landing refused.
+    if (dt < 1e-3) return;
 
     // Hook acceleration in world space, measured numerically.
     const hook = hookWorldPosition(_hook).clone();
@@ -836,7 +841,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // --- wind ---
     if (state.windAlarm) {
       state.windAlarmTimer += dt;
-      const needsStop = state.windAlarmTimer > 6;
+      // A gust alarm lasts about four seconds, so at six this never fired:
+      // two and a half is time enough to reach for EMERGENCY STOP.
+      const needsStop = state.windAlarmTimer > 2.5;
       if (needsStop && !state.estop) {
         violation("Wind alarm ignored — all lifting must stop until the gust passes.");
         state.windAlarmTimer = 0;

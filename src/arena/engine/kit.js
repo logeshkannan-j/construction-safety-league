@@ -2269,7 +2269,11 @@ export function buildScaffold(geo, mat, {
     // The incomplete lift keeps its collider deliberately: the gap is a
     // visible defect to be inspected and reported, not a trapdoor that
     // silently drops the player off the scaffold.
-    colliders.push(collider(x, ly + 0.03, z, length, 0.08, depth));
+    // In the scaffold's own frame: the whole list is moved into world
+    // space below. Built at (x, z) as well, every lift's walkable board
+    // sat a scaffold's width away from the boards you see, and stepping
+    // off the access ladder at the top was an 8 m fall.
+    colliders.push(collider(0, ly + 0.03, 0, length, 0.08, depth));
   }
 
   // Access ladder up the inside face, running a metre past the top
@@ -3333,7 +3337,9 @@ export function buildCableRun(geo, mat, { length = 4, damaged = false, onGround 
     const y = onGround ? 0.04 : 0.6 + Math.sin(t * Math.PI) * 0.3;
     const seg = cylinder(geo, damaged && i === 4 ? mat.red : mat.yellow, 0.035, length / segments + 0.04,
       -length / 2 + t * length + length / segments / 2, y, Math.sin(t * 3) * 0.2,
-      { rotX: Math.PI / 2, low: true, shadow: false });
+      // Laid along the run (x), end to end: turned about x they stood
+      // across it, eight parallel sticks instead of one cable.
+      { rotZ: Math.PI / 2, low: true, shadow: false });
     group.add(seg);
   }
   if (damaged) {

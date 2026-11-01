@@ -1462,6 +1462,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   }
 
   function answerPuzzle(item, optionId) {
+    // An answer to a question already solved, or after the end, counts
+    // for nothing.
+    if (item.done || state.finished) return;
     const puzzle = PUZZLES[item.key];
     const option = puzzle.options.find((o) => o.id === optionId);
     const attempts = state.attempts[item.key] || 0;
@@ -1522,6 +1525,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   function closeDialog() {
     api.dialog(null);
     state.dialogOpen = false;
+    // Nothing is open any more: a language change must not bring the
+    // question back (it did — solved, and paying out again each time).
+    openItem = null;
     controller.setFrozen(false);
   }
 
@@ -1648,6 +1654,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     state.finished = true;
     controller.setFrozen(true);
     api.dialog(null);
+    openItem = null;
 
     const total = AREA_ORDER.length;
     const remainingSeconds = Math.max(0, Math.floor(state.remainingMs / 1000));

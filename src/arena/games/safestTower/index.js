@@ -47,21 +47,21 @@ export const meta = {
 
   briefing: {
     role:
-      "You are walking the Casagrand Aria site compound before the shift starts. Five things down "
+      "You are walking the Casagrand Aria site compound before the shift starts. Ten things down "
       + "here are wrong. For each one, you decide what actually gets done about it.",
     objectives: [
       "Orbit the compound and tap each flagged hazard to inspect it.",
       "Read what you are actually looking at before you answer.",
       "Choose the control that removes the risk, not the one that warns people about it.",
       "Get it right first time — a second attempt is worth half.",
-      "Clear all five before the shift starts.",
+      "Clear all ten before the shift starts.",
     ],
     scoring: [
-      { label: "Correct control, first attempt", value: "+1200" },
-      { label: "Correct control, second attempt", value: "+600" },
-      { label: "Wrong control", value: "-150" },
-      { label: "All five hazards cleared", value: "+2000" },
-      { label: "First-time accuracy", value: "up to +2000" },
+      { label: "Correct control, first attempt", value: `+${SCORING.solvedFirstTry}` },
+      { label: "Correct control, second attempt", value: `+${SCORING.solvedAfterMiss}` },
+      { label: "Wrong control", value: `${SCORING.wrongAnswer}` },
+      { label: "All ten hazards cleared", value: `+${SCORING.allSolved}` },
+      { label: "First-time accuracy", value: `up to +${SCORING.accuracyMax}` },
       { label: "Time remaining", value: "+3 / second" },
     ],
     tips: [
@@ -710,6 +710,14 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         hazard.world.x - walker.position.x,
         hazard.world.z - walker.position.z
       );
+      // Backed out of ("Look around first", or a wrong answer): it waits
+      // until the player has stepped away. It used to reopen on the very
+      // next frame, so the only way out of a question was to answer it.
+      // A tap on the hazard still opens it at any time.
+      if (hazard.snoozed) {
+        if (d > APPROACH_RADIUS + 1) hazard.snoozed = false;
+        continue;
+      }
       if (d < best) { best = d; nearest = hazard; }
     }
     if (nearest) inspect(nearest);
@@ -831,7 +839,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         : "Right first time is worth double. Take a proper look before you answer.",
       dismissable: true,
       dismissLabel: "Look around first",
-      onDismiss: () => { api.dialog(null); state.openHazard = null; pushHud(); },
+      onDismiss: () => { api.dialog(null); state.openHazard = null; hazard.snoozed = true; pushHud(); },
       onPick: (id) => answer(hazard, Number(id)),
     });
   }
@@ -852,7 +860,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         SCORING.wrongAnswer
       );
       // The hazard stays exactly where it was — that is the point.
+      // It waits for the player to step away (or tap it) before it asks
+      // again.
       state.openHazard = null;
+      hazard.snoozed = true;
       pushHud();
       return;
     }

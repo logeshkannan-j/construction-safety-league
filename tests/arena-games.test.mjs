@@ -1979,8 +1979,18 @@ section("In an emergency the site reacts, and people shout for help");
     return Math.abs(d);
   };
   try {
+    // A mission demo plays this world with its sound off: not a word.
+    {
+      const { instance: muted } = await boot("emergencyCommander", { settings: { ...SETTINGS, scenarioId: "fall", sound: false } });
+      const before = spoken.length;
+      listen(20);
+      check("a game started with its sound off (as the mission demos are) says nothing", spoken.length === before,
+        spoken.slice(before).map((u) => u.text).join(" / "));
+      muted.dispose();
+    }
     for (const scenarioId of ["fall", "fire", "electrical"]) {
-      const { instance } = await boot("emergencyCommander", { settings: { ...SETTINGS, scenarioId } });
+      // A player's game, with its sound on.
+      const { instance } = await boot("emergencyCommander", { settings: { ...SETTINGS, scenarioId, sound: true } });
       const t = instance.__test;
       const from = spoken.length;
       runFrames(200);
@@ -2098,6 +2108,164 @@ section("In an emergency the site reacts, and people shout for help");
     delete window.SpeechSynthesisUtterance;
     audio.setSoundEnabled(true);
     audio.setVolume(1);
+  }
+}
+
+section("Audit: the scaffold, the cable, the ladder, and what could be gamed");
+
+{
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const { createFirstPerson, ladderVolume } = await import(`${SRC}/engine/fpsController.js`);
+  const lang = await import(`${SRC}/language.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium" });
+  const mat = kit.createMaterials(stage.cfg);
+  const geo = kit.createGeometries(stage.cfg);
+  const stick = () => ({ state: { moveX: 0, moveY: 0 }, consumeLook: () => ({ dx: 0, dy: 0 }), isHeld: () => false, wasPressed: () => false });
+
+  /* The scaffold's walkable boards were placed a scaffold's width away
+   * from the boards you see: stepping off its ladder at the top was an
+   * 8 m fall and a "fatality". Built away from the origin, as in the
+   * games — the old unit test built it at the origin, where the double
+   * shift cancels out. */
+  const X = -10;
+  const Z = 1.6;
+  const sc = kit.buildScaffold(geo, mat, { x: X, y: 0, z: Z, bays: 4, depth: 1.3, lifts: 4, liftHeight: 2 });
+  sc.group.updateMatrixWorld(true);
+  const boards = new THREE.Box3();
+  sc.group.traverse((o) => { if (o.userData?.walkable) boards.expandByObject(o); });
+  const astray = sc.colliders.filter((c) => {
+    const cx = (c.minX + c.maxX) / 2;
+    const cz = (c.minZ + c.maxZ) / 2;
+    return cx < boards.min.x || cx > boards.max.x || cz < boards.min.z || cz > boards.max.z;
+  });
+  check("every scaffold lift you can see is one you can stand on", sc.colliders.length > 0 && astray.length === 0,
+    `${astray.length} of ${sc.colliders.length} boards elsewhere`);
+
+  const lx = X - sc.length / 2 + 0.4;
+  const lz = Z + 1.3 / 2 - 0.15;
+  const ladders = [ladderVolume({ x: lx, z: lz, baseY: 0, topY: sc.totalHeight, width: 1.3, depth: 1.3, exit: { x: lx + 2, z: lz } })];
+  let input = stick();
+  input.state.moveY = 1;
+  const drops = [];
+  let c = createFirstPerson(new THREE.PerspectiveCamera(), input, {
+    colliders: sc.colliders, ladders, spawn: { x: lx - 2, y: 0, z: lz }, yaw: -Math.PI / 2, onLand: (d) => drops.push(d),
+  });
+  for (let i = 0; i < 330; i++) c.update(1 / 60);
+  check("up the ladder and off at the top, the player stands on the top lift",
+    c.position.y > sc.totalHeight - 0.5 && c.state.grounded && !c.state.onLadder && drops.every((d) => d < 2.6),
+    `y ${c.position.y.toFixed(2)}, grounded ${c.state.grounded}, drops ${drops.map((d) => d.toFixed(1)).join(",")}`);
+
+  // Down again, by the ladder: holding on is not falling.
+  input = stick();
+  const drops2 = [];
+  c = createFirstPerson(new THREE.PerspectiveCamera(), input, {
+    colliders: sc.colliders, ladders, spawn: { x: lx + 0.95, y: sc.totalHeight + 0.1, z: Z }, yaw: Math.PI, onLand: (d) => drops2.push(d),
+  });
+  const run = (n, mx, my) => { input.state.moveX = mx; input.state.moveY = my; for (let i = 0; i < n; i++) c.update(1 / 60); };
+  run(30, 0, 0);
+  input.state.moveY = 1;
+  for (let k = 0; c.state.grounded && k < 200; k++) c.update(1 / 60);
+  input.state.moveY = 0;
+  input.state.moveX = 1;
+  for (let i = 0; i < 40 && !c.state.onLadder; i++) c.update(1 / 60);
+  const caught = c.state.onLadder;
+  run(400, 0, -1);
+  run(150, 1, 0);
+  run(30, 0, 0);
+  check("climbing down a ladder and stepping off is not reported as a fall",
+    caught && c.position.y < 0.5 && drops2.every((d) => d < 2.6), `caught ${caught}, drops ${drops2.map((d) => d.toFixed(1)).join(",")}`);
+
+  // A frozen controller stands still.
+  input = stick();
+  input.state.moveY = 1;
+  c = createFirstPerson(new THREE.PerspectiveCamera(), input, { colliders: [], spawn: { x: 0, y: 0, z: 0 } });
+  for (let i = 0; i < 30; i++) c.update(1 / 60);
+  c.setFrozen(true);
+  c.update(1 / 60);
+  check("frozen (top view), the figure stops walking on the spot", !c.moving && c.state.speed === 0);
+
+  const cable = kit.buildCableRun(geo, mat, { length: 4 });
+  const cableBox = new THREE.Box3().setFromObject(cable);
+  check("a cable run lies along its length, not across it in sticks",
+    cableBox.max.x - cableBox.min.x > 3.5 && cableBox.max.z - cableBox.min.z < 0.7,
+    `${(cableBox.max.x - cableBox.min.x).toFixed(2)} m long, ${(cableBox.max.z - cableBox.min.z).toFixed(2)} m across`);
+  stage.dispose();
+
+  /* Escape: switching language re-opened a solved question and paid
+   * for it again — as often as the button was pressed. */
+  {
+    const { instance, record } = await boot("escapeChallenge");
+    runFrames(5);
+    const t = instance.__test;
+    const item = t.interactables.find((i) => i.key && !i.done);
+    t.openPuzzle(item);
+    const open = record.dialog;
+    const right = open?.options?.find((o) => o.correct)?.id
+      ?? (await import(`${SRC}/games/escapeChallenge/puzzles.js`)).PUZZLES[item.key].options.find((o) => o.correct).id;
+    open?.onPick?.(right);
+    runFrames(2);
+    const score = t.state.score;
+    const solved = t.state.solved;
+    let reopened = false;
+    for (const l of ["ta", "en", "ta", "en"]) {
+      lang.setLang(l);
+      runFrames(2);
+      // A player tapping the answer again on anything that comes back.
+      if (record.dialog) { reopened = true; record.dialog.onPick?.(right); runFrames(2); }
+    }
+    // And the first answer's button, pressed again.
+    open?.onPick?.(right);
+    runFrames(2);
+    check("escape: changing language does not bring a solved question back", !reopened, JSON.stringify(record.dialog?.title || ""));
+    check("escape: or pay for it again", t.state.score === score && t.state.solved === solved,
+      `${score} → ${t.state.score}, ${solved} → ${t.state.solved}`);
+    lang.setLang("en");
+    instance.dispose();
+  }
+
+  /* Spot the Hazards: every good run scored exactly 12,000 (the table
+   * was written for five hazards; there are ten). */
+  {
+    const { SCORING, HAZARD_COUNT } = await import(`${SRC}/games/safestTower/hazards.js`);
+    const flawless = HAZARD_COUNT * SCORING.solvedFirstTry + SCORING.allSolved + SCORING.accuracyMax;
+    check("spot the hazards: a flawless run is no longer cut off at the ceiling",
+      flawless * DIFFICULTY.hard.scoreScale < 12000 - 600, `${flawless} × ${DIFFICULTY.hard.scoreScale}`);
+    const { instance, record } = await boot("safestTower");
+    runFrames(5);
+    const t = instance.__test;
+    const hazard = t.hazards.find((h) => !h.solved);
+    t.walker.position.set(hazard.world.x, t.walker.position.y, hazard.world.z);
+    t.checkApproach();
+    check("spot the hazards: walking up to a hazard asks about it", !!record.dialog && t.state.openHazard === hazard);
+    record.dialog?.onDismiss?.();
+    runFrames(10);
+    check("spot the hazards: 'Look around first' really backs out of it", !t.state.openHazard && !record.dialog);
+    t.walker.position.set(hazard.world.x + t.APPROACH_RADIUS + 2, t.walker.position.y, hazard.world.z);
+    runFrames(3);
+    t.walker.position.set(hazard.world.x, t.walker.position.y, hazard.world.z);
+    t.checkApproach();
+    check("spot the hazards: and it asks again once the player has stepped away and come back", t.state.openHazard === hazard);
+    instance.dispose();
+  }
+
+  /* Emergency: the casualty's condition never changed, so a player who
+   * did nothing was paid "Casualty survived +500"; and the results said
+   * "Wrong decisions 0" after walking into the fire. */
+  {
+    const { instance, record } = await boot("emergencyCommander", { settings: { ...SETTINGS, scenarioId: "fall" } });
+    const t = instance.__test;
+    runFrames(60 * 20);
+    check("emergency: an untreated casualty gets worse", t.state.casualty < 100, `${t.state.casualty.toFixed(1)}%`);
+    t.enterHazard();
+    t.state.remainingMs = 1;
+    runFrames(5);
+    const result = record.finished;
+    check("emergency: doing nothing earns no survival bonus", !!result && !(result.breakdown || []).some((b) => /Casualty survived/.test(b.label)),
+      (result?.breakdown || []).map((b) => b.label).join(" | "));
+    check("emergency: the results show walking into the incident",
+      (result?.breakdown || []).some((b) => /Walked into the incident/.test(b.label) && b.value === "1"));
+    instance.dispose();
   }
 }
 
