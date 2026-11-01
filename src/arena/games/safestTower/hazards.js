@@ -173,8 +173,10 @@ export const HAZARDS = [
     id: "ladder",
     kind: "ladder",
     title: "Ladder untied and at the wrong angle",
-    at: { x: 4, z: 14 },
-    rotY: Math.PI,
+    // At the foot of the scaffold it serves, so it has a lift to rest
+    // on — at the east end of it, well clear of where the player starts.
+    at: { x: 6.5, z: 16 },
+    rotY: 0,
     brief:
       "A leaning ladder gives access to the scaffold lift. It is pitched far too shallow, it is not "
       + "tied at the stiles, and it finishes level with the platform with nothing to hold.",

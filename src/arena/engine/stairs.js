@@ -144,13 +144,22 @@ export function stairFlight({
  * stair.
  *
  * `parts` entries are box descriptors for the kit's merger, in the same
- * local space as the flight. `colliders` entries are plain boxes,
- * already centred, with no rotation.
+ * local space as the flight: `handrail` is the rail you hold, which the
+ * kit paints safety yellow, and `parts` is everything holding it up —
+ * posts and the mid-rail. `colliders` entries are plain boxes, already
+ * centred, with no rotation.
+ *
+ * The handrail runs on 300 mm past the top and the bottom of the
+ * flight, level, as a real one does: you take hold of it before the
+ * first step and let go after the last. A rail that stops dead at the
+ * first and last tread, in thin grey bar the colour of the concrete
+ * behind it, is a rail nobody notices is there.
  */
-export function stairRails(flight, { segments = 4, posts = 5 } = {}) {
+export function stairRails(flight, { segments = 4, posts = 5, extension = 0.3 } = {}) {
   const parts = [];
+  const handrail = [];
   const colliders = [];
-  if (!flight || !flight.going) return { parts, colliders };
+  if (!flight || !flight.going) return { parts, handrail, colliders };
 
   const width = flight.width || STAIR.width;
   const halfW = width / 2;
@@ -169,23 +178,36 @@ export function stairRails(flight, { segments = 4, posts = 5 } = {}) {
   [-1, 1].forEach((side) => {
     const z = zCenter + side * halfW;
 
-    // Top rail and mid rail, sloping with the flight.
-    [h, h * 0.55].forEach((offset) => {
-      parts.push({
-        w: diagonal, h: 0.07, d: 0.07,
-        x: (flight.xStart + flight.xEnd) / 2,
-        y: baseY + rise / 2 + offset,
-        z,
-        rotZ: slope,
-      });
+    // The handrail, sloping with the flight, and its level ends.
+    handrail.push({
+      w: diagonal, h: 0.06, d: 0.06,
+      x: (flight.xStart + flight.xEnd) / 2,
+      y: baseY + rise / 2 + h,
+      z,
+      rotZ: slope,
+    });
+    if (extension > 0) {
+      handrail.push({ w: extension, h: 0.06, d: 0.06, x: flight.xStart - extension / 2, y: baseY + h, z });
+      handrail.push({ w: extension, h: 0.06, d: 0.06, x: flight.xEnd + extension / 2, y: baseY + rise + h, z });
+      // And the posts that carry those ends.
+      parts.push({ w: 0.05, h: h, d: 0.05, x: flight.xStart - extension, y: baseY + h / 2, z });
+      parts.push({ w: 0.05, h: h, d: 0.05, x: flight.xEnd + extension, y: baseY + rise + h / 2, z });
+    }
+    // The mid-rail below it.
+    parts.push({
+      w: diagonal, h: 0.045, d: 0.045,
+      x: (flight.xStart + flight.xEnd) / 2,
+      y: baseY + rise / 2 + h * 0.5,
+      z,
+      rotZ: slope,
     });
 
-    // Newel posts, vertical, standing on the pitch line.
+    // Posts, vertical, standing on the pitch line.
     for (let i = 0; i < posts; i += 1) {
       const px = flight.xStart + (flight.going * i) / (posts - 1);
       parts.push({
-        w: 0.08, h: h + 0.04, d: 0.08,
-        x: px, y: pitchAt(px) + (h + 0.04) / 2, z,
+        w: 0.06, h, d: 0.06,
+        x: px, y: pitchAt(px) + h / 2, z,
       });
     }
 
@@ -202,7 +224,7 @@ export function stairRails(flight, { segments = 4, posts = 5 } = {}) {
     }
   });
 
-  return { parts, colliders };
+  return { parts, handrail, colliders };
 }
 
 /**

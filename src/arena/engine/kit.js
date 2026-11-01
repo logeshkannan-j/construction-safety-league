@@ -650,6 +650,9 @@ export function createMaterials(cfg) {
     craneYellow: P({ color: 0xf2b417, shininess: 36, specular: 0x4a3a10 }),
     craneRed: P({ color: 0xcf3f2f, shininess: 30, specular: 0x402019 }),
     galv: P({ color: 0xc3c9cf, shininess: 60, specular: 0x6a7076 }),
+    // Stair handrails: painted safety yellow, so the rail you are meant
+    // to hold stands out from the concrete it runs along.
+    handrail: P({ color: 0xffc21a, shininess: 55, specular: 0x5a4a10 }),
 
     timber: L({ color: 0xb5854d }),
     timberDark: L({ color: 0x8a6436 }),
@@ -1354,6 +1357,12 @@ export function buildConcreteFrame(geo, mat, {
         railMesh.position.set(x, 0, z);
         group.add(railMesh);
       }
+      if (balustrade.handrail.length) {
+        const handrailMesh = mergedMesh(balustrade.handrail, mat.handrail);
+        handrailMesh.position.set(x, 0, z);
+        handrailMesh.userData.handrail = true;
+        group.add(handrailMesh);
+      }
       balustrade.colliders.forEach((c) => {
         colliders.push(collider(x + c.x, c.y, z + c.z, c.w, c.h, c.d));
       });
@@ -1547,8 +1556,9 @@ export function buildScaffold(geo, mat, {
     colliders.push(collider(x, ly + 0.03, z, length, 0.08, depth));
   }
 
-  // Access ladder up the inside face.
-  const ladder = buildLadder(geo, mat, { height: totalHeight + 0.4, lean: 0 });
+  // Access ladder up the inside face, running a metre past the top
+  // platform so there is something to hold stepping off it.
+  const ladder = buildLadder(geo, mat, { height: totalHeight + 1, lean: 0 });
   ladder.position.set(-length / 2 + 0.4, 0, depth / 2 - 0.15);
   group.add(ladder);
 
@@ -1562,21 +1572,83 @@ export function buildScaffold(geo, mat, {
   return { group, colliders: worldColliders, platforms, length, totalHeight };
 }
 
-export function buildLadder(geo, mat, { height = 4, lean = 0.18, width = 0.44 } = {}) {
+/**
+ * A ladder: aluminium stiles, rungs every 280 mm, rubber feet, caps.
+ *
+ * `height` is the length of the stiles and `lean` the angle off the
+ * vertical. The origin is at the FEET and the ladder leans towards
+ * local +Z — so put whatever it rests on there, and turn the returned
+ * group about Y to face it. The lean lives on an inner frame, so a turn
+ * and a lean can never fight; the old ladder put both on one group,
+ * where three.js applies them in an order that tipped it sideways.
+ *
+ * `tieAt` (metres along the stiles) lashes both stiles there: a ladder
+ * is tied at the top, where it rests, not held at the foot.
+ */
+export function buildLadder(geo, mat, { height = 4, lean = 0.18, width = 0.44, tieAt = null } = {}) {
   const group = new THREE.Group();
+  const frame = new THREE.Group();
+  frame.rotation.x = lean;
+  group.add(frame);
+
+  const STILE_W = 0.03;
+  const STILE_D = 0.07;
   const parts = [];
-  const rungs = Math.max(3, Math.floor(height / 0.3));
   [-width / 2, width / 2].forEach((sx) => {
-    parts.push({ w: 0.05, h: height, d: 0.05, x: sx, y: height / 2, z: 0 });
+    parts.push({ w: STILE_W, h: height, d: STILE_D, x: sx, y: height / 2, z: 0 });
   });
-  for (let r = 1; r < rungs; r++) {
-    parts.push({ w: width, h: 0.035, d: 0.035, x: 0, y: (height * r) / rungs, z: 0 });
+  for (let y = 0.28; y < height - 0.1; y += 0.28) {
+    parts.push({ w: width, h: 0.032, d: 0.034, x: 0, y, z: 0 });
   }
-  const mesh = mergedMesh(parts, mat.steel);
-  group.add(mesh);
-  group.rotation.x = lean;
-  group.userData.ladder = true;
+  frame.add(mergedMesh(parts, mat.galv));
+
+  const ends = [];
+  [-width / 2, width / 2].forEach((sx) => {
+    ends.push({ w: STILE_W + 0.03, h: 0.06, d: STILE_D + 0.05, x: sx, y: 0.03, z: 0 });
+    ends.push({ w: STILE_W + 0.008, h: 0.04, d: STILE_D + 0.008, x: sx, y: height - 0.02, z: 0 });
+  });
+  frame.add(mergedMesh(ends, mat.black, { shadow: false }));
+
+  if (Number.isFinite(tieAt)) {
+    const ties = [];
+    [-width / 2, width / 2].forEach((sx) => {
+      [-0.05, 0.05].forEach((dy) => {
+        ties.push({ w: STILE_W + 0.022, h: 0.03, d: STILE_D + 0.022, x: sx, y: tieAt + dy, z: 0 });
+      });
+      // The tail of the lashing, back to whatever it is tied to.
+      ties.push({ w: 0.018, h: 0.018, d: 0.16, x: sx, y: tieAt, z: 0.1 });
+    });
+    frame.add(mergedMesh(ties, mat.orange, { shadow: false }));
+  }
+
+  group.userData.ladder = {
+    height, lean, width, tied: Number.isFinite(tieAt),
+    topY: height * Math.cos(lean),
+    reach: height * Math.sin(lean),
+  };
   return group;
+}
+
+/**
+ * A ladder set up the way it should be: one out for every four up
+ * (about 75 degrees), standing on the level below, tied where it rests
+ * and running on a metre past the landing so there is something to
+ * hold while stepping off.
+ *
+ * `rise` is the climb from the feet to the landing. The group's origin
+ * is at the feet and the landing edge is `footOffset` in front of them
+ * along local +Z.
+ */
+export function buildLadderAgainst(geo, mat, { rise, extension = 1, width = 0.44, tied = true } = {}) {
+  const lean = Math.atan(1 / 4);
+  const toLanding = rise / Math.cos(lean);
+  const length = toLanding + Math.max(0, extension) / Math.cos(lean);
+  const group = buildLadder(geo, mat, {
+    height: length, lean, width, tieAt: tied ? toLanding - 0.12 : null,
+  });
+  const footOffset = rise * Math.tan(lean);
+  Object.assign(group.userData.ladder, { rise, footOffset, extension });
+  return { group, lean, length, footOffset };
 }
 
 /* ========================== tower crane ========================== */
@@ -1795,559 +1867,15 @@ export function updateHoistRope(parts) {
 
 /* ============================ workers ============================ */
 
-/**
- * Collapses the loose meshes hanging directly off a joint into one
- * mesh per material, leaving child GROUPS alone.
- *
- * A figure built from anatomical parts is 54 draw calls, and sixteen of
- * them in a crowd is most of a phone's budget. But within one joint
- * nothing moves relative to anything else — the skull, jaw, ears, nose
- * and eyes all turn with the head — so they can be baked together and
- * still animate, because it is the JOINT that rotates, not the parts.
- *
- * Child groups are left untouched: the knee has to keep moving inside
- * the leg.
+/*
+ * People live in their own module: the sculpted head, the lofted body,
+ * the clothing and PPE, and the gait. Re-exported here so every game
+ * keeps importing them from the kit as it always has.
  */
-function compactJoint(group) {
-  const byMaterial = new Map();
-  const keep = [];
-
-  for (const child of group.children) {
-    if (!child.isMesh) { keep.push(child); continue; }
-    child.updateMatrix();
-    const baked = child.geometry.clone().applyMatrix4(child.matrix);
-    if (!byMaterial.has(child.material)) byMaterial.set(child.material, []);
-    byMaterial.get(child.material).push(baked);
-  }
-  if (!byMaterial.size) return;
-
-  group.clear();
-  keep.forEach((c) => group.add(c));
-
-  byMaterial.forEach((geoms, material) => {
-    let merged;
-    if (geoms.length === 1) {
-      merged = geoms[0];
-    } else {
-      merged = mergeGeometries(geoms, false);
-      geoms.forEach((g) => g.dispose());
-      // mergeGeometries returns null if the attribute sets differ.
-      if (!merged) return;
-    }
-    const mesh = new THREE.Mesh(merged, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  });
-}
-
-/**
- * A person.
- *
- * Built the way a base mesh is: a skeleton of nested joint groups, with
- * every part a TAPERED section rather than an even tube, and a sphere
- * at each joint so nothing has a seam or a gap. That taper is most of
- * the difference between a person and a set of scaffold poles — a
- * thigh is half again as thick at the hip as it is at the knee, a
- * forearm narrows to the wrist, and a torso is a shape, not a box.
- *
- * Proportions are a real 1.78 m adult, in metres from the sole:
- *
- *      crown 1.78   head centre 1.66   chin 1.58   shoulder 1.44
- *      elbow 1.15   wrist 0.89   hip 0.94   knee 0.50   ankle 0.09
- *
- * Returns the group, with the rig on `userData.rig` for animation and
- * the PPE state on `userData.worker` for the games that inspect it.
- */
-export function buildWorker(geo, mat, {
-  helmet = true, vest = true, harness = false, boots = true,
-  helmetColor = null, pose = "stand", skin = "skin", scale = 1,
-  // "officer" has to be recognisable across a site at a glance, so it
-  // is three signals at once, not one: a WHITE hat, an ORANGE vest
-  // where the crew wear hi-vis yellow, and a clipboard. One of those
-  // alone is not enough at distance or on a small screen.
-  role = "worker",
-  vestColor = null,
-  // "low" drops the detail you cannot see past about 15 m and takes a
-  // figure from ~34 draw calls to ~22 while keeping the whole
-  // skeleton, so a crowd still walks properly. Use it for background
-  // crowds, not for anyone the player stands next to.
-  detail = "high",
-} = {}) {
-  const group = new THREE.Group();
-  const officer = role === "officer";
-  const fine = detail !== "low";
-  const palette = { yellow: mat.yellow, white: mat.white, blue: mat.blue, orange: mat.orange, green: mat.green, hiVis: mat.hiVis };
-  const helmetMat = palette[helmetColor] || (officer ? mat.white : mat.yellow);
-  const vestMat = palette[vestColor] || (officer ? mat.orange : mat.hiVis);
-  const skinMat = skin === "dark" ? mat.skinDark : mat.skin;
-
-  /**
-   * A tapered section hanging DOWN from its parent origin, which is
-   * the joint it pivots about. `rTop` is at the joint.
-   */
-  const limb = (material, rTop, rBottom, length, { flat = 1 } = {}) => {
-    const m = new THREE.Mesh(geo.taper(rTop / rBottom), material);
-    m.scale.set(rBottom, length, rBottom * flat);
-    m.position.y = -length / 2;
-    m.castShadow = true;
-    return m;
-  };
-
-  /** A tapered section standing UP from `yBottom`. */
-  const section = (material, rBottom, rTop, length, yBottom, { flat = 1 } = {}) => {
-    const m = new THREE.Mesh(geo.taper(rTop / rBottom), material);
-    m.scale.set(rBottom, length, rBottom * flat);
-    m.position.y = yBottom + length / 2;
-    m.castShadow = true;
-    return m;
-  };
-
-  /** A joint, so two tapered sections never show a step between them. */
-  const joint = (material, radius, y, { x = 0, z = 0, flat = 1 } = {}) => {
-    const m = new THREE.Mesh(geo.sphere, material);
-    m.scale.set(radius * 2, radius * 2, radius * 2 * flat);
-    m.position.set(x, y, z);
-    m.castShadow = true;
-    return m;
-  };
-
-  const HIP_Y = 0.94;
-  const hips = new THREE.Group();
-  hips.position.y = HIP_Y;
-  group.add(hips);
-
-  /* ------------------------------ legs ------------------------------ */
-  const legs = [];
-  [-0.095, 0.095].forEach((sx) => {
-    const leg = new THREE.Group();
-    leg.position.set(sx, 0, 0);
-    leg.add(joint(mat.denim, 0.098, 0));                 // hip
-    leg.add(limb(mat.denim, 0.098, 0.066, 0.44));        // thigh
-
-    const knee = new THREE.Group();
-    knee.position.y = -0.44;
-    knee.add(joint(mat.denim, 0.068, 0));                // knee
-    knee.add(limb(mat.denim, 0.066, 0.044, 0.41));       // calf to ankle
-
-    if (boots) {
-      // Ankle, foot and a toe box, so a foot has a direction.
-      knee.add(joint(mat.black, 0.052, -0.40));
-      knee.add(box(geo, mat.black, 0.115, 0.075, 0.16, 0, -0.44, 0.015));
-      knee.add(box(geo, mat.black, 0.105, 0.055, 0.1, 0, -0.465, 0.1));
-      if (fine) knee.add(box(geo, mat.black, 0.1, 0.05, 0.06, 0, -0.41, -0.07));
-    }
-    leg.add(knee);
-    leg.userData.knee = knee;
-    hips.add(leg);
-    legs.push(leg);
-  });
-
-  /* ----------------------------- torso ------------------------------
-   * Three lofted sections, flattened front-to-back, so the body goes
-   * hips -> waist -> chest instead of being one slab. */
-  const spine = new THREE.Group();
-  hips.add(spine);
-
-  const bodyMat = mat.denim;
-  spine.add(section(bodyMat, 0.155, 0.132, 0.20, -0.02, { flat: 0.78 }));  // pelvis
-  spine.add(section(bodyMat, 0.132, 0.150, 0.18, 0.18, { flat: 0.76 }));   // waist
-  spine.add(section(bodyMat, 0.150, 0.188, 0.19, 0.36, { flat: 0.74 }));   // chest
-  // Shoulder yoke across the top, so the arms come off something.
-  spine.add(joint(bodyMat, 0.1, 0.52, { x: -0.13, flat: 0.8 }));
-  spine.add(joint(bodyMat, 0.1, 0.52, { x: 0.13, flat: 0.8 }));
-
-  if (vest) {
-    // Over the chest and waist, a touch proud of the body.
-    spine.add(section(vestMat, 0.148, 0.2, 0.20, 0.355, { flat: 0.76 }));
-    spine.add(section(vestMat, 0.142, 0.15, 0.17, 0.19, { flat: 0.78 }));
-    // Reflective bands round the body.
-    [0.46, 0.27].forEach((by) => {
-      const band = new THREE.Mesh(geo.taper(1), mat.white);
-      const r = by > 0.4 ? 0.196 : 0.152;
-      band.scale.set(r, 0.04, r * 0.77);
-      band.position.y = by;
-      band.castShadow = false;
-      spine.add(band);
-    });
-    if (fine) {
-      // The two braces over the shoulders. They lie ON the front of
-      // the vest — 18 mm of tape, not a slab. They were 0.3 m DEEP,
-      // which is deeper than the whole chest, so they stood proud of
-      // the vest front and back and read as a box strapped to the
-      // ribs.
-      [-0.075, 0.075].forEach((bx) => {
-        spine.add(box(geo, mat.white, 0.042, 0.2, 0.018, bx, 0.45, 0.136, { shadow: false }));
-        spine.add(box(geo, mat.white, 0.042, 0.2, 0.018, bx, 0.45, -0.132, { shadow: false }));
-      });
-    }
-  }
-
-  if (harness) {
-    [-0.09, 0.09].forEach((sx) => {
-      spine.add(box(geo, mat.black, 0.045, 0.4, 0.045, sx, 0.4, 0.1, { shadow: false }));
-    });
-    spine.add(box(geo, mat.black, 0.26, 0.045, 0.045, 0, 0.24, 0.1, { shadow: false }));
-    spine.add(box(geo, mat.steel, 0.07, 0.07, 0.04, 0, 0.47, -0.12, { shadow: false }));
-    spine.add(box(geo, mat.orange, 0.045, 0.6, 0.045, 0, 0.26, -0.26, { rotX: 0.34, shadow: false }));
-  }
-
-  /* ------------------------------ arms ------------------------------ */
-  const arms = [];
-  [-0.185, 0.185].forEach((sx) => {
-    const arm = new THREE.Group();
-    arm.position.set(sx, 0.50, 0);                       // shoulder
-    const sleeveMat = vest ? vestMat : bodyMat;
-    arm.add(joint(sleeveMat, 0.062, 0));                 // deltoid
-    arm.add(limb(sleeveMat, 0.058, 0.044, 0.29));        // upper arm
-
-    const elbow = new THREE.Group();
-    elbow.position.y = -0.29;
-    elbow.add(joint(skinMat, 0.046, 0));                 // elbow
-    elbow.add(limb(skinMat, 0.044, 0.031, 0.26));        // forearm
-
-    // Glove: palm, then a thumb off the side.
-    const hand = new THREE.Group();
-    hand.position.y = -0.26;
-    hand.add(joint(mat.black, 0.036, -0.02, { flat: 0.7 }));
-    hand.add(box(geo, mat.black, 0.062, 0.095, 0.042, 0, -0.07, 0));
-    if (fine) hand.add(box(geo, mat.black, 0.03, 0.05, 0.038, 0.036, -0.035, 0.008, { rotZ: 0.5 }));
-    elbow.add(hand);
-    arm.userData.hand = hand;
-
-    arm.add(elbow);
-    arm.userData.elbow = elbow;
-    spine.add(arm);
-    arms.push(arm);
-  });
-
-  /* -------------------------- neck and head -------------------------- */
-  const neck = new THREE.Group();
-  neck.position.y = 0.55;
-  spine.add(neck);
-  neck.add(section(skinMat, 0.054, 0.05, 0.1, -0.01));
-
-  const head = new THREE.Group();
-  head.position.y = 0.17;          // head centre, world 1.66
-  neck.add(head);
-
-  // Cranium: taller than it is wide, deeper than it is wide.
-  const skull = new THREE.Mesh(geo.sphere, skinMat);
-  skull.scale.set(0.168, 0.225, 0.202);
-  skull.castShadow = true;
-  head.add(skull);
-  if (fine) {
-    // Jaw and chin, so the profile is not a ball.
-    head.add(joint(skinMat, 0.062, -0.075, { z: 0.012, flat: 1.15 }));
-    head.add(box(geo, skinMat, 0.075, 0.05, 0.055, 0, -0.095, 0.052, { shadow: false }));
-    // Ears.
-    [-0.082, 0.082].forEach((ex) => {
-      head.add(box(geo, skinMat, 0.016, 0.042, 0.03, ex, -0.005, 0.004, { shadow: false }));
-    });
-
-    /* ---- the face ----
-     *
-     * Everything here sits PROUD of the skull. The first version put
-     * the eyes at z = 0.093 inside a skull that reaches 0.101, so they
-     * were buried in the head and the face was blank. A feature on a
-     * head this size has to break the surface to exist at all.
-     *
-     * The skull front is at z = 0.101, so the face plate at 0.098
-     * gives a flat cheek for the features to sit on and everything
-     * else is measured out from there. */
-    head.add(box(geo, skinMat, 0.125, 0.14, 0.02, 0, 0.01, 0.098, { shadow: false }));
-
-    // Brow ridge: the single biggest thing that stops a head reading
-    // as an egg, because it puts the eyes in shadow.
-    head.add(box(geo, skinMat, 0.132, 0.022, 0.028, 0, 0.052, 0.105, { shadow: false }));
-
-    // Eyes: a white, then a dark iris standing in front of it.
-    [-0.038, 0.038].forEach((ex) => {
-      head.add(box(geo, mat.white, 0.034, 0.019, 0.016, ex, 0.028, 0.108, { shadow: false }));
-      head.add(box(geo, mat.black, 0.016, 0.016, 0.012, ex, 0.027, 0.114, { shadow: false }));
-      // Brows, above and a touch wider than the eye.
-      head.add(box(geo, mat.timberDark, 0.038, 0.011, 0.014, ex, 0.041, 0.112, { shadow: false }));
-    });
-
-    // Nose: a bridge and a tip, clearly out from the face.
-    head.add(box(geo, skinMat, 0.026, 0.05, 0.028, 0, 0.012, 0.114, { shadow: false }));
-    head.add(box(geo, skinMat, 0.032, 0.022, 0.034, 0, -0.016, 0.119, { shadow: false }));
-
-    // Mouth.
-    head.add(box(geo, mat.skinDark, 0.05, 0.014, 0.014, 0, -0.056, 0.111, { shadow: false }));
-  }
-
-  if (helmet) {
-    // A hard hat sits ON the head: the shell is a little wider than the
-    // skull and the brim a little wider again. Getting this wrong by a
-    // factor of two is the difference between a hard hat and a sombrero.
-    /* A hard hat sits ON TOP of the head: the shell starts ABOVE the
-     * brow and the brim rings it there. Both earlier attempts put it
-     * too low — first a brim 2.4x the width of the skull, then a shell
-     * big enough to swallow the eyes and a brim slicing across the
-     * face between the eyes and the nose.
-     *
-     * Brow is at local y = 0.047, so nothing of the hat comes below
-     * 0.05, and the eyes at 0.027 are clear of all of it. */
-    const HAT_BOTTOM = 0.05;
-    const HAT_TOP = 0.185;
-    const shell = new THREE.Mesh(geo.sphere, helmetMat);
-    shell.scale.set(0.206, HAT_TOP - HAT_BOTTOM, 0.232);
-    shell.position.y = (HAT_TOP + HAT_BOTTOM) / 2;
-    shell.castShadow = true;
-    head.add(shell);
-
-    const brim = cylinder(geo, helmetMat, 0.122, 0.015, 0, HAT_BOTTOM + 0.004, 0.002, { shadow: false });
-    head.add(brim);
-    if (fine) {
-      // A peak at the front, and the ridge over the crown.
-      head.add(box(geo, helmetMat, 0.14, 0.016, 0.052, 0, HAT_BOTTOM + 0.002, 0.116, { shadow: false }));
-      head.add(box(geo, helmetMat, 0.028, 0.028, 0.168, 0, HAT_TOP - 0.012, 0.004, { shadow: false }));
-    }
-  }
-
-  if (officer) {
-    // A clipboard in the left hand. It is what makes somebody read as
-    // the person inspecting rather than the person working, before you
-    // are close enough to see the vest colour.
-    const board = new THREE.Group();
-    board.position.set(0, -0.08, 0.05);
-    board.rotation.set(-1.2, 0, 0.2);
-    board.add(box(geo, mat.timber, 0.18, 0.012, 0.24, 0, 0, 0));
-    board.add(box(geo, mat.white, 0.15, 0.008, 0.2, 0, 0.012, -0.012, { shadow: false }));
-    board.add(box(geo, mat.steel, 0.08, 0.014, 0.028, 0, 0.022, 0.095, { shadow: false }));
-    arms[0].userData.hand.add(board);
-    arms[0].userData.board = board;
-  }
-
-  group.userData.rig = {
-    hips, spine, neck, head,
-    legL: legs[0], legR: legs[1], armL: arms[0], armR: arms[1],
-  };
-  group.userData.role = role;
-  // What this figure is doing, so an animator can keep re-applying it,
-  // and its own offset into the idle cycle — without this a yard full
-  // of people breathes in unison, which is worse than not breathing.
-  group.userData.pose = pose;
-  group.userData.idleOffset = Math.random() * 12;
-  group.userData.worker = { helmet, vest, harness, boots };
-
-  // Bake each joint down to one mesh per material. Done last, so
-  // everything is in place; the rig still works because it is the
-  // joints that rotate, not the parts inside them.
-  [hips, spine, neck, head, ...legs, ...arms].forEach(compactJoint);
-  legs.forEach((leg) => compactJoint(leg.userData.knee));
-  arms.forEach((arm) => {
-    compactJoint(arm.userData.elbow);
-    compactJoint(arm.userData.hand);
-  });
-
-  // A standing person is not at attention: break the symmetry so a
-  // crowd of these does not look like a shop display.
-  poseWorker(group, { pose, phase: 0, moving: false });
-
-  if (scale !== 1) group.scale.setScalar(scale);
-  return group;
-}
-
-/**
- * Poses or animates a worker built by buildWorker().
- *
- * @param phase   walk cycle phase in radians — pass elapsed * speed
- * @param moving  true to swing the limbs, false to stand
- * @param pose    "stand" | "work" | "reach" | "crouch" | "kneel"
- */
-export function poseWorker(worker, {
-  phase = 0, moving = false, pose = "stand", running = false, carrying = false,
-  // Elapsed seconds, for the idle layer. A figure standing perfectly
-  // still is the thing that makes a scene look dead, so standing is
-  // never actually still: it breathes, shifts its weight, and looks
-  // around. Pass the stage clock; each figure offsets it by its own
-  // amount so a crowd is not synchronised.
-  t = null,
-} = {}) {
-  const rig = worker?.userData?.rig;
-  if (!rig) return;
-  const { hips, spine, legL, legR, armL, armR, head } = rig;
-
-  if (moving) {
-    // Opposite arm to leg, knees that only bend backwards, and a small
-    // bob and sway. Those four things are what make a walk read as a
-    // walk rather than a figure sliding along the ground.
-    //
-    // A run is not a fast walk: the stride opens up, the knees come up
-    // much higher, the body leans into it and the arms bend to about a
-    // right angle and pump rather than swing.
-    const s = Math.sin(phase);
-    const c = Math.cos(phase);
-    const stride = running ? 0.95 : 0.62;
-    const lift = running ? 1.5 : 0.95;
-    const lean = running ? 0.26 : 0.05;
-
-    legL.rotation.x = s * stride;
-    legR.rotation.x = -s * stride;
-    legL.userData.knee.rotation.x = -Math.max(0, -s) * lift - 0.05;
-    legR.userData.knee.rotation.x = -Math.max(0, s) * lift - 0.05;
-    hips.position.y = 0.94 - Math.abs(c) * (running ? 0.05 : 0.025);
-    hips.rotation.z = s * (running ? 0.05 : 0.03);
-    spine.rotation.set(lean, -s * (running ? 0.12 : 0.07), 0);
-    head.rotation.set(-lean * 0.7, 0, 0);
-
-    if (carrying) {
-      // Both hands on the load in front; only the legs do the walking.
-      armL.rotation.set(-1.35, 0, 0.3);
-      armR.rotation.set(-1.35, 0, -0.3);
-      armL.userData.elbow.rotation.x = -0.75;
-      armR.userData.elbow.rotation.x = -0.75;
-      spine.rotation.x = lean - 0.12;        // leaning back against the weight
-      return;
-    }
-
-    const swing = running ? 0.85 : 0.52;
-    armL.rotation.set(-s * swing, 0, 0.1);
-    armR.rotation.set(s * swing, 0, -0.1);
-    const bend = running ? 1.35 : 0.3;
-    armL.userData.elbow.rotation.x = -bend - Math.max(0, s) * 0.3;
-    armR.userData.elbow.rotation.x = -bend - Math.max(0, -s) * 0.3;
-    return;
-  }
-
-  hips.position.y = 0.94;
-  hips.rotation.z = 0;
-  spine.rotation.set(0, 0, 0);
-  legL.rotation.x = 0.02;
-  legR.rotation.x = -0.02;
-  legL.userData.knee.rotation.x = -0.04;
-  legR.userData.knee.rotation.x = -0.04;
-  head.rotation.set(0, 0, 0);
-
-  if (pose === "work") {
-    // Hands up in front, head down at what they are doing.
-    armL.rotation.set(-1.15, 0, 0.22);
-    armR.rotation.set(-1.05, 0, -0.26);
-    armL.userData.elbow.rotation.x = -1.2;
-    armR.userData.elbow.rotation.x = -1.35;
-    spine.rotation.x = 0.16;
-    head.rotation.x = 0.3;
-  } else if (pose === "reach") {
-    armL.rotation.set(-2.5, 0, 0.3);
-    armR.rotation.set(-2.6, 0, -0.3);
-    armL.userData.elbow.rotation.x = -0.2;
-    armR.userData.elbow.rotation.x = -0.2;
-    spine.rotation.x = -0.08;
-    head.rotation.x = -0.25;
-  } else if (pose === "carry") {
-    // Standing holding something at chest height.
-    armL.rotation.set(-1.35, 0, 0.3);
-    armR.rotation.set(-1.35, 0, -0.3);
-    armL.userData.elbow.rotation.x = -0.75;
-    armR.userData.elbow.rotation.x = -0.75;
-    spine.rotation.x = -0.1;
-  } else if (pose === "lift") {
-    // Mid-lift, done properly: back straight, knees bent, load close.
-    hips.position.y = 0.70;
-    legL.rotation.x = 0.85;
-    legR.rotation.x = 0.85;
-    legL.userData.knee.rotation.x = -1.4;
-    legR.userData.knee.rotation.x = -1.4;
-    armL.rotation.set(-0.45, 0, 0.26);
-    armR.rotation.set(-0.45, 0, -0.26);
-    armL.userData.elbow.rotation.x = -0.55;
-    armR.userData.elbow.rotation.x = -0.55;
-    spine.rotation.x = 0.18;
-    head.rotation.x = -0.12;
-  } else if (pose === "climb") {
-    // On a ladder: opposite hand and foot, three points of contact.
-    const s = Math.sin(phase);
-    hips.position.y = 0.94;
-    legL.rotation.x = -0.25 + s * 0.5;
-    legR.rotation.x = -0.25 - s * 0.5;
-    legL.userData.knee.rotation.x = -0.5 - Math.max(0, s) * 0.7;
-    legR.userData.knee.rotation.x = -0.5 - Math.max(0, -s) * 0.7;
-    armL.rotation.set(-2.5 - s * 0.35, 0, 0.16);
-    armR.rotation.set(-2.5 + s * 0.35, 0, -0.16);
-    armL.userData.elbow.rotation.x = -0.3;
-    armR.userData.elbow.rotation.x = -0.3;
-    spine.rotation.x = 0.1;
-    head.rotation.x = -0.3;
-  } else if (pose === "crouch" || pose === "kneel") {
-    hips.position.y = pose === "kneel" ? 0.56 : 0.62;
-    legL.rotation.x = pose === "kneel" ? 1.5 : 1.15;
-    legR.rotation.x = pose === "kneel" ? 0.2 : 1.15;
-    legL.userData.knee.rotation.x = pose === "kneel" ? -1.7 : -1.6;
-    legR.userData.knee.rotation.x = pose === "kneel" ? -1.5 : -1.6;
-    armL.rotation.set(-0.8, 0, 0.2);
-    armR.rotation.set(-0.8, 0, -0.2);
-    armL.userData.elbow.rotation.x = -0.9;
-    armR.userData.elbow.rotation.x = -0.9;
-    spine.rotation.x = 0.22;
-  } else {
-    // Standing. Arms hang slightly out from the body with a little
-    // bend, because a straight arm pinned to the side looks like a
-    // mannequin.
-    armL.rotation.set(0.06, 0, 0.13);
-    armR.rotation.set(-0.04, 0, -0.11);
-    armL.userData.elbow.rotation.x = -0.18;
-    armR.userData.elbow.rotation.x = -0.14;
-    spine.rotation.x = 0;
-  }
-
-  /* ---- the idle layer, on top of whatever pose was just set ----
-   *
-   * Four slow cycles at different periods, so they never line up and
-   * the loop is not visible: a breath, a weight shift, a sway, and a
-   * head that looks around. Small — single degrees — because the point
-   * is that a person is never quite still, not that they are fidgeting.
-   */
-  if (t !== null && Number.isFinite(t)) {
-    const breath = Math.sin(t * 1.25);
-    const shift = Math.sin(t * 0.37);
-    const sway = Math.sin(t * 0.61);
-    const glance = Math.sin(t * 0.29) * Math.sin(t * 0.13);
-
-    hips.position.y += breath * 0.006;
-    hips.rotation.z += shift * 0.022;
-    spine.rotation.x += breath * 0.018;
-    spine.rotation.y += sway * 0.035;
-    spine.rotation.z -= shift * 0.014;
-    head.rotation.y += glance * 0.42;
-    head.rotation.x += Math.sin(t * 0.47) * 0.05;
-    armL.rotation.z += sway * 0.03;
-    armR.rotation.z += sway * 0.03;
-    armL.rotation.x += breath * 0.02;
-    armR.rotation.x -= breath * 0.02;
-    // The leg carrying the weight straightens as the other relaxes.
-    legL.rotation.x += shift * 0.018;
-    legR.rotation.x -= shift * 0.018;
-  }
-}
-
-/**
- * Every rigged figure under `root`, except any that animates itself.
- *
- * The player's own avatar sets its pose from the controller each frame,
- * so it marks itself `selfAnimated` and is left out — posing it twice
- * would fight the walk cycle.
- */
-export function collectWorkers(root) {
-  const list = [];
-  root.traverse((o) => {
-    if (o.userData?.rig && !o.userData.selfAnimated) list.push(o);
-  });
-  return list;
-}
-
-/** Runs the idle layer over a list from collectWorkers(). */
-export function idleWorkers(list, t) {
-  for (let i = 0; i < list.length; i++) {
-    const w = list[i];
-    poseWorker(w, {
-      pose: w.userData.pose || "stand",
-      moving: false,
-      t: t + (w.userData.idleOffset || 0),
-    });
-  }
-}
+export {
+  buildWorker, poseWorker, animateWorker, turnToward, createWalker,
+  collectWorkers, idleWorkers,
+} from "./human.js";
 
 /**
  * A door key, big enough to spot across a room.

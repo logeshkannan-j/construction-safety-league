@@ -37,8 +37,8 @@ import {
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail, buildScaffold,
   buildTowerCrane, updateHoistRope, buildWorker, buildCone, buildSign,
   buildFireExtinguisher, buildElectricalPanel, buildMaterialPallet,
-  buildSiteHut, buildBarrier, buildZoneMarker, buildCableRun, buildPuddle, poseWorker, buildNameplate,
-  collectWorkers, idleWorkers,
+  buildSiteHut, buildBarrier, buildZoneMarker, buildCableRun, buildPuddle, buildNameplate,
+  collectWorkers, idleWorkers, animateWorker, turnToward,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { PHASES, SCORING, pickScenario } from "./scenarios.js";
@@ -700,11 +700,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   // must leave it alone.
   avatar.userData.selfAnimated = true;
   scene.add(avatar);
-  let walkPhase = 0;
+  let avatarClock = 0;
 
   function updateCommander(dt) {
+    avatarClock += dt;
     if (state.finished) {
-      poseWorker(avatar, { phase: walkPhase, moving: false, pose: "stand" });
+      animateWorker(avatar, { dt, speed: 0, t: avatarClock });
       return;
     }
     // In first person the controller owns its own yaw; in third
@@ -713,18 +714,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     commander.update(dt);
 
     const moving = commander.moving;
-    walkPhase += dt * (commander.state.running ? 11 : 7.4) * (moving ? 1 : 0);
     avatar.position.set(commander.position.x, commander.position.y, commander.position.z);
     // Turn toward the way they are travelling rather than snapping,
     // so a change of direction reads as a person turning.
-    if (moving) {
-      let d = commander.heading - avatar.rotation.y;
-      while (d > Math.PI) d -= Math.PI * 2;
-      while (d < -Math.PI) d += Math.PI * 2;
-      avatar.rotation.y += d * Math.min(1, dt * 9);
-    }
-    poseWorker(avatar, {
-      phase: walkPhase, moving, running: commander.state.running, pose: "stand",
+    if (moving) turnToward(avatar, commander.heading, dt, 9);
+    animateWorker(avatar, {
+      dt, speed: moving ? commander.state.speed : 0, running: commander.state.running, t: avatarClock,
     });
   }
 

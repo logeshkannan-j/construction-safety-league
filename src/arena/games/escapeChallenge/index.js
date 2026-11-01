@@ -24,9 +24,9 @@ import { createFirstPerson } from "../../engine/fpsController.js";
 import {
   createMaterials, createGeometries, box, cylinder, collider,
   buildGround, buildSign, buildFireExtinguisher, buildElectricalPanel,
-  buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadder,
+  buildMaterialPallet, buildDebris, buildCableRun, buildPuddle, buildLadderAgainst,
   buildGuardrail, buildScaffold, buildPPEStation, buildWorker, buildCone, buildBarrier,
-  buildZoneMarker, buildAriaMark, buildBrandedTower, poseWorker, buildKey, buildInfoBoard,
+  buildZoneMarker, buildAriaMark, buildBrandedTower, animateWorker, turnToward, buildKey, buildInfoBoard,
   buildNameplate, buildIsolatorPanel,
   collectWorkers, idleWorkers,
 } from "../../engine/kit.js";
@@ -816,9 +816,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // An open leading edge inside the room, guarded, plus a scaffold.
     scene.add(buildGuardrail(mat, { x: room.x1 - 5, y: 0, z: room.z1 - 2.5, length: 8, axis: "x" }));
-    const ladder = buildLadder(geo, mat, { height: 3.0, lean: 0.1 });
-    ladder.position.set(room.x1 - 2.4, 0, room.z0 + 2.0);
-    scene.add(ladder);
+    // A ladder against the north wall, one out for every four up and
+    // tied where it rests. It used to lean away from the wall, on air.
+    const wallLadder = buildLadderAgainst(geo, mat, { rise: 2.6, extension: 0, tied: true });
+    wallLadder.group.position.set(room.x1 - 2.4, 0, room.z0 + WALL_THICK / 2 + wallLadder.footOffset);
+    wallLadder.group.rotation.y = Math.PI;
+    scene.add(wallLadder.group);
 
     const worker = buildWorker(geo, mat, { helmet: true, vest: true, harness: true, pose: "work" });
     worker.position.set(room.x0 + 8, 0, room.z1 - 3.4);
@@ -1195,7 +1198,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   // must leave it alone.
   avatar.userData.selfAnimated = true;
   scene.add(avatar);
-  let walkPhase = 0;
+  let avatarClock = 0;
 
   /**
    * Puts the chosen PPE on the player.
@@ -1215,6 +1218,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     kitted.position.copy(avatar.position);
     kitted.rotation.copy(avatar.rotation);
     kitted.visible = avatar.visible;
+    // Mid-stride stays mid-stride.
+    if (avatar.userData.gait) kitted.userData.gait = { ...avatar.userData.gait };
     kitted.userData.selfAnimated = true;
     scene.remove(avatar);
     avatar = kitted;
@@ -1224,20 +1229,35 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   }
 
   function updateAvatar(dt) {
+    avatarClock += dt;
     const moving = controller.moving && !controller.state.frozen;
-    walkPhase += dt * (controller.state.running ? 11 : 7.4) * (moving ? 1 : 0);
     avatar.position.set(controller.position.x, controller.position.y, controller.position.z);
-    // The model faces +Z; the camera looks down -Z rotated by yaw.
-    avatar.rotation.y = controller.yaw + Math.PI;
+    const climbing = controller.state.onLadder;
+    if (climbing && Number.isFinite(controller.state.ladderFacing)) {
+      // On a ladder, face the rungs.
+      turnToward(avatar, controller.state.ladderFacing, dt, 12);
+    } else if (controller.thirdPerson) {
+      // Over the shoulder the body turns to face the way it is walking,
+      // as a person does, instead of skating sideways with a forward
+      // stride while it faces the camera.
+      if (moving) turnToward(avatar, controller.heading, dt, 10);
+    } else {
+      // In first person the body is not drawn: keep it facing the view.
+      // The model faces +Z; the camera looks down -Z rotated by yaw.
+      avatar.rotation.y = controller.yaw + Math.PI;
+    }
     avatar.visible = controller.thirdPerson;
     if (!avatar.visible) return;
-    poseWorker(avatar, {
-      phase: walkPhase,
-      moving,
+    animateWorker(avatar, {
+      dt,
+      speed: moving ? controller.state.speed : 0,
       running: controller.state.running,
       // Both hands on the extinguisher while carrying one, walking or not.
       carrying: !!state.carrying,
       pose: state.carrying ? "carry" : "stand",
+      t: avatarClock,
+      climbing,
+      climbRate: controller.state.climb || 0,
     });
   }
 

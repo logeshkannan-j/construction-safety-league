@@ -25,8 +25,8 @@ import {
   createMaterials, createGeometries, box, cylinder,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail,
   buildTowerCrane, updateHoistRope, buildWorker, buildCone, buildSign,
-  buildMaterialPallet, buildZoneMarker, buildSiteHut, buildBarrier, poseWorker,
-  collectWorkers, idleWorkers,
+  buildMaterialPallet, buildZoneMarker, buildSiteHut, buildBarrier,
+  collectWorkers, idleWorkers, animateWorker, turnToward,
 } from "../../engine/kit.js";
 import { sfx, setMotor, stopAllLoops } from "../../audio.js";
 
@@ -1290,16 +1290,18 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     const dx = target.x - stray.position.x;
     const dz = target.z - stray.position.z;
     const dist = Math.hypot(dx, dz);
-    const step = Math.min(dist, (strayState.walkedOut ? 3.4 : 1.8) * dt);
+    const speed = strayState.walkedOut ? 3.4 : 1.8;
+    const step = Math.min(dist, speed * dt);
     if (dist > 0.25) {
       stray.position.x += (dx / dist) * step;
       stray.position.z += (dz / dist) * step;
-      stray.rotation.y = Math.atan2(dx, dz);
+      turnToward(stray, Math.atan2(dx, dz), dt, 8);
     }
-    poseWorker(stray, {
-      phase: strayState.phase * 7.4,
-      moving: dist > 0.25,
+    animateWorker(stray, {
+      dt,
+      speed: dist > 0.25 ? step / Math.max(dt, 1e-3) : 0,
       running: strayState.walkedOut,
+      t: strayState.phase,
     });
     if (strayState.walkedOut && dist < 0.4) {
       strayState.active = false;

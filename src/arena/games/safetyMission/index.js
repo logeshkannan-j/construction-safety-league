@@ -20,11 +20,11 @@ import { createFirstPerson, ladderVolume } from "../../engine/fpsController.js";
 import {
   createMaterials, createGeometries, box, cylinder, collider,
   buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, buildConcreteFrame, buildGuardrail, buildScaffold,
-  buildLadder, buildTowerCrane, updateHoistRope, buildWorker, buildCone,
+  buildLadder, buildLadderAgainst, buildTowerCrane, updateHoistRope, buildWorker, buildCone,
   buildBarrier, buildSign, buildFireExtinguisher, buildElectricalPanel,
   buildExcavation, buildMaterialPallet, buildDebris, buildCableRun, buildPuddle,
-  buildPPEStation, buildMaterialHoist, buildZoneMarker, buildSiteHut, makeHighlight, poseWorker,
-  collectWorkers, idleWorkers,
+  buildPPEStation, buildMaterialHoist, buildZoneMarker, buildSiteHut, makeHighlight,
+  collectWorkers, idleWorkers, animateWorker, turnToward,
 } from "../../engine/kit.js";
 import { sfx } from "../../audio.js";
 import { HAZARDS, SCORING, categoryOptions, actionOptions } from "./hazards.js";
@@ -295,15 +295,25 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     collider(EXC.x, -EXC.trenchDepth / 2, EXC.z - EXC.depth / 2 + 0.1, EXC.width, EXC.trenchDepth + 0.4, 0.3),
     collider(EXC.x, -EXC.trenchDepth / 2, EXC.z + EXC.depth / 2 - 0.1, EXC.width, EXC.trenchDepth + 0.4, 0.3)
   );
-  // Access ladder inside the trench.
-  const trenchLadder = buildLadder(geo, mat, { height: EXC.trenchDepth + 0.5, lean: 0 });
-  trenchLadder.position.set(EXC.x - EXC.width / 2 + 1.1, -EXC.trenchDepth + 0.05, EXC.z);
-  scene.add(trenchLadder);
+  // The access ladder, set up as it should be: footed on the dry end
+  // of the trench floor, leaning on the east face one out for every
+  // four up, tied at the top and running a metre past the edge so
+  // there is something to hold climbing out. It used to stand bolt
+  // upright a metre out from the wall, side-on to it, resting on
+  // nothing — and with its feet in the water.
+  const TRENCH_FLOOR = -EXC.trenchDepth + 0.06;
+  const trenchFace = EXC.x + EXC.width / 2 - 0.08;
+  const trenchLadder = buildLadderAgainst(geo, mat, { rise: -TRENCH_FLOOR, extension: 1, tied: true });
+  trenchLadder.group.position.set(trenchFace - trenchLadder.footOffset, TRENCH_FLOOR, EXC.z);
+  trenchLadder.group.rotation.y = Math.PI / 2;
+  scene.add(trenchLadder.group);
   ladders.push(ladderVolume({
-    x: EXC.x - EXC.width / 2 + 1.1, z: EXC.z,
-    baseY: -EXC.trenchDepth + 0.05, topY: 0.2,
+    x: trenchFace - 0.55, z: EXC.z,
+    baseY: TRENCH_FLOOR, topY: 0.2,
     width: 1.1, depth: 1.4,
-    exit: { x: EXC.x - EXC.width / 2 - 1.5, z: EXC.z },
+    exit: { x: EXC.x + EXC.width / 2 + 1.5, z: EXC.z },
+    // Climbing it, you face the rungs and the face of the trench.
+    facing: Math.PI / 2,
   }));
 
   // Spoil heaps give the trench a solid edge on one side so the player
@@ -430,10 +440,16 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     scene.add(ext);
   });
 
-  // An unsecured ladder at a bad angle, as scenery that rewards looking.
-  const looseLadder = buildLadder(geo, mat, { height: 4.2, lean: 0.07 });
-  looseLadder.position.set(-22, 0, 16);
-  looseLadder.rotation.y = 0.4;
+  // An unsecured ladder at a bad angle, as scenery that rewards looking:
+  // stood almost upright against the first-floor slab edge, untied, and
+  // stopping level with the slab so there is nothing to hold at the top.
+  // It is wrong — but it leans ON something, as a real one would.
+  const LOOSE_LEAN = 0.07;
+  const slabEdgeX = BUILDING.x - BUILDING.width / 2;
+  const looseLength = BUILDING.floorHeight / Math.cos(LOOSE_LEAN);
+  const looseLadder = buildLadder(geo, mat, { height: looseLength, lean: LOOSE_LEAN });
+  looseLadder.position.set(slabEdgeX - looseLength * Math.sin(LOOSE_LEAN) - 0.03, 0, 15.6);
+  looseLadder.rotation.y = Math.PI / 2;
   scene.add(looseLadder);
 
   /* ------------------------------ workers ------------------------------ */
@@ -622,9 +638,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       });
       fixed.group.position.copy(excavation.group.position);
       scene.add(fixed.group);
-      const ladder = buildLadder(geo, mat, { height: 3, lean: 0 });
-      ladder.position.set(14.5, -2.1, 24);
-      scene.add(ladder);
+      // The access ladder was already set up properly, so it stays.
       const sign = buildSign(geo, mat, { text: "Excavation shored safe entry", kind: "emergency", height: 1.9, width: 0.9 });
       sign.position.set(18, 0, 20.5);
       scene.add(sign);
@@ -721,23 +735,39 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   // must leave it alone.
   avatar.userData.selfAnimated = true;
   scene.add(avatar);
-  let walkPhase = 0;
+  let avatarClock = 0;
 
   function updateAvatar(dt) {
+    avatarClock += dt;
     const moving = controller.moving && !controller.state.frozen;
-    walkPhase += dt * (controller.state.running ? 11 : 7.4) * (moving ? 1 : 0);
     avatar.position.set(controller.position.x, controller.position.y, controller.position.z);
-    // The model faces +Z; the camera looks down -Z rotated by yaw.
-    avatar.rotation.y = controller.yaw + Math.PI;
-    avatar.visible = controller.thirdPerson;
-    if (avatar.visible) {
-      poseWorker(avatar, {
-        phase: walkPhase,
-        moving,
-        running: controller.state.running,
-        pose: controller.state.crouching ? "crouch" : "stand",
-      });
+    const climbing = controller.state.onLadder;
+    if (climbing && Number.isFinite(controller.state.ladderFacing)) {
+      // On a ladder, face the rungs.
+      turnToward(avatar, controller.state.ladderFacing, dt, 12);
+    } else if (controller.thirdPerson) {
+      // Over the shoulder the body turns to face the way it is walking,
+      // as a person does, instead of skating sideways with a forward
+      // stride while it faces the camera.
+      if (moving) turnToward(avatar, controller.heading, dt, 10);
+    } else {
+      // In first person the body is not drawn: keep it facing the view.
+      // The model faces +Z; the camera looks down -Z rotated by yaw.
+      avatar.rotation.y = controller.yaw + Math.PI;
     }
+    avatar.visible = controller.thirdPerson;
+    if (!avatar.visible) return;
+    // The stride is driven by how fast the body is really going, so the
+    // feet stay planted instead of skating.
+    animateWorker(avatar, {
+      dt,
+      speed: moving ? controller.state.speed : 0,
+      running: controller.state.running,
+      pose: controller.state.crouching ? "crouch" : "stand",
+      t: avatarClock,
+      climbing,
+      climbRate: controller.state.climb || 0,
+    });
   }
 
   /* ============================ game state ============================ */

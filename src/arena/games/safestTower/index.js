@@ -25,10 +25,10 @@ import { t, tAlt, tOptions, tOptionsAlt, onLangChange } from "../../language.js"
 import { shot, establishingShot, closingShot } from "../../engine/demoTour.js";
 import {
   createMaterials, createGeometries, box, cylinder,
-  buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, poseWorker, buildNameplate,
+  buildGround, buildHoarding, buildBrandBanners, buildBrandedTower, animateWorker, turnToward, buildNameplate,
   buildTowerCrane, updateHoistRope, buildWorker, buildSign,
   buildMaterialPallet, buildSiteHut, buildBarrier, buildCone,
-  buildExcavation, buildGuardrail, buildLadder, buildScaffold,
+  buildExcavation, buildGuardrail, buildLadder, buildLadderAgainst, buildScaffold,
   buildCableRun, buildPuddle, buildElectricalPanel, buildZoneMarker, buildDebris,
   collider,
   collectWorkers, idleWorkers,
@@ -145,9 +145,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   office.position.set(-22, 0, -16);
   scene.add(office);
 
-  const scaffold = buildScaffold(geo, mat, { width: 10, lifts: 2, boarded: true });
-  scaffold.group.position.set(4, 0, 19);
+  const SCAFFOLD = { x: 4, z: 19, depth: 1.2, lifts: 2, liftHeight: 2 };
+  const scaffold = buildScaffold(geo, mat, {
+    depth: SCAFFOLD.depth, lifts: SCAFFOLD.lifts, liftHeight: SCAFFOLD.liftHeight,
+  });
+  scaffold.group.position.set(SCAFFOLD.x, 0, SCAFFOLD.z);
   scene.add(scaffold.group);
+  // Where the ladder hazard's ladder lands: the front edge of the top
+  // lift, measured from the hazard's own spot.
+  const ladderSpot = HAZARDS.find((h) => h.kind === "ladder")?.at || { x: 6.5, z: 16 };
+  const LANDING = {
+    y: SCAFFOLD.lifts * SCAFFOLD.liftHeight,
+    z: SCAFFOLD.z - SCAFFOLD.depth / 2 - ladderSpot.z,
+  };
 
   // The muster point the blocked escape route leads to.
   const muster = buildSign(geo, mat, { text: "MUSTER POINT", kind: "emergency", height: 2.4, width: 1.1 });
@@ -238,8 +248,15 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         break;
       }
       case "ladder": {
-        // Far too shallow, untied, finishing level with the platform.
-        const ladder = buildLadder(geo, mat, { height: 4.6, lean: 0.62 });
+        // Far too shallow, untied, finishing level with the platform:
+        // the feet are 2.3 m out for a 4 m climb where they should be
+        // 1 m, and there is nothing above the landing to hold. Wrong —
+        // but resting on the lift, as a real one would be.
+        const out = 2.3;
+        const ladder = buildLadder(geo, mat, {
+          height: Math.hypot(LANDING.y, out), lean: Math.atan2(out, LANDING.y),
+        });
+        ladder.position.set(0, 0, LANDING.z - out);
         group.add(ladder);
         break;
       }
@@ -402,13 +419,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
         break;
       }
       case "ladder": {
-        // 1:4 pitch, tied at the stiles, a metre past the landing.
-        const ladder = buildLadder(geo, mat, { height: 5.6, lean: 0.25 });
-        group.add(ladder);
-        // Lashings at the stiles.
-        [4.2, 4.5].forEach((ly) => {
-          group.add(box(geo, mat.orange, 0.62, 0.07, 0.07, 0.25 * ly * 0.25, ly, 0, { shadow: false }));
-        });
+        // One out for every four up, tied at the stiles where it rests,
+        // and a metre past the landing so there is something to hold.
+        const set = buildLadderAgainst(geo, mat, { rise: LANDING.y, extension: 1, tied: true });
+        set.group.position.set(0, 0, LANDING.z - set.footOffset);
+        group.add(set.group);
         break;
       }
       case "opening": {
@@ -643,7 +658,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   // must leave it alone.
   avatar.userData.selfAnimated = true;
   scene.add(avatar);
-  let walkPhase = 0;
+  let avatarClock = 0;
 
   /** How close you have to get before a hazard stops you. */
   const APPROACH_RADIUS = 3.4;
@@ -669,9 +684,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   }
 
   function updateWalker(dt) {
+    avatarClock += dt;
     if (state.finished || state.openHazard) {
-      // Standing still while reading a hazard card.
-      poseWorker(avatar, { phase: walkPhase, moving: false, pose: "stand" });
+      // Standing still while reading a hazard card — easing out of the
+      // stride rather than freezing in it.
+      animateWorker(avatar, { dt, speed: 0, t: avatarClock });
       return;
     }
     // Forward on the joystick means away from the camera, so the
@@ -682,20 +699,12 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     walker.update(dt);
 
     const moving = walker.moving;
-    walkPhase += dt * (walker.state.running ? 11 : 7.4) * (moving ? 1 : 0);
     avatar.position.set(walker.position.x, walker.position.y, walker.position.z);
-    // Face the way they are actually travelling, not the way the
-    // camera happens to be pointing.
     // Turn toward the way they are travelling rather than snapping,
     // so a change of direction reads as a person turning.
-    if (moving) {
-      let d = walker.heading - avatar.rotation.y;
-      while (d > Math.PI) d -= Math.PI * 2;
-      while (d < -Math.PI) d += Math.PI * 2;
-      avatar.rotation.y += d * Math.min(1, dt * 9);
-    }
-    poseWorker(avatar, {
-      phase: walkPhase, moving, running: walker.state.running, pose: "stand",
+    if (moving) turnToward(avatar, walker.heading, dt, 9);
+    animateWorker(avatar, {
+      dt, speed: moving ? walker.state.speed : 0, running: walker.state.running, t: avatarClock,
     });
     checkApproach();
   }

@@ -641,8 +641,10 @@ section("The worker is a person, not a pile of boxes");
     return w;
   };
   const rig2 = person.userData.rig;
-  const headWidth = widthOf(rig2.head, (c) => c.material === mat.skin);
-  const hatWidth = widthOf(rig2.head, (c) => c.material === mat.yellow);
+  // Found by what they ARE rather than by one material object: skin
+  // comes in several tones now, and the hard hat is glossy plastic.
+  const headWidth = widthOf(rig2.head, (c) => c.material.userData?.role === "skin");
+  const hatWidth = widthOf(rig2.head, (c) => c.material.userData?.role === "helmet");
   check("the head is the size of a head",
     headWidth > 0.13 && headWidth < 0.24, `${headWidth.toFixed(3)} m across`);
   check("the hard hat is a hard hat, not a sombrero",
@@ -686,13 +688,105 @@ section("The worker is a person, not a pile of boxes");
     `leg ${strideA.l.toFixed(2)} arm ${strideA.arm.toFixed(2)}`);
   check("the stride reverses over the cycle", strideA.l * strideB.l < 0,
     `${strideA.l.toFixed(2)} → ${strideB.l.toFixed(2)}`);
-  check("knees only bend one way",
-    rig.legL.userData.knee.rotation.x <= 0 && rig.legR.userData.knee.rotation.x <= 0,
+  // The old figure asserted <= 0 here — and so bent every knee the
+  // wrong way: a crouch put the knee behind the hip, and the leading
+  // foot of a stride kicked up in front of the body. In this rig a
+  // knee bends with a POSITIVE rotation, heel towards the backside.
+  check("knees only bend one way — backwards, as knees do",
+    rig.legL.userData.knee.rotation.x >= 0 && rig.legR.userData.knee.rotation.x >= 0,
     `${rig.legL.userData.knee.rotation.x.toFixed(2)} / ${rig.legR.userData.knee.rotation.x.toFixed(2)}`);
 
   kit.poseWorker(person, { moving: false, pose: "stand" });
   check("standing still puts the legs back under the body",
     Math.abs(rig.legL.rotation.x) < 0.1 && Math.abs(rig.legR.rotation.x) < 0.1);
+
+  /* ---- anatomy you can SEE ----
+   *
+   * The checks above were all satisfied by a figure whose knees bent
+   * forwards like a bird's and whose hands hung inside its hips. So
+   * these look at where the parts actually end up in the world. */
+  const worldOf = (obj) => {
+    person.updateMatrixWorld(true);
+    return new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld);
+  };
+  for (const pose of ["crouch", "lift"]) {
+    kit.poseWorker(person, { pose, moving: false });
+    const hip = worldOf(rig.legL);
+    const knee = worldOf(rig.legL.userData.knee);
+    // The figure faces +Z.
+    check(`a ${pose} puts the knees in front of the hips, not behind`,
+      knee.z > hip.z + 0.15, `knee ${(knee.z - hip.z).toFixed(2)} m ahead of the hip`);
+  }
+
+  kit.poseWorker(person, { pose: "stand", moving: false });
+  const handL = worldOf(rig.armL.userData.hand);
+  const handR = worldOf(rig.armR.userData.hand);
+  const hipL = worldOf(rig.legL);
+  check("standing, the hands hang outside the hips, not inside them",
+    Math.abs(handL.x) > 0.17 && Math.abs(handR.x) > 0.17
+      && Math.sign(handL.x) === Math.sign(hipL.x),
+    `hands at ${handL.x.toFixed(2)} / ${handR.x.toFixed(2)} m`);
+
+  // The lowest point of the figure is ON the ground at every point of
+  // a stride — the hip height is solved from the legs every frame, so
+  // a walk neither floats nor wades into the floor.
+  const lowestAt = (opts) => {
+    kit.poseWorker(person, opts);
+    person.updateMatrixWorld(true);
+    return new THREE.Box3().setFromObject(person).min.y;
+  };
+  const strideLows = [];
+  for (let i = 0; i < 16; i++) {
+    strideLows.push(lowestAt({ moving: true, phase: (i / 16) * Math.PI * 2 }));
+  }
+  check("through a whole stride, a foot is on the ground and none is under it",
+    strideLows.every((y) => y > -0.035 && y < 0.035),
+    strideLows.map((y) => y.toFixed(3)).join(" "));
+  const kneelLow = lowestAt({ pose: "kneel", moving: false });
+  const crouchLow = lowestAt({ pose: "crouch", moving: false });
+  check("kneeling and crouching come down to the ground, not hover over it",
+    Math.abs(kneelLow) < 0.04 && Math.abs(crouchLow) < 0.04,
+    `kneel ${kneelLow.toFixed(3)}, crouch ${crouchLow.toFixed(3)}`);
+  kit.poseWorker(person, { moving: false, pose: "stand" });
+
+  /* ---- a crowd is people, not clones ---- */
+  const crowd = Array.from({ length: 6 }, (_, i) => kit.buildWorker(geo, mat, { seed: 100 + i }));
+  const looks = crowd.map((p) => {
+    const d = p.userData.person;
+    return `${d.tone}/${d.hair}/${d.moustache}/${d.sleeves}`;
+  });
+  check("six people from a crowd are not all the same person",
+    new Set(looks).size >= 4, looks.join("  "));
+  const again = kit.buildWorker(geo, mat, { seed: 103 });
+  check("the same seed is the same person",
+    JSON.stringify(again.userData.person) === JSON.stringify(crowd[3].userData.person));
+
+  /* ---- a face has a face on it ---- */
+  // The nose stands out of the face, the eyes sit in it, and there is
+  // a mouth: the old head was a ball with boxes stuck on.
+  const faceMeshes = [];
+  rig.head.traverse((c) => { if (c.isMesh) faceMeshes.push(c); });
+  const eye = faceMeshes.find((c) => c.material.userData?.role === "eye");
+  const skinFace = faceMeshes.find((c) => c.material.userData?.role === "skin");
+  check("the eyes are coloured into sclera, iris and pupil",
+    !!eye && !!eye.geometry.attributes.color, eye ? "has vertex colours" : "no eye mesh");
+  if (skinFace) {
+    const pos = skinFace.geometry.attributes.position;
+    let noseTip = -1;
+    let cheek = -1;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i); const y = pos.getY(i); const z = pos.getZ(i);
+      if (Math.abs(x) < 0.006 && y < -0.015 && y > -0.035) noseTip = Math.max(noseTip, z);
+      if (Math.abs(Math.abs(x) - 0.045) < 0.006 && Math.abs(y + 0.02) < 0.01) cheek = Math.max(cheek, z);
+    }
+    check("the nose stands out of the face",
+      noseTip - cheek > 0.02, `tip ${noseTip.toFixed(3)}, cheek ${cheek.toFixed(3)}`);
+    const colours = skinFace.geometry.attributes.color;
+    let darkest = 1;
+    for (let i = 0; i < colours.count; i++) darkest = Math.min(darkest, colours.getY(i));
+    check("the face has a mouth and nostrils painted in", darkest < 0.4, `darkest ${darkest.toFixed(2)}`);
+  }
+
 
   /* ---- the safety officer must be tellable from the crew ---- */
   const officer = kit.buildWorker(geo, mat, { role: "officer" });
@@ -929,6 +1023,31 @@ section("A walking character faces the way it is going");
     check(`${path}: the controller reports a travel heading`,
       Number.isFinite(body.heading));
 
+    instance.dispose();
+  }
+
+  /* Over the shoulder in the two first-person missions the body IS
+   * drawn — and facing the camera while the stick sends it sideways,
+   * it skated: a forward stride, travelling crabwise. Seen from behind,
+   * a person turns to walk the way they are going. */
+  for (const path of ["safetyMission", "escapeChallenge"]) {
+    const { instance } = await boot(path);
+    const t = instance.__test;
+    t.controller.setThirdPerson(true);
+    runFrames(10);
+    const from = t.controller.position.clone();
+    instance.input.setJoystick(1, 0);
+    runFrames(60);
+    instance.input.setJoystick(0, 0);
+    runFrames(5);
+    const moved = t.controller.position.clone().sub(from);
+    moved.y = 0;
+    let off = Math.atan2(moved.x, moved.z) - t.avatar.rotation.y;
+    while (off > Math.PI) off -= Math.PI * 2;
+    while (off < -Math.PI) off += Math.PI * 2;
+    check(`${path}: over the shoulder, the body turns to walk the way it goes`,
+      moved.length() > 0.3 && Math.abs(off) < 0.3,
+      `${(Math.abs(off) * 57.3).toFixed(0)} deg off the line it walked`);
     instance.dispose();
   }
 }
@@ -1513,6 +1632,135 @@ section("Every staircase can actually be walked up");
         offCentre < 1.0, `${offCentre.toFixed(2)} m off the centre line`);
     }
 
+    instance.dispose();
+  }
+}
+
+section("Every ladder leans on something, one out for every four up");
+
+/* "The ladder is not placed proper." It was not: the trench ladder
+ * stood bolt upright a metre out from the wall, side-on to it, resting
+ * on nothing, with its feet in the standing water — and the Safest
+ * Tower ladder stood four metres short of the scaffold it served,
+ * leaning the other way, into the air. */
+{
+  const kit = await import(`${SRC}/engine/kit.js`);
+  const container = makeElement("div", { width: 800, height: 600 });
+  const stage = gfx.createStage(container, { quality: "medium" });
+  const mat = kit.createMaterials(stage.cfg);
+  const geo = kit.createGeometries(stage.cfg);
+
+  const set = kit.buildLadderAgainst(geo, mat, { rise: 4, extension: 1, tied: true });
+  const deg = (set.lean * 180) / Math.PI;
+  check("a ladder set up properly stands one out for every four up",
+    Math.abs(set.footOffset - 1) < 0.01 && Math.abs(deg - 14.04) < 0.2,
+    `${set.footOffset.toFixed(2)} m out, ${deg.toFixed(1)} deg off vertical`);
+  set.group.updateMatrixWorld(true);
+  const top = new THREE.Box3().setFromObject(set.group).max.y;
+  check("it runs on a metre past the landing",
+    top > 4.9 && top < 5.2, `top at ${top.toFixed(2)} m for a 4 m climb`);
+  check("it is tied where it rests", set.group.userData.ladder.tied === true);
+
+  // Turning a ladder to face a wall must lean it AT that wall. The old
+  // ladder put the turn and the lean on one group, and three.js applied
+  // them in an order that tipped it sideways instead.
+  const turned = kit.buildLadderAgainst(geo, mat, { rise: 3, extension: 1 });
+  turned.group.rotation.y = Math.PI / 2;
+  turned.group.updateMatrixWorld(true);
+  const tb = new THREE.Box3().setFromObject(turned.group);
+  check("turning a ladder to face a wall leans it towards that wall",
+    tb.max.x > 0.75 && tb.min.x > -0.15 && tb.max.z - tb.min.z < 0.6,
+    `x ${tb.min.x.toFixed(2)}..${tb.max.x.toFixed(2)}, ${(tb.max.z - tb.min.z).toFixed(2)} m across`);
+  stage.dispose();
+
+  /* ---- the trench in the Safety Mission ---- */
+  const { instance } = await boot("safetyMission");
+  const t = instance.__test;
+  let trenchLadder = null;
+  t.scene.traverse((o) => {
+    const l = o.userData?.ladder;
+    if (l && l.tied && l.rise > 2 && l.rise < 2.3) trenchLadder = o;
+  });
+  check("the trench has a ladder set up to the rules", !!trenchLadder);
+  if (trenchLadder) {
+    trenchLadder.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(trenchLadder);
+    // The trench: centre x 18, 9 m long, 2.2 m deep; its east face is
+    // at x = 22.5 and the standing water ends at about x = 20.5.
+    check("its feet are on the trench floor", b.min.y < -2.0 && b.min.y > -2.25,
+      `feet at ${b.min.y.toFixed(2)} m`);
+    check("it rests against the face of the trench", b.max.x > 22.3 && b.max.x < 22.9,
+      `reaches x ${b.max.x.toFixed(2)}`);
+    check("it stands about a metre above the edge", b.max.y > 0.85 && b.max.y < 1.2,
+      `top ${b.max.y.toFixed(2)} m above the ground`);
+    check("its feet are out of the standing water", b.min.x > 20.7,
+      `feet at x ${b.min.x.toFixed(2)}`);
+  }
+
+  // And it is a way out: from the floor of the trench, push forward
+  // facing the ladder and you climb out on to the ground.
+  const c = t.controller;
+  c.teleport(21.6, -2.14, 24, -Math.PI / 2);
+  instance.input.setJoystick(0, 1);
+  runFrames(360);
+  instance.input.setJoystick(0, 0);
+  check("you can climb out of the trench up the ladder",
+    c.position.y > -0.1 && c.position.x > 22.6,
+    `ended at x ${c.position.x.toFixed(2)}, y ${c.position.y.toFixed(2)}`);
+  instance.dispose();
+
+  /* ---- the Safest Tower ladder rests on the scaffold lift ---- */
+  const tower = await boot("safestTower");
+  const towerScene = tower.instance.__test.avatar.parent;
+  towerScene.updateMatrixWorld(true);
+  const leaning = [];
+  towerScene.traverse((o) => { if (o.userData?.ladder && o.visible) leaning.push(o); });
+  const hazardLadder = leaning.find((o) => {
+    const b = new THREE.Box3().setFromObject(o);
+    return b.max.y > 3.5 && b.max.y < 4.3;
+  });
+  check("the Safest Tower ladder reaches the lift it serves", !!hazardLadder,
+    `${leaning.length} ladders on site`);
+  if (hazardLadder) {
+    const b = new THREE.Box3().setFromObject(hazardLadder);
+    // The scaffold's front face is at z = 18.4.
+    check("its top rests on the scaffold, not on air",
+      b.max.z > 18.2 && b.max.z < 18.7, `top at z ${b.max.z.toFixed(2)}`);
+  }
+  tower.instance.dispose();
+}
+
+section("Every flight of stairs has a handrail you can see");
+
+/* "The building staircase handrail missing." The flights had rails —
+ * 70 mm grey bar, the colour of the concrete behind it, stopping dead
+ * at the first and last tread. Now the rail you hold is painted safety
+ * yellow and runs on past each end of the flight. */
+{
+  const SITES = [
+    ["safetyMission", (t) => t.scene],
+    ["emergencyCommander", (t) => t.avatar.parent],
+    ["craneMaster", (t) => t.frame.group],
+  ];
+  for (const [path, root] of SITES) {
+    const { instance } = await boot(path);
+    const rails = [];
+    root(instance.__test).traverse((o) => { if (o.isMesh && o.userData?.handrail) rails.push(o); });
+    check(`${path}: every flight has a handrail`, rails.length >= 3,
+      `${rails.length} flights railed`);
+    // Read in sRGB, as a person sees it: three.js keeps colours linear.
+    const hex = rails[0]?.material?.color?.getHex() ?? 0;
+    const [r, g, b] = [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
+    check(`${path}: the handrail is painted to be seen`,
+      r > 0xd0 && g > 0x90 && b < 0x60,
+      `#${hex.toString(16).padStart(6, "0")}`);
+    // Both sides of the flight, not one.
+    const sides = rails.map((r) => {
+      r.geometry.computeBoundingBox();
+      return r.geometry.boundingBox.max.z - r.geometry.boundingBox.min.z;
+    });
+    check(`${path}: the handrails run up both sides`, sides.every((d) => d > 2),
+      sides.map((d) => d.toFixed(2)).join(", "));
     instance.dispose();
   }
 }

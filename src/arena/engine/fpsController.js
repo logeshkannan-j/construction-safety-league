@@ -415,6 +415,10 @@ export function createFirstPerson(camera, input, {
       // ---- ladders ----
       const ladder = ladderAt(position.x, position.y, position.z);
       state.onLadder = !!ladder;
+      // Which way the rungs face, so a visible body can face them, and
+      // how fast it is climbing, so its arms and legs can keep pace.
+      state.ladderFacing = ladder && Number.isFinite(ladder.facing) ? ladder.facing : null;
+      state.climb = 0;
 
       // ---- movement ----
       const speed = state.crouching ? crouchSpeed : state.running ? runSpeed : walkSpeed;
@@ -443,6 +447,7 @@ export function createFirstPerson(camera, input, {
           moveAxis("z", (outZ / len) * 1.8 * dt);
         }
         state.speed = Math.abs(climb);
+        state.climb = climb;
       } else {
         const dx = (forward.x * my + right.x * mx) * speed;
         const dz = (forward.z * my + right.z * mx) * speed;
@@ -486,10 +491,12 @@ export function createFirstPerson(camera, input, {
 }
 
 /** Helper to turn a ladder mesh/placement into a climbable volume. */
-export function ladderVolume({ x, z, baseY = 0, topY = 4, width = 0.9, depth = 0.9, exit = null }) {
+export function ladderVolume({ x, z, baseY = 0, topY = 4, width = 0.9, depth = 0.9, exit = null, facing = null }) {
   return {
     minX: x - width / 2, maxX: x + width / 2,
     minZ: z - depth / 2, maxZ: z + depth / 2,
     baseY, topY, exit,
+    // The compass heading of somebody standing on it facing the rungs.
+    facing,
   };
 }
