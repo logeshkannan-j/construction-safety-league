@@ -1173,6 +1173,70 @@ section("Women on site are built as women");
   }
 }
 
+section("Emergency Response: a tap reaches the site, and the zoom is the player's");
+
+/* "In the emergency game touching is not working again, and the zoom
+ * goes out without the player's control." The brief closed itself 3.4 s
+ * into the game but left its flag up, and taps are ignored while the
+ * brief is open — so no station could be tapped for the rest of the
+ * game. And the camera pulled back to 15 m by itself, at the start and
+ * after every action. */
+{
+  const { instance, record } = await boot("emergencyCommander", { mobile: true });
+  const t = instance.__test;
+  runFrames(10);
+  const startDistance = t.camDistance();
+  check("the brief is up at the start", t.state.briefOpen === true && !!record.dialog);
+  await new Promise((r) => setTimeout(r, 3700));
+  runFrames(30);
+  check("when it closes by itself, it is really closed", t.state.briefOpen === false && !record.dialog);
+  check("and the zoom is where it was", Math.abs(t.camDistance() - startDistance) < 0.01,
+    `${startDistance.toFixed(2)} m → ${t.camDistance().toFixed(2)} m`);
+
+  // The player asks to see a station (the number keys) and taps it on
+  // the screen, the way the touch pad reports a tap.
+  const station = t.STATIONS[0];
+  instance.input.press("opt1");
+  runFrames(1);
+  instance.input.release("opt1");
+  runFrames(120);
+  check("being shown a station leaves the zoom alone", Math.abs(t.camDistance() - startDistance) < 0.01,
+    `${t.camDistance().toFixed(2)} m`);
+  // A real renderer brings every world matrix up to date each frame; the
+  // stand-in one does not, so it is done here before the ray is cast.
+  t.avatar.parent.updateMatrixWorld(true);
+  const ndc = t.stationMarkers.get(station.id).anchor.clone().project(t.camera);
+  const toastsBefore = record.toasts.length;
+  instance.input.registerTap((ndc.x + 1) * 640, (1 - ndc.y) * 360);
+  runFrames(3);
+  const answer = record.toasts.slice(toastsBefore).map((x) => x.text).join(" | ");
+  check("a tap on a station acts on it", t.state.doneStations.has(station.id) || answer.length > 0,
+    answer || `nothing happened (station at ${ndc.x.toFixed(2)}, ${ndc.y.toFixed(2)} on screen)`);
+
+  // Acting on another station: the camera stays with the commander, at
+  // the player's zoom.
+  const other = t.STATIONS.find((st) => st.id !== station.id && st.id !== "casualty");
+  t.actOnStation(other);
+  runFrames(180);
+  check("acting on a station leaves the zoom alone", Math.abs(t.camDistance() - startDistance) < 0.01,
+    `${startDistance.toFixed(2)} m → ${t.camDistance().toFixed(2)} m`);
+  const commander = t.walker.position;
+  const reach = Math.hypot(t.camera.position.x - commander.x, t.camera.position.z - commander.z);
+  check("and the camera is back with the commander, not off at the station",
+    reach < t.camDistance() + 1, `${reach.toFixed(1)} m from the commander`);
+
+  // The player's own zoom still works: a pinch, and the ZOOM button.
+  instance.input.addZoom(400);
+  runFrames(5);
+  const pinched = t.camDistance();
+  check("a pinch zooms out", pinched > startDistance + 5, `${pinched.toFixed(1)} m`);
+  instance.input.tap("zoom");
+  runFrames(2);
+  check("and ZOOM brings it back in", Math.abs(t.camDistance() - startDistance) < 0.01,
+    `${t.camDistance().toFixed(1)} m`);
+  instance.dispose();
+}
+
 section("The ERT responds, and the clock stops while it does");
 
 /* "ERT team should be available in the emergency scenario game. Based

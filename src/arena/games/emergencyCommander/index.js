@@ -689,7 +689,13 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     distance: (scenario.scene === "fall" ? 10 : 9) * cameraScale(settings),
     target: incident.position.clone(),
     desired: incident.position.clone(),
+    // Until when the camera looks at a station the player asked to see,
+    // rather than riding with the commander.
+    observeUntil: 0,
   };
+  // Where the zoom starts, and where ZOOM brings it back to. After that
+  // only the player moves it: the wheel, a pinch or the ZOOM button.
+  cam.home = cam.distance;
 
   /* --------------------------- the commander ---------------------------
    * The commander is a person standing on the site, not a floating
@@ -788,9 +794,9 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   }
 
   function updateCamera(dt) {
-    // Unless the camera has been sent to observe a station, it rides
-    // with the commander.
-    if (!cam.observeDistance && !state.finished) {
+    // Unless the player has asked to see a station, it rides with the
+    // commander.
+    if (!(stage.elapsed < cam.observeUntil) && !state.finished) {
       cam.desired.set(commander.position.x, commander.position.y + 1.2, commander.position.z);
     }
     const look = input.consumeLook();
@@ -799,13 +805,6 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     cam.pitch = Math.max(-1.1, Math.min(0.2, cam.pitch));
     const wheel = input.consumeWheel();
     if (wheel) cam.distance = Math.max(6, Math.min(70, cam.distance + wheel * 0.03));
-
-    // After acting on a station the camera eases in on it, so the
-    // player sees the consequence of what they just did.
-    if (cam.observeDistance) {
-      cam.distance += (cam.observeDistance - cam.distance) * Math.min(1, dt * 1.1);
-      if (Math.abs(cam.distance - cam.observeDistance) < 0.4) cam.observeDistance = 0;
-    }
 
     // Follows closely: a lagging camera on a walking character reads
     // as the character sliding rather than walking.
@@ -819,12 +818,18 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     camera.lookAt(cam.target);
   }
 
-  /** Swings the camera to whatever was just acted on. */
+  /**
+   * Shows the player a station they asked to see (the number keys): the
+   * camera looks at it for a few seconds, then rides with the commander
+   * again. It leaves the zoom alone. It used to pull back to 15 m, and
+   * it did so by itself after every action, so the camera kept zooming
+   * out while the player was busy walking the site.
+   */
   function frameForStation(station) {
     const marker = stationMarkers.get(station?.id);
     if (!marker) return;
     cam.desired.copy(marker.anchor);
-    cam.observeDistance = 15;
+    cam.observeUntil = stage.elapsed + 3;
   }
 
   /* -------------------------- the station activity -------------------------- */
@@ -935,7 +940,6 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     }
 
     markStationDone(station.id);
-    frameForStation(station);
     if (station.id === "casualty") startERTResponse();
     pushHud();
 
@@ -1010,11 +1014,19 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       dismissLabel: interrupting ? "Back to the decision — the clock is running" : "Back to the incident",
       footer: [`Alert: ${t(scenario, "alert", lang)}`, tAlt(scenario, "alert", lang)]
         .filter(Boolean).join("  ·  "),
-      onDismiss: () => {
-        state.briefOpen = false;
-        api.dialog(null);
-      },
+      onDismiss: closeBrief,
     });
+  }
+
+  /**
+   * Puts the brief away, whether the player closed it or it closed by
+   * itself at the start. Taps on the site are ignored while the brief is
+   * open, so the flag has to go with the dialog: closing only the dialog
+   * left every tap on a station dead for the rest of the game.
+   */
+  function closeBrief() {
+    state.briefOpen = false;
+    api.dialog(null);
   }
 
   /* ------------------------------ finishing ------------------------------ */
@@ -1201,8 +1213,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   showBrief();
   later(() => {
     if (state.finished) return;
-    api.dialog(null);
-    frameForStation(STATIONS[0]);
+    if (state.briefOpen) closeBrief();
     api.toast("Take command. Find the command post and work the response.", "warn");
   }, 3400);
 
@@ -1251,12 +1262,11 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     if (input.wasPressed("viewmode")) setFirstPerson(!state.firstPerson);
     if (input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
 
-    // ZOOM snaps between a wide view of the whole site and a close look
-    // at whatever the current step is about. Wheel and pinch still give
-    // fine control; this is the one-tap version for a phone.
+    // ZOOM snaps between a wide view of the whole site and the close view
+    // over the commander's shoulder. Wheel and pinch still give fine
+    // control; this is the one-tap version for a phone.
     if (input.wasPressed("zoom")) {
-      const close = cam.observeDistance || 9;
-      cam.distance = cam.distance > close + 6 ? close : 30;
+      cam.distance = cam.distance > cam.home + 6 ? cam.home : 30;
       sfx.click();
     }
 
@@ -1407,7 +1417,7 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
-      walker: commander, avatar, bearingToNext, stationMarkers,
+      walker: commander, avatar, bearingToNext, stationMarkers, camera,
       camDistance: () => cam.distance,
       state, scenario, crowd, ert, casualty,
       fire: fireGroup,
