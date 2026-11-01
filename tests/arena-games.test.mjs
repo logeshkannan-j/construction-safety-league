@@ -1185,13 +1185,13 @@ section("Emergency Response: a tap reaches the site, and the zoom is the player'
   const { instance, record } = await boot("emergencyCommander", { mobile: true });
   const t = instance.__test;
   runFrames(10);
-  const startDistance = t.camDistance();
+  const startFov = t.zoomFov();
   check("the brief is up at the start", t.state.briefOpen === true && !!record.dialog);
   await new Promise((r) => setTimeout(r, 3700));
   runFrames(30);
   check("when it closes by itself, it is really closed", t.state.briefOpen === false && !record.dialog);
-  check("and the zoom is where it was", Math.abs(t.camDistance() - startDistance) < 0.01,
-    `${startDistance.toFixed(2)} m → ${t.camDistance().toFixed(2)} m`);
+  check("and the zoom is where it was", Math.abs(t.zoomFov() - startFov) < 0.01,
+    `${startFov.toFixed(1)}° → ${t.zoomFov().toFixed(1)}°`);
 
   // The player asks to see a station (the number keys) and taps it on
   // the screen, the way the touch pad reports a tap.
@@ -1200,8 +1200,8 @@ section("Emergency Response: a tap reaches the site, and the zoom is the player'
   runFrames(1);
   instance.input.release("opt1");
   runFrames(120);
-  check("being shown a station leaves the zoom alone", Math.abs(t.camDistance() - startDistance) < 0.01,
-    `${t.camDistance().toFixed(2)} m`);
+  check("turning to face a station leaves the zoom alone", Math.abs(t.zoomFov() - startFov) < 0.01,
+    `${t.zoomFov().toFixed(1)}°`);
   // A real renderer brings every world matrix up to date each frame; the
   // stand-in one does not, so it is done here before the ray is cast.
   t.avatar.parent.updateMatrixWorld(true);
@@ -1218,22 +1218,27 @@ section("Emergency Response: a tap reaches the site, and the zoom is the player'
   const other = t.STATIONS.find((st) => st.id !== station.id && st.id !== "casualty");
   t.actOnStation(other);
   runFrames(180);
-  check("acting on a station leaves the zoom alone", Math.abs(t.camDistance() - startDistance) < 0.01,
-    `${startDistance.toFixed(2)} m → ${t.camDistance().toFixed(2)} m`);
+  check("acting on a station leaves the zoom alone", Math.abs(t.zoomFov() - startFov) < 0.01,
+    `${startFov.toFixed(1)}° → ${t.zoomFov().toFixed(1)}°`);
   const commander = t.walker.position;
   const reach = Math.hypot(t.camera.position.x - commander.x, t.camera.position.z - commander.z);
-  check("and the camera is back with the commander, not off at the station",
+  check("and the camera stays over the commander's shoulder",
     reach < t.camDistance() + 1, `${reach.toFixed(1)} m from the commander`);
 
-  // The player's own zoom still works: a pinch, and the ZOOM button.
-  instance.input.addZoom(400);
-  runFrames(5);
-  const pinched = t.camDistance();
-  check("a pinch zooms out", pinched > startDistance + 5, `${pinched.toFixed(1)} m`);
+  // "How zooming works in the Safety Mission — the same here": the lens
+  // narrows, and the camera stays where it is.
+  const camAt = t.camera.position.clone();
+  instance.input.addZoom(-400);
+  runFrames(40);
+  check("a pinch zooms the lens in", t.zoomFov() < startFov - 5, `${startFov.toFixed(1)}° → ${t.zoomFov().toFixed(1)}°`);
+  check("and the camera does not move away to do it", t.camera.position.distanceTo(camAt) < 0.3,
+    `moved ${t.camera.position.distanceTo(camAt).toFixed(2)} m`);
   instance.input.tap("zoom");
-  runFrames(2);
-  check("and ZOOM brings it back in", Math.abs(t.camDistance() - startDistance) < 0.01,
-    `${t.camDistance().toFixed(1)} m`);
+  runFrames(60);
+  check("ZOOM takes the long lens off again", Math.abs(t.zoomFov() - startFov) < 0.5, `${t.zoomFov().toFixed(1)}°`);
+  instance.input.tap("zoom");
+  runFrames(60);
+  check("and puts it back on", t.zoomFov() < startFov - 10, `${t.zoomFov().toFixed(1)}°`);
   instance.dispose();
 }
 
@@ -2254,11 +2259,12 @@ section("The over-the-shoulder camera starts close");
  * wheel or a pinch. */
 {
   const CLOSE_CAMERAS = [
-    ["safestTower", "safest-tower", 18],
-    ["emergencyCommander", "emergency-commander", 14],
+    ["safestTower", "safest-tower", 18, false],
+    // Over the shoulder on a boom, zooming its lens like the Safety Mission.
+    ["emergencyCommander", "emergency-commander", 14, true],
   ];
 
-  for (const [path, id, ceiling] of CLOSE_CAMERAS) {
+  for (const [path, id, ceiling, lens] of CLOSE_CAMERAS) {
     const close = await boot(path, { settings: { ...SETTINGS, cameraDistance: "close" } });
     runFrames(6);
     const closeDistance = close.instance.__test.camDistance();
@@ -2273,17 +2279,29 @@ section("The over-the-shoulder camera starts close");
     const closeAgain = await boot(path, { settings: { ...SETTINGS, cameraDistance: "close" } });
     runFrames(6);
     const before = closeAgain.instance.__test.camDistance();
-    closeAgain.instance.input.addZoom(900);
+    const lensBefore = closeAgain.instance.__test.zoomFov?.() ?? null;
+    if (lens) closeAgain.instance.input.addZoom(-900);
+    else closeAgain.instance.input.addZoom(900);
     runFrames(40);
     const pulledBack = closeAgain.instance.__test.camDistance();
+    const lensIn = closeAgain.instance.__test.zoomFov?.() ?? null;
+    if (lens) closeAgain.instance.input.addZoom(900);
+    runFrames(40);
+    const lensOut = closeAgain.instance.__test.zoomFov?.() ?? null;
 
     check(`${id}: the camera starts over the shoulder, not overhead`,
       closeDistance <= ceiling, `${closeDistance.toFixed(1)} m, wanted no more than ${ceiling} m`);
     check(`${id}: choosing a wider view really does pull back`,
       wideDistance > closeDistance * 1.5,
       `close ${closeDistance.toFixed(1)} m vs wide ${wideDistance.toFixed(1)} m`);
-    check(`${id}: the player can still zoom out from the close default`,
-      pulledBack > before + 1, `${before.toFixed(1)} m → ${pulledBack.toFixed(1)} m`);
+    if (lens) {
+      check(`${id}: the player zooms the lens in from the close default, and back out`,
+        lensIn < lensBefore - 5 && Math.abs(lensOut - lensBefore) < 0.5,
+        `${lensBefore.toFixed(1)}° → ${lensIn.toFixed(1)}° → ${lensOut.toFixed(1)}°`);
+    } else {
+      check(`${id}: the player can still zoom out from the close default`,
+        pulledBack > before + 1, `${before.toFixed(1)} m → ${pulledBack.toFixed(1)} m`);
+    }
 
     wide.instance.dispose();
     closeAgain.instance.dispose();
@@ -2293,9 +2311,11 @@ section("The over-the-shoulder camera starts close");
 section("First person and third person both work");
 
 {
-  for (const [path, pick] of [
-    ["safestTower", (t) => t.walker],
-    ["emergencyCommander", (t) => t.walker],
+  for (const [path, pick, orbit] of [
+    ["safestTower", (t) => t.walker, true],
+    // The Safety Mission's camera: the commander always has it, on the
+    // boom over their shoulder or at their eyes.
+    ["emergencyCommander", (t) => t.walker, false],
   ]) {
     const { instance } = await boot(path);
     const t = instance.__test;
@@ -2331,7 +2351,14 @@ section("First person and third person both work");
     runFrames(10);
     check(`${path}: switching back shows the body again`,
       t.state.firstPerson === false && t.avatar.visible === true);
-    check(`${path}: and the orbit camera has the camera back`, body.ownsView === false);
+    if (orbit) {
+      check(`${path}: and the orbit camera has the camera back`, body.ownsView === false);
+    } else {
+      const head = body.position.clone().setY(body.position.y + 1.68);
+      check(`${path}: and the camera is back on the boom behind them`,
+        body.thirdPerson === true && lastRenderer.lastCamera.position.distanceTo(head) > 2,
+        `${lastRenderer.lastCamera.position.distanceTo(head).toFixed(1)} m from their head`);
+    }
 
     instance.dispose();
   }

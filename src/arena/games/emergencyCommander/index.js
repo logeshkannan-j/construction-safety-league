@@ -25,7 +25,7 @@
  * ------------------------------------------------------------------ */
 
 import * as THREE from "three";
-import { createStage, addDaylight, addSky, screenRaycast, findTagged } from "../../engine/gfx.js";
+import { createStage, addDaylight, addSky, screenRaycast, findTagged, createZoom } from "../../engine/gfx.js";
 import { createInput } from "../../engine/input.js";
 import { createTopView } from "../../engine/topview.js";
 import { createFirstPerson } from "../../engine/fpsController.js";
@@ -79,13 +79,13 @@ export const meta = {
       "Raise the alarm before you do anything clever. It is the only thing that moves everybody at once.",
       "Isolate from outside the hazard. Never send a person in to make it safe.",
       "Call the emergency services with what you know now, and update them later.",
-      "Press 1 to 8 to swing the camera to each station if you cannot find one.",
+      "Press 1 to 8 to turn and face each station if you cannot find one.",
     ],
   },
 
   desktopControls: [
     ["Click", "Act on whatever you clicked — a station, or the hazard"],
-    ["1 – 8", "Swing the camera to a station you cannot find"],
+    ["1 – 8", "Turn to face a station you cannot find"],
     ["W A S D", "Walk the site — you are a person standing on it, not a camera"],
     ["Shift", "Run"],
     ["Space", "Jump"],
@@ -695,28 +695,20 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     distance: 118, minDistance: 52, maxDistance: 200, pitch: 0.82,
   });
 
-  const cam = {
-    yaw: 2.4,
-    // Over the shoulder rather than a drone shot. At 26 m the
-    // commander was a speck and you could not tell which way they
-    // were facing, which is most of why the walking read wrong.
-    pitch: -0.30,
-    distance: (scenario.scene === "fall" ? 10 : 9) * cameraScale(settings),
-    target: incident.position.clone(),
-    desired: incident.position.clone(),
-    // Until when the camera looks at a station the player asked to see,
-    // rather than riding with the commander.
-    observeUntil: 0,
-  };
-  // Where the zoom starts, and where ZOOM brings it back to. After that
-  // only the player moves it: the wheel, a pinch or the ZOOM button.
-  cam.home = cam.distance;
+  // The camera is the Safety Mission's: on a boom over the commander's
+  // shoulder, turning with them, and zooming narrows the lens instead of
+  // pulling the camera away. The orbit camera it replaces pulled back
+  // with every pinch and could swing off to a station, which players
+  // took for a camera with a mind of its own. How far back the boom sits
+  // is the player's Camera Distance setting.
+  const boom = 4.2 * cameraScale(settings);
+  const zoom = createZoom(camera, input, { baseFov: camera.fov, minFov: 26 });
 
   /* --------------------------- the commander ---------------------------
    * The commander is a person standing on the site, not a floating
-   * point of view. They walk with the joystick; the orbit camera above
-   * keeps the look and the zoom, so this is used purely as a movement
-   * solver (ownsCamera / ownsLook both off).
+   * point of view. They walk with the joystick and look by dragging,
+   * over the shoulder by default and through their own eyes on the
+   * FPP / TPP button — exactly as in the Safety Mission.
    *
    * It matters for this mission in particular: "take command from a
    * position of safety" means something once you can walk into the
@@ -728,19 +720,23 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    * treads, and no amount of pushing forward took you to the floor
    * above, because there was nothing to step onto.
    */
+  const spawnAt = { x: incident.position.x + 10, y: 0, z: incident.position.z + 14 };
   const commander = createFirstPerson(camera, input, {
     colliders: [...hoarding.colliders, ...frame.colliders, ...scaffold.colliders],
-    spawn: { x: incident.position.x + 10, y: 0, z: incident.position.z + 14 },
-    yaw: 0,
+    spawn: spawnAt,
+    // Facing the incident, so the emergency is the first thing in view.
+    yaw: Math.atan2(spawnAt.x - incident.position.x, spawnAt.z - incident.position.z),
     // Jump and run are on in every mission except the crane, where
     // the player is sitting in a cab.
     canJump: true,
-    ownsCamera: false,
-    ownsLook: false,
+    thirdPerson: true,
+    boomLength: boom,
     walkSpeed: 3.6,
     runSpeed: 6.2,
     onStep: () => sfx.step(),
   });
+  // Looking a little down, so the ground round them is in the picture.
+  commander.state.pitch = -0.2;
 
   const avatar = buildWorker(geo, mat, {
     helmet: true, vest: true, boots: true, role: "officer", gender: avatarGender(settings),
@@ -748,6 +744,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
   // Posed from the controller every frame, so the crowd animator
   // must leave it alone.
   avatar.userData.selfAnimated = true;
+  // Facing the way the camera looks, away from it, as over the shoulder
+  // should: the body only turns by itself once they walk.
+  avatar.rotation.y = commander.yaw + Math.PI;
+  avatar.position.set(commander.position.x, commander.position.y, commander.position.z);
   scene.add(avatar);
   let avatarClock = 0;
 
@@ -757,9 +757,6 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       animateWorker(avatar, { dt, speed: 0, t: avatarClock });
       return;
     }
-    // In first person the controller owns its own yaw; in third
-    // person it is steered by the camera the player is looking from.
-    if (!state.firstPerson) commander.setYaw(cam.yaw);
     commander.update(dt);
 
     const moving = commander.moving;
@@ -780,9 +777,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
    * standing relative to what you are inspecting. First person is for
    * getting close to something.
    *
-   * The movement solver normally runs with the camera and the look
-   * handed to the orbit camera above; switching to first person gives
-   * both back to it, because an orbit camera cannot drive a head.
+   * Both are the commander's own camera: on the boom behind them, or
+   * at their eyes.
    */
   /* Switching language repaints the brief and the objective line. */
   const stopLangWatch = onLangChange(() => {
@@ -792,59 +788,27 @@ export function create({ container, difficulty, quality, settings, mobile, api }
 
   function setFirstPerson(value) {
     state.firstPerson = !!value;
-    commander.setOwnsView(state.firstPerson);
+    commander.setThirdPerson(!state.firstPerson);
     avatar.visible = !state.firstPerson;
-    if (!state.firstPerson) commander.setYaw(cam.yaw);
     sfx.click();
     pushHud();
   }
 
-  /** The camera, whichever mode is in force. */
-  function driveCamera(dt) {
-    if (state.firstPerson) {
-      commander.syncCamera();
-      return;
-    }
-    updateCamera(dt);
-  }
-
-  function updateCamera(dt) {
-    // Unless the player has asked to see a station, it rides with the
-    // commander.
-    if (!(stage.elapsed < cam.observeUntil) && !state.finished) {
-      cam.desired.set(commander.position.x, commander.position.y + 1.2, commander.position.z);
-    }
-    const look = input.consumeLook();
-    cam.yaw -= look.dx * 0.004;
-    cam.pitch -= look.dy * 0.003;
-    cam.pitch = Math.max(-1.1, Math.min(0.2, cam.pitch));
-    const wheel = input.consumeWheel();
-    if (wheel) cam.distance = Math.max(6, Math.min(70, cam.distance + wheel * 0.03));
-
-    // Follows closely: a lagging camera on a walking character reads
-    // as the character sliding rather than walking.
-    cam.target.lerp(cam.desired, Math.min(1, dt * 6));
-    const horizontal = Math.cos(cam.pitch) * cam.distance;
-    camera.position.set(
-      cam.target.x + Math.sin(cam.yaw) * horizontal,
-      cam.target.y + 1.6 - Math.sin(cam.pitch) * cam.distance,
-      cam.target.z + Math.cos(cam.yaw) * horizontal
-    );
-    camera.lookAt(cam.target);
+  /** The camera: the commander's own, over the shoulder or at their eyes. */
+  function driveCamera() {
+    commander.syncCamera();
   }
 
   /**
-   * Shows the player a station they asked to see (the number keys): the
-   * camera looks at it for a few seconds, then rides with the commander
-   * again. It leaves the zoom alone. It used to pull back to 15 m, and
-   * it did so by itself after every action, so the camera kept zooming
-   * out while the player was busy walking the site.
+   * Turns the commander to face a station the player asked to see (the
+   * number keys); the camera comes round behind them. Nothing moves the
+   * camera off on its own, and nothing but the player changes the zoom.
    */
   function frameForStation(station) {
     const marker = stationMarkers.get(station?.id);
     if (!marker) return;
-    cam.desired.copy(marker.anchor);
-    cam.observeUntil = stage.elapsed + 3;
+    const p = commander.position;
+    commander.state.yaw = Math.atan2(p.x - marker.anchor.x, p.z - marker.anchor.z);
   }
 
   /* -------------------------- the station activity -------------------------- */
@@ -1279,11 +1243,10 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     if (input.wasPressed("viewmode")) setFirstPerson(!state.firstPerson);
     if (input.wasPressed("topview")) { siteView.toggle(); sfx.click(); }
 
-    // ZOOM snaps between a wide view of the whole site and the close view
-    // over the commander's shoulder. Wheel and pinch still give fine
-    // control; this is the one-tap version for a phone.
+    // ZOOM puts the long lens on and takes it off, as in the Safety
+    // Mission. Wheel and pinch still give fine control.
     if (input.wasPressed("zoom")) {
-      cam.distance = cam.distance > cam.home + 6 ? cam.home : 30;
+      zoom.toggle();
       sfx.click();
     }
 
@@ -1371,13 +1334,17 @@ export function create({ container, difficulty, quality, settings, mobile, api }
       beaconB.visible = !flash;
     }
 
+    // While the top view is up it has the drag and the pinch, and the
+    // commander waits where they are.
+    commander.setFrozen(siteView.active);
+    if (!siteView.active) zoom.update(dt);
     updateCommander(dt);
     ert.update(dt, stage.elapsed);
-    siteView.update(dt, input, () => driveCamera(dt));
+    siteView.update(dt, input, driveCamera);
 
     if (cfg.shadows) {
-      sun.position.set(cam.target.x + 40, 60, cam.target.z + 30);
-      sun.target.position.set(cam.target.x, 0, cam.target.z);
+      sun.position.set(commander.position.x + 40, 60, commander.position.z + 30);
+      sun.target.position.set(commander.position.x, 0, commander.position.z);
       sun.target.updateMatrixWorld();
     }
 
@@ -1435,7 +1402,8 @@ export function create({ container, difficulty, quality, settings, mobile, api }
     // Test seam used by tests/arena-games.test.mjs. Not used by the app.
     __test: {
       walker: commander, avatar, bearingToNext, stationMarkers, camera,
-      camDistance: () => cam.distance,
+      camDistance: () => boom,
+      zoomFov: () => camera.fov,
       state, scenario, crowd, ert, casualty,
       fire: fireGroup,
       STATIONS, STATION_COUNT,
