@@ -3822,6 +3822,16 @@ section("Safety Mission Simulator — full playthrough");
   runFrames(10);
   const jcb = instance.__test.scene.getObjectByName("JCB backhoe loader");
   check("the first game includes the parked JCB backhoe loader", !!jcb && jcb.userData.vehicleType === "backhoe-loader");
+  const frontLoaderLinks = [];
+  jcb?.traverse((part) => { if (part.name === "bucket connecting link") frontLoaderLinks.push(part); });
+  check("both front loader arms connect to the bucket", frontLoaderLinks.length === 2);
+  check("the cab has a seated operator", jcb?.getObjectByName("JCB operator")?.userData.pose === "crouch"
+    && jcb.getObjectByName("JCB operator").parent?.name === "JCB backhoe loader body");
+  let mirrorCount = 0;
+  let workLightCount = 0;
+  jcb?.traverse((part) => { if (part.name === "JCB mirror stalk") mirrorCount += 1; });
+  jcb?.traverse((part) => { if (part.name === "JCB roof work light lens") workLightCount += 1; });
+  check("the JCB has two mounted mirrors and roof work lights", mirrorCount === 2 && workLightCount === 2);
   const jcbCollider = instance.__test.colliders.find((c) => Math.abs((c.maxX - c.minX) - 3.6) < 0.001
     && Math.abs((c.maxZ - c.minZ) - 6.8) < 0.001);
   check("the JCB collision footprint follows the moving vehicle",
@@ -3834,6 +3844,8 @@ section("Safety Mission Simulator — full playthrough");
     `z=${jcb?.position.z.toFixed(1)}, wheel=${digParts?.wheels?.[0]?.object.rotation.x.toFixed(2)}`);
   jcb?.userData.updateDig?.(16);
   check("the JCB steers into its dump position", jcb?.position.x > 37.9 && jcb.rotation.y > 1.3);
+  jcb?.userData.updateDig?.(15.2);
+  check("the sideways travel holds a sideways heading instead of sliding", jcb?.rotation.y > 1.5 && jcb.rotation.y < 1.65);
   jcb?.userData.updateDig?.(9.2);
   jcb?.updateMatrixWorld(true);
   const bucketGroundHeight = digParts?.bucketPivot.getWorldPosition(new THREE.Vector3()).y ?? Infinity;

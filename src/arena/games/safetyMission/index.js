@@ -277,6 +277,7 @@ export function create({ container, difficulty, quality, settings, mobile, confi
   const jcb = new THREE.Group();
   jcb.name = "JCB backhoe loader";
   const jcbBody = new THREE.Group();
+  jcbBody.name = "JCB backhoe loader body";
   jcb.add(jcbBody);
   const up = new THREE.Vector3(0, 1, 0);
   const beamBetween = (start, end, width, depth, material, name = "", parent = jcbBody) => {
@@ -335,6 +336,14 @@ export function create({ container, difficulty, quality, settings, mobile, confi
   jcbBody.add(cylinder(geo, mat.black, 0.16, 0.035, 0.26, 2.04, 0.17, { rotX: Math.PI / 2, low: true }));
   jcbBody.add(box(geo, mat.yellow, 0.12, 0.54, 0.1, -0.68, 1.84, 0.38));
   jcbBody.add(box(geo, mat.yellow, 0.12, 0.54, 0.1, 0.68, 1.84, 0.38));
+  const operator = buildWorker(geo, mat, {
+    helmet: true, vest: true, boots: true, pose: "crouch", scale: 0.56,
+    skin: "dark", hair: "none", moustache: false, seed: 7824,
+  });
+  operator.name = "JCB operator";
+  operator.position.set(0, 1.57, -0.12);
+  operator.rotation.y = Math.PI;
+  jcbBody.add(operator);
 
   // Front grille, radiator slats, headlights and a broad steel bumper.
   jcbBody.add(box(geo, mat.black, 0.72, 0.42, 0.045, 0, 1.08, 1.405));
@@ -345,6 +354,10 @@ export function create({ container, difficulty, quality, settings, mobile, confi
     jcbBody.add(box(geo, mat.white, 0.22, 0.16, 0.08, x, 1.31, 1.39, { shadow: false }));
     jcbBody.add(box(geo, mat.orange, 0.12, 0.09, 0.07, x * 1.22, 1.1, 1.39, { shadow: false }));
   });
+  [-0.52, 0.52].forEach((x) => {
+    jcbBody.add(box(geo, mat.black, 0.22, 0.16, 0.07, x, 1.58, 1.43));
+    jcbBody.add(box(geo, mat.white, 0.15, 0.1, 0.025, x, 1.58, 1.48, { shadow: false }));
+  });
   jcbBody.add(box(geo, mat.steelDark, 1.72, 0.18, 0.24, 0, 0.63, 1.55));
   jcbBody.add(box(geo, mat.yellow, 0.9, 0.38, 0.035, 0, 1.7, -0.99));
   jcbBody.add(box(geo, mat.black, 0.82, 0.26, 0.045, 0, 1.7, -1.012));
@@ -352,12 +365,10 @@ export function create({ container, difficulty, quality, settings, mobile, confi
 
   // Loader arms run along both sides of the bonnet, with hydraulic rams.
   [-0.7, 0.7].forEach((side) => {
-    beamBetween([side, 1.14, 0.22], [side, 1.49, 2.34], 0.22, 0.3, mat.yellow, "loader arm");
-    beamBetween([side, 1.04, 0.55], [side, 1.2, 2.18], 0.11, 0.15, mat.yellow);
-    ramBetween([side, 1.02, 0.38], [side, 1.47, 1.92], 0.075, mat.black, "loader hydraulic cylinder");
-    ramBetween([side, 1.16, 1.1], [side, 1.43, 1.92], 0.035, mat.steel, "loader hydraulic piston");
+    beamBetween([side, 1.14, 0.22], [side, 1.34, 2.18], 0.24, 0.34, mat.yellow, "loader arm");
+    beamBetween([side, 1.34, 2.18], [side, 0.77, 2.62], 0.15, 0.2, mat.yellow, "bucket connecting link");
     cylinder(geo, mat.steelDark, 0.1, 0.22, side, 1.13, 0.24, { rotX: Math.PI / 2, low: true });
-    cylinder(geo, mat.steelDark, 0.1, 0.22, side, 1.49, 2.28, { rotX: Math.PI / 2, low: true });
+    cylinder(geo, mat.steelDark, 0.1, 0.22, side, 0.77, 2.62, { rotX: Math.PI / 2, low: true });
   });
 
   // Pressed-steel front bucket with side cheeks, cutting edge and teeth.
@@ -369,7 +380,7 @@ export function create({ container, difficulty, quality, settings, mobile, confi
     jcbBody.add(box(geo, mat.steelDark, 0.12, 0.11, 0.22, -0.68 + tooth * 0.272, 0.17, 3.32, { rotX: -0.12 }));
   }
 
-  // Rear backhoe swing frame and powered turntable.
+  // Rear backhoe swing frame and a single centered boom/dipper assembly.
   jcbBody.add(box(geo, mat.yellow, 0.82, 0.24, 0.42, 0, 1.52, -1.12));
   cylinder(geo, mat.steelDark, 0.16, 0.94, 0, 1.55, -1.27, { rotX: Math.PI / 2, low: true });
   const backhoeSwing = new THREE.Group();
@@ -380,29 +391,24 @@ export function create({ container, difficulty, quality, settings, mobile, confi
   boomPivot.name = "Backhoe boom pivot";
   boomPivot.position.set(0, 0.02, 0.08);
   backhoeSwing.add(boomPivot);
-  beamBetween([-0.2, 0, 0], [-0.22, 0.68, -1.18], 0.36, 0.48, mat.yellow, "backhoe boom left", boomPivot);
-  beamBetween([0.2, 0, 0], [0.22, 0.68, -1.18], 0.36, 0.48, mat.yellow, "backhoe boom right", boomPivot);
-  ramBetween([-0.38, -0.5, 0.24], [-0.34, 0.43, -0.86], 0.1, mat.black, "backhoe boom ram", boomPivot);
-  ramBetween([-0.38, -0.28, 0.08], [-0.34, 0.5, -0.98], 0.045, mat.steel, "backhoe boom piston", boomPivot);
+  beamBetween([0, 0, 0], [0, 0.68, -1.22], 0.48, 0.52, mat.yellow, "backhoe boom", boomPivot);
+  [-1, 1].forEach((side) => {
+    boomPivot.add(box(geo, mat.steelDark, 0.12, 0.24, 0.16, side * 0.28, 0.02, -0.04));
+  });
   const dipperPivot = new THREE.Group();
   dipperPivot.name = "Backhoe dipper pivot";
-  dipperPivot.position.set(0, 0.68, -1.18);
+  dipperPivot.position.set(0, 0.68, -1.22);
   boomPivot.add(dipperPivot);
-  beamBetween([-0.22, 0, 0], [-0.22, -0.8, -0.95], 0.26, 0.34, mat.yellow, "backhoe dipper left", dipperPivot);
-  beamBetween([0.22, 0, 0], [0.22, -0.8, -0.95], 0.26, 0.34, mat.yellow, "backhoe dipper right", dipperPivot);
-  ramBetween([0.34, 0.34, -0.34], [0.34, -0.6, -0.77], 0.075, mat.black, "backhoe dipper ram", dipperPivot);
-  ramBetween([0.34, 0.05, -0.56], [0.34, -0.68, -0.83], 0.035, mat.steel, "backhoe dipper piston", dipperPivot);
+  beamBetween([0, 0, 0], [0, -0.86, -1.02], 0.34, 0.38, mat.yellow, "backhoe dipper", dipperPivot);
   const bucketPivot = new THREE.Group();
   bucketPivot.name = "Backhoe bucket pivot";
-  bucketPivot.position.set(0, -0.8, -0.95);
+  bucketPivot.position.set(0, -0.86, -1.02);
   dipperPivot.add(bucketPivot);
-  bucketPivot.add(box(geo, mat.steelDark, 0.72, 0.32, 0.16, 0, -0.08, -0.03));
-  bucketPivot.add(box(geo, mat.steel, 0.68, 0.1, 0.42, 0, -0.23, -0.16, { rotX: 0.18 }));
-  [-0.34, 0.34].forEach((x) => bucketPivot.add(box(geo, mat.steelDark, 0.1, 0.35, 0.4, x, -0.12, -0.16, { rotX: 0.18 })));
-  bucketPivot.add(box(geo, mat.steel, 0.78, 0.09, 0.12, 0, -0.29, -0.35));
-  [-0.27, -0.09, 0.09, 0.27].forEach((x) => bucketPivot.add(box(geo, mat.steelDark, 0.09, 0.12, 0.17, x, -0.33, -0.4, { rotX: -0.24 })));
-  ramBetween([0.29, 0.7, 0.4], [0.29, -0.1, -0.24], 0.06, mat.black, "bucket curl ram", dipperPivot);
-  ramBetween([0.29, 0.38, 0.08], [0.29, -0.18, -0.32], 0.03, mat.steel, "bucket curl piston", dipperPivot);
+  bucketPivot.add(box(geo, mat.steelDark, 1.0, 0.42, 0.18, 0, -0.08, -0.03));
+  bucketPivot.add(box(geo, mat.steel, 0.94, 0.12, 0.58, 0, -0.25, -0.2, { rotX: 0.12 }));
+  [-0.45, 0.45].forEach((x) => bucketPivot.add(box(geo, mat.steelDark, 0.12, 0.43, 0.54, x, -0.12, -0.19, { rotX: 0.12 })));
+  bucketPivot.add(box(geo, mat.steel, 1.08, 0.12, 0.14, 0, -0.31, -0.47));
+  [-0.42, -0.21, 0, 0.21, 0.42].forEach((x) => bucketPivot.add(box(geo, mat.steelDark, 0.12, 0.13, 0.2, x, -0.35, -0.56, { rotX: -0.18 })));
   const bucketPin = cylinder(geo, mat.steelDark, 0.11, 0.68, 0, 0, 0, { rotX: Math.PI / 2, low: true });
   bucketPivot.add(bucketPin);
 
@@ -447,20 +453,25 @@ export function create({ container, difficulty, quality, settings, mobile, confi
   const JCB_HOME = { x: 35, z: -25 };
   const JCB_CYCLE_SECONDS = 32;
   const motionFrames = [
-    { at: 0, x: 35, z: -25, yaw: -0.12, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
-    { at: 0.18, x: 35, z: -12, yaw: -0.12, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
-    { at: 0.21, x: 35, z: -12, yaw: -0.12, boom: -0.42, dipper: 0.36, bucket: 0.04, swing: 0 },
-    { at: 0.27, x: 35, z: -12, yaw: -0.12, boom: -1.08, dipper: 0.45, bucket: 0.18, swing: 0 },
-    { at: 0.34, x: 35, z: -12, yaw: -0.12, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: 0 },
-    { at: 0.43, x: 35, z: -12, yaw: -0.12, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: 0 },
-    { at: 0.5, x: 38, z: -12, yaw: 1.45, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: 0 },
-    { at: 0.55, x: 38, z: -12, yaw: 1.45, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: -0.58 },
-    { at: 0.59, x: 38, z: -12, yaw: 1.45, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: -0.58 },
-    { at: 0.63, x: 38, z: -12, yaw: 1.45, boom: 0.06, dipper: -0.18, bucket: -0.78, swing: -0.58 },
-    { at: 0.68, x: 38, z: -12, yaw: 1.45, boom: 0.06, dipper: -0.18, bucket: -0.12, swing: -0.28 },
-    { at: 0.72, x: 38, z: -12, yaw: 1.45, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
-    { at: 0.88, x: 35, z: -25, yaw: 3.02, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
-    { at: 1, x: 35, z: -25, yaw: 3.02, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
+    { at: 0, x: 35, z: -25, yaw: 0, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
+    { at: 0.18, x: 35, z: -12, yaw: 0, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
+    { at: 0.21, x: 35, z: -12, yaw: 0, boom: -0.42, dipper: 0.36, bucket: 0.04, swing: 0 },
+    { at: 0.27, x: 35, z: -12, yaw: 0, boom: -1.08, dipper: 0.45, bucket: 0.18, swing: 0 },
+    { at: 0.34, x: 35, z: -12, yaw: 0, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: 0 },
+    { at: 0.43, x: 35, z: -12, yaw: 0, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: 0 },
+    { at: 0.45, x: 35, z: -12, yaw: Math.PI / 2, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: 0 },
+    { at: 0.5, x: 38, z: -12, yaw: Math.PI / 2, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: 0 },
+    { at: 0.55, x: 38, z: -12, yaw: Math.PI / 2, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: -0.58 },
+    { at: 0.59, x: 38, z: -12, yaw: Math.PI / 2, boom: 0.06, dipper: -0.18, bucket: 0.18, swing: -0.58 },
+    { at: 0.63, x: 38, z: -12, yaw: Math.PI / 2, boom: 0.06, dipper: -0.18, bucket: -0.78, swing: -0.58 },
+    { at: 0.68, x: 38, z: -12, yaw: Math.PI / 2, boom: 0.06, dipper: -0.18, bucket: -0.12, swing: -0.28 },
+    { at: 0.72, x: 38, z: -12, yaw: Math.PI / 2, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
+    { at: 0.75, x: 38, z: -12, yaw: Math.PI, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
+    { at: 0.84, x: 38, z: -25, yaw: Math.PI, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
+    { at: 0.86, x: 38, z: -25, yaw: -Math.PI / 2, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
+    { at: 0.94, x: 35, z: -25, yaw: -Math.PI / 2, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
+    { at: 0.97, x: 35, z: -25, yaw: 0, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
+    { at: 1, x: 35, z: -25, yaw: 0, boom: 0.08, dipper: 0.12, bucket: 0.02, swing: 0 },
   ];
   let lastJcbPosition = new THREE.Vector3(JCB_HOME.x, 0, JCB_HOME.z);
   const jcbCollider = collider(JCB_HOME.x, 1, JCB_HOME.z, 3.6, 2, 6.8);
@@ -585,19 +596,24 @@ export function create({ container, difficulty, quality, settings, mobile, confi
     }
   });
 
-  // Exhaust stack, mirrors, rear lamps and handrails finish the silhouette.
-  jcbBody.add(cylinder(geo, mat.steelDark, 0.055, 0.72, -0.48, 1.91, 0.94, { low: true }));
-  jcbBody.add(cylinder(geo, mat.black, 0.08, 0.08, -0.48, 2.28, 0.94, { low: true }));
+  // Compact mirrors and rear work lamps are mounted to the cab frame.
   [-1, 1].forEach((side) => {
-    beamBetween([side * 0.61, 2.28, 0.14], [side * 0.95, 2.42, 0.14], 0.035, 0.035, mat.steelDark);
-    jcbBody.add(box(geo, mat.black, 0.24, 0.18, 0.08, side * 0.99, 2.43, 0.14));
+    beamBetween([side * 0.58, 2.34, 0.12], [side * 0.82, 2.4, 0.24], 0.035, 0.035, mat.black, "JCB mirror stalk");
+    jcbBody.add(box(geo, mat.black, 0.2, 0.16, 0.08, side * 0.87, 2.43, 0.25));
+    jcbBody.add(box(geo, mat.glass, 0.015, 0.11, 0.13, side * 0.916, 2.43, 0.25, { shadow: false, receive: false }));
+    const workLight = box(geo, mat.black, 0.2, 0.14, 0.12, side * 0.47, 2.7, -0.73);
+    workLight.name = "JCB roof work light housing";
+    jcbBody.add(workLight);
+    const workLightLens = box(geo, mat.white, 0.13, 0.09, 0.025, side * 0.47, 2.7, -0.8, { shadow: false, receive: false });
+    workLightLens.name = "JCB roof work light lens";
+    jcbBody.add(workLightLens);
     jcbBody.add(box(geo, mat.red, 0.13, 0.16, 0.06, side * 0.55, 1.27, -1.6, { shadow: false }));
   });
   jcb.position.set(35, 0, -25);
   jcb.rotation.y = -0.12;
   jcb.userData.vehicleType = "backhoe-loader";
   jcb.userData.updateDig = updateJcbDig;
-  jcb.userData.digParts = { backhoeSwing, boomPivot, dipperPivot, bucketPivot, soilInBucket, fallingSoil, spoilPile, wheels: jcbWheels, stabilizers: jcbStabilizers };
+  jcb.userData.digParts = { backhoeSwing, boomPivot, dipperPivot, bucketPivot, soilInBucket, fallingSoil, spoilPile, wheels: jcbWheels, stabilizers: jcbStabilizers, operator };
   updateJcbDig(0);
   scene.add(jcb);
 
