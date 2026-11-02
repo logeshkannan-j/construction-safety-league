@@ -3820,6 +3820,44 @@ section("Safety Mission Simulator — full playthrough");
   const { state, controller, hazards } = instance.__test;
 
   runFrames(10);
+  const jcb = instance.__test.scene.getObjectByName("JCB backhoe loader");
+  check("the first game includes the parked JCB backhoe loader", !!jcb && jcb.userData.vehicleType === "backhoe-loader");
+  const jcbCollider = instance.__test.colliders.find((c) => Math.abs((c.maxX - c.minX) - 3.6) < 0.001
+    && Math.abs((c.maxZ - c.minZ) - 6.8) < 0.001);
+  check("the JCB collision footprint follows the moving vehicle",
+    !!jcbCollider && Math.abs((jcbCollider.minX + jcbCollider.maxX) / 2 - jcb.position.x) < 0.001
+      && Math.abs((jcbCollider.minZ + jcbCollider.maxZ) / 2 - jcb.position.z) < 0.001);
+  const digParts = jcb?.userData.digParts;
+  jcb?.userData.updateDig?.(2.5);
+  check("the JCB drives from its parking spot to the work area",
+    jcb?.position.z > -24 && Math.abs(digParts?.wheels?.[0]?.object.rotation.x || 0) > 0.1,
+    `z=${jcb?.position.z.toFixed(1)}, wheel=${digParts?.wheels?.[0]?.object.rotation.x.toFixed(2)}`);
+  jcb?.userData.updateDig?.(16);
+  check("the JCB steers into its dump position", jcb?.position.x > 37.9 && jcb.rotation.y > 1.3);
+  jcb?.userData.updateDig?.(9.2);
+  jcb?.updateMatrixWorld(true);
+  const bucketGroundHeight = digParts?.bucketPivot.getWorldPosition(new THREE.Vector3()).y ?? Infinity;
+  check("the digging bucket reaches close to ground level", bucketGroundHeight < 0.85, `${bucketGroundHeight.toFixed(2)} m`);
+  jcb?.userData.updateDig?.(9.5);
+  check("the backhoe lowers and curls its bucket to scoop soil",
+    !!digParts?.soilInBucket.visible && Math.abs(digParts.boomPivot.rotation.x) > 0.2 && Math.abs(digParts.dipperPivot.rotation.x) > 0.2);
+  check("the stabilizers plant while the backhoe works", digParts?.stabilizers?.every((leg) => leg.scale.y > 0.9));
+  jcb?.userData.updateDig?.(20.5);
+  check("the backhoe swings and drops soil onto its spoil pile",
+    !!digParts?.fallingSoil.visible && digParts.backhoeSwing.rotation.y < -0.4 && digParts.bucketPivot.rotation.x < -0.5);
+  jcb?.userData.updateDig?.(21.5);
+  jcb?.updateMatrixWorld(true);
+  const fallingSoilWorld = digParts?.fallingSoil.getWorldPosition(new THREE.Vector3());
+  check("the falling soil travels toward the fixed dump pile",
+    fallingSoilWorld && fallingSoilWorld.distanceTo(digParts.spoilPile.position) < 3.5,
+    fallingSoilWorld ? `${fallingSoilWorld.distanceTo(digParts.spoilPile.position).toFixed(1)} m from pile` : "no soil position");
+  const dumpSpot = digParts?.spoilPile.position.clone();
+  jcb?.userData.updateDig?.(23);
+  check("dumped soil accumulates at a fixed site location", digParts?.spoilPile.children.filter((soil) => soil.visible).length > 4
+    && digParts.spoilPile.position.distanceTo(dumpSpot) === 0);
+  jcb?.userData.updateDig?.(25);
+  check("the JCB returns from dumping soil", jcb?.position.z < -15);
+  jcb?.userData.updateDig?.(0);
   check("mission starts with a zero score", record.hud.score === 0, `${record.hud.score}`);
   check("mission shows a running timer", record.hud.timeMs > 0);
   check("hazard register lists all 10 hazards", (record.hud.tasks || []).length === 10,
